@@ -409,6 +409,68 @@ def make_summarizer_chat(choice: str = "ollama") -> BaseChatModel:
 
 
 
+def _parse_plan_with_retries(raw: str, 
+                             user_query: str, 
+                             config: RunnableConfig, 
+                             system_msg: SystemMessage, 
+                             model: BaseChatModel, 
+                             debug_prefix: str = "planner") -> Plan:
+    
+    parser = PydanticOutputParser(pydantic_object=Plan)
+
+    def dbg(msg: str) -> None:
+        if DEBUG_MESSAGES == 1:
+            print(f"[{debug_prefix}] {msg}")
+
+    if not (raw or "").strip():
+        dbg("RAW output is empty.")
+
+    # 1) try direct parse
+    try:
+        plan = parser.parse(raw)
+        dbg("Direct parse: SUCCESS")
+        return plan
+    except Exception as e:
+        dbg(f"Direct parse: FAIL ({type(e).__name__}: {e})")
+
+    # 2) try extracting JSON object
+    try:
+        json_str = _extract_first_json_object(raw)
+        plan = parser.parse(json_str)
+        dbg("Extract-first-JSON parse: SUCCESS")
+        return plan
+    except Exception as e:
+        dbg(f"Extract-first-JSON parse: FAIL ({type(e).__name__}: {e})")
+
+    # 3) ask model to re-emit ONLY JSON (1 retry)
+    repair_prompt = HumanMessage(
+        content=(
+            "Your previous output was invalid or empty.\n"
+            "Re-output ONLY the JSON object that matches the schema. No extra text.\n\n"
+            f"USER QUERY:\n{user_query}\n\n"
+            "Return ONLY JSON now."
+        )
+    )
+    dbg("Requesting JSON repair (one retry).")
+
+    repaired_msg = model.invoke([system_msg, repair_prompt], config=config)   # model will be in scope when called
+    repaired = (repaired_msg.content or "")
+
+    try:
+        json_str = _extract_first_json_object(repaired)
+        plan = parser.parse(json_str)
+        dbg("Repair parse: SUCCESS")
+        return plan
+    except Exception as e:
+        dbg(f"Repair parse: FAIL ({type(e).__name__}: {e})")
+
+    # 4) fallback
+    dbg("FALLBACK: Using 1-step plan.")
+    return Plan(steps=[f"Answer the user query directly: {user_query}"])
+
+
+
+
 # ----------------------------
 # Planner node
 # ----------------------------
@@ -426,64 +488,6 @@ def make_planner_node(tools):
         "{past_context}\n"
     )
 
-    def _parse_plan_with_retries(raw: str, user_query: str, config: RunnableConfig, planner_system: SystemMessage) -> Plan:
-        def dbg(msg: str) -> None:
-            if DEBUG_MESSAGES == 1:
-                print(f"[planner.parse] {msg}")
-
-        if not (raw or "").strip():
-            dbg("RAW output is empty.")
-
-        # 1) try direct parse
-        try:
-            plan = parser.parse(raw)
-            dbg("Direct parse: SUCCESS")
-            return plan
-        except Exception as e:
-            dbg(f"Direct parse: FAIL ({type(e).__name__}: {e})")
-
-        # 2) try extracting JSON object and parsing that
-        try:
-            json_str = _extract_first_json_object(raw)
-            plan = parser.parse(json_str)
-            dbg("Extract-first-JSON parse: SUCCESS")
-            return plan
-        except Exception as e:
-            dbg(f"Extract-first-JSON parse: FAIL ({type(e).__name__}: {e})")
-
-        # 3) ask model to re-emit ONLY JSON (1 retry)
-        repair_prompt = HumanMessage(
-            content=(
-                "Your previous output was invalid or empty.\n"
-                "Re-output ONLY the JSON object that matches the schema. No extra text.\n\n"
-                f"USER QUERY:\n{user_query}\n\n"
-                "Return ONLY JSON now."
-            )
-        )
-        dbg("Requesting JSON repair (one retry).")
-
-        repaired_msg = model.invoke([planner_system, repair_prompt], config=config)
-        repaired = (repaired_msg.content or "")
-        dbg(f"Repair raw length: {len(repaired.strip())}")
-
-        if DEBUG_MESSAGES == 1:
-            print("------------------------------------------------------------")
-            print("PLANNER REPAIR RAW OUTPUT")
-            print("------------------------------------------------------------")
-            print(repaired)
-            print("------------------------------------------------------------")
-
-        try:
-            json_str = _extract_first_json_object(repaired)
-            plan = parser.parse(json_str)
-            dbg("Repair parse: SUCCESS")
-            return plan
-        except Exception as e:
-            dbg(f"Repair parse: FAIL ({type(e).__name__}: {e})")
-
-        # 4) last-resort fallback
-        dbg("FALLBACK: Using 1-step plan.")
-        return Plan(steps=[f"Answer the user query directly: {user_query}"])
 
     def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
         user_query = state["user_query"]
@@ -545,7 +549,7 @@ def make_planner_node(tools):
             print(raw)
             print("============================================================\n")
 
-        plan_obj = _parse_plan_with_retries(raw, user_query, config, planner_system)
+        plan_obj = _parse_plan_with_retries(raw, user_query, config, planner_system, model, debug_prefix="planner")
 
         if DEBUG_MESSAGES == 1:
             print("------------------------------------------------------------")
@@ -568,6 +572,79 @@ def make_planner_node(tools):
         }
 
     return planner_node
+
+
+
+
+# ----------------------------
+# NEW: Reflection node (after planner, before executor)
+# ----------------------------
+def make_reflection_node(tools):
+    model = make_model_chat(temperature=0.0)   # deterministic
+    tools_description = textual_description_of_tools(tools)
+
+    REFLECTION_SYSTEM_TEXT = (
+        "You are a plan reflection and hallucination-correction agent.\n"
+        "Your ONLY job is to review the planner's proposed steps and fix any hallucinations or wrong information.\n\n"
+        "CRITICAL RULES (follow strictly):\n"
+        "- Tool names MUST be exactly one of the AVAILABLE TOOLS listed below. If a step uses a wrong/non-existent tool name, correct it to the exact valid name or rephrase the step to use a valid tool.\n"
+        "- Do not invent new tools.\n"
+        "- Fix any logical errors, impossible actions, or wrong assumptions.\n"
+        "- Keep the number of steps the same or fewer.\n"
+        "- Preserve the original intent.\n"
+        "- If the plan is already correct, return it unchanged.\n\n"
+        + PydanticOutputParser(pydantic_object=Plan).get_format_instructions()
+        + "\n\n"
+        "AVAILABLE TOOLS (use ONLY these exact names):\n"
+        + tools_description
+    )
+
+    def reflection_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
+        original_plan = state.get("original_plan", state.get("plan", []))
+        user_query = state["user_query"]
+
+        reflection_system = SystemMessage(content=REFLECTION_SYSTEM_TEXT)
+        reflection_input = [
+            reflection_system,
+            HumanMessage(content=(
+                f"USER QUERY: {user_query}\n\n"
+                f"ORIGINAL PLAN TO REVIEW:\n"
+                + json.dumps({"steps": original_plan}, indent=2) + "\n\n"
+                "Review for hallucinations/wrong tool names and output the corrected plan JSON."
+            ))
+        ]
+
+        raw = ""
+        for attempt in range(3):
+            raw = (model.invoke(reflection_input, config=config).content or "").strip()
+            if raw:
+                break
+
+        # Reuse the same robust parser (we pass a dummy system_msg; the repair logic still works)
+        corrected_plan_obj = _parse_plan_with_retries(
+            raw, user_query, config, reflection_system, model, debug_prefix="reflection"
+        )
+
+        corrected_steps = corrected_plan_obj.steps
+
+        if DEBUG_MESSAGES == 1:
+            print("------------------------------------------------------------")
+            print("REFLECTION RAW OUTPUT")
+            print("------------------------------------------------------------")
+            print(raw)
+            print("------------------------------------------------------------")
+            print("REFLECTION CORRECTED STEPS")
+            print("------------------------------------------------------------")
+            for i, step in enumerate(corrected_steps):
+                print(f"[{i}] {step}")
+            print("============================================================\n")
+
+        # Return corrected plan (fallback to original if something went catastrophically wrong)
+        return {
+            "plan": corrected_steps if corrected_steps else original_plan,
+        }
+
+    return reflection_node
 
 
 
@@ -983,13 +1060,15 @@ async def build_graph():
 
     workflow = StateGraph(AgentState)
     workflow.add_node("planner", make_planner_node(tools))
+    workflow.add_node("reflection", make_reflection_node(tools))   # ← NEW NODE
     workflow.add_node("executor_model", make_executor_model_node(tools))
     workflow.add_node("tools", ToolNode(tools))
     workflow.add_node("advance", make_advance_node(summarizer_model))  # <- changed
     workflow.add_node("finalizer", make_finalizer_node())
 
     workflow.add_edge(START, "planner")
-    workflow.add_edge("planner", "executor_model")
+    workflow.add_edge("planner", "reflection")          # ← CHANGED
+    workflow.add_edge("reflection", "executor_model")   # ← NEW
 
     # If tool_calls exist -> tools, else -> advance
     workflow.add_conditional_edges(
