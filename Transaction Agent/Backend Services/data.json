@@ -1,1 +1,147 @@
-
+{
+  "wallets": {
+    "6957c385b7df149a6c551b53": {
+      "_id": "6957c385b7df149a6c551b53",
+      "user": "6957c361b7df149a6c551b4c",
+      "balance": 4150.75,
+      "lockedBalance": 300,
+      "isDeleted": false,
+      "transactionsHistory": [
+        {
+          "transactionId": "tx_001",
+          "type": "CREDIT",
+          "amount": 2000,
+          "currency": "USD",
+          "timestamp": "2026-01-05T10:00:00Z"
+        },
+        {
+          "transactionId": "tx_002",
+          "type": "DEBIT",
+          "amount": 500,
+          "currency": "USD",
+          "timestamp": "2026-01-06T12:30:00Z"
+        },
+        {
+          "transactionId": "8aff3280-516c-46cc-a15c-f73e92ef70d5",
+          "type": "CREDIT",
+          "amount": 550,
+          "currency": "USD",
+          "timestamp": "2026-02-17T12:32:14.593Z"
+        },
+        {
+          "transactionId": "1b43280b-d3ba-4f89-83fd-f27d346e47c5",
+          "type": "CREDIT",
+          "amount": 550,
+          "currency": "USD",
+          "timestamp": "2026-02-17T12:41:11.973Z"
+        },
+        {
+          "transactionId": "56c2da99-5b25-41ab-af9b-4ed60c36e185",
+          "type": "CREDIT",
+          "amount": 550,
+          "currency": "USD",
+          "timestamp": "2026-02-18T03:59:00.594Z"
+        }
+      ],
+      "isActive": true,
+      "createdAt": "2026-01-02T13:09:25Z",
+      "__v": 3
+    },
+    "6957d111b7df149a6c552999": {
+      "_id": "6957d111b7df149a6c552999",
+      "user": "6957c3cdb7df149a6c551bf0",
+      "balance": 10000,
+      "lockedBalance": 0,
+      "isDeleted": false,
+      "transactionsHistory": [
+        {
+          "transactionId": "tx_010",
+          "type": "CREDIT",
+          "amount": 10000,
+          "currency": "USD",
+          "timestamp": "2026-01-10T09:15:00Z"
+        }
+      ],
+      "isActive": true,
+      "createdAt": "2026-01-08T09:00:00Z",
+      "__v": 1
+    },
+    "6957d222b7df149a6c553abc": {
+      "_id": "6957d222b7df149a6c553abc",
+      "user": "6957d000b7df149a6c553000",
+      "balance": 0,
+      "lockedBalance": 0,
+      "isDeleted": false,
+      "transactionsHistory": [],
+      "isActive": false,
+      "createdAt": "2026-01-15T15:45:10Z",
+      "__v": 0
+    }
+  },
+  "virtual_cards": {
+    "6957c3f8b7df149a6c551c22": {
+      "_id": "6957c3f8b7df149a6c551c22",
+      "user": "6957c3cdb7df149a6c551bf0",
+      "cardNumber": "8484887777800474",
+      "cardHolder": "Wasil Mughal",
+      "expiryDate": "2027-01-01",
+      "cvv": "280",
+      "isActive": true,
+      "isBlocked": false,
+      "cardType": "VISA",
+      "currency": "USD",
+      "limit": 100000,
+      "createdAt": "2026-01-02T13:11:20Z",
+      "updatedAt": "2026-01-02T13:11:20Z",
+      "__v": 0
+    },
+    "6957d555b7df149a6c554555": {
+      "_id": "6957d555b7df149a6c554555",
+      "user": "6957c361b7df149a6c551b4c",
+      "cardNumber": "4111111111111111",
+      "cardHolder": "Mujtaba Mateen",
+      "expiryDate": "2028-05-01",
+      "cvv": "123",
+      "isActive": true,
+      "isBlocked": false,
+      "cardType": "VISA",
+      "currency": "USD",
+      "limit": 5000,
+      "createdAt": "2026-01-12T10:00:00Z",
+      "updatedAt": "2026-01-12T10:00:00Z",
+      "__v": 1
+    },
+    "6957d666b7df149a6c556666": {
+      "_id": "6957d666b7df149a6c556666",
+      "user": "6957c361b7df149a6c551b4c",
+      "cardNumber": "5555555555554444",
+      "cardHolder": "Mujtaba Mateen",
+      "expiryDate": "2026-12-01",
+      "cvv": "456",
+      "isActive": true,
+      "isBlocked": true,
+      "cardType": "MASTERCARD",
+      "currency": "USD",
+      "limit": 2000,
+      "createdAt": "2026-01-15T11:00:00Z",
+      "updatedAt": "2026-01-20T11:00:00Z",
+      "__v": 2
+    },
+    "6957d777b7df149a6c557777": {
+      "_id": "6957d777b7df149a6c557777",
+      "user": "6957d000b7df149a6c553000",
+      "cardNumber": "378282246310005",
+      "cardHolder": "Ali Khan",
+      "expiryDate": "2029-09-01",
+      "cvv": "789",
+      "isActive": false,
+      "isBlocked": false,
+      "cardType": "AMEX",
+      "currency": "USD",
+      "limit": 15000,
+      "createdAt": "2026-01-18T08:30:00Z",
+      "updatedAt": "2026-01-18T08:30:00Z",
+      "__v": 0
+    }
+  }
+}
