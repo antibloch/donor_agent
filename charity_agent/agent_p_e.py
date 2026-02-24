@@ -142,7 +142,7 @@ def make_model(temperature: float = 0.0):
         max_tokens=8192,
     )
 
-# ========================== YOUR ROBUST JSON EXTRACTOR (fixed syntax) ==========================
+# ========================== YOUR ROBUST JSON EXTRACTOR ==========================
 def _extract_first_json_object(text: str) -> str:
     """Extract the first top-level JSON object from arbitrary text."""
     if not text:
@@ -199,8 +199,9 @@ def _parse_plan(raw: str) -> Dict:
             pass
     return {"steps": [], "missing_args": []}
 
-# ========================== PLANNER NODE (FULL exact prompt from your second script) ==========================
-# ========================== UPDATED PLANNER NODE (explicit instruction + better example) ==========================
+
+
+# ========================== PLANNER NODE ==========================
 def make_planner_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
 
@@ -258,7 +259,20 @@ Chat History & User Request:
             rich_print(prompt)
             rich_print("="*80)
 
-        response = model.invoke([HumanMessage(content=prompt)])
+        planner_messages = [HumanMessage(content=prompt)]
+
+        #--------------------------------------------------------------
+        if DEBUG_MESSAGES == 1:
+            rich_print("\n" + "="*80)
+            rich_print("PLANNER INVOKE MESSAGES (exact objects)")
+            rich_print("="*80)
+            for i, m in enumerate(planner_messages):
+                rich_print(f"\n--- planner_messages[{i}] ---")
+                rich_print(format_msg(m))
+            rich_print("="*80)
+        #--------------------------------------------------------------
+
+        response = model.invoke(planner_messages)
 
         if DEBUG_MESSAGES == 1:
             rich_print("\n" + "="*80)
@@ -455,7 +469,26 @@ Base your answer strictly on the conversation history below:
 """
 
         final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{message_summary}")]
+
+        #--------------------------------------------------------------
+        if DEBUG_MESSAGES == 1:
+            # rich_print("\n" + "="*80)
+            # rich_print("RESPONDER INPUT (rendered final_prompt[0].content)")
+            # rich_print("="*80)
+            # rich_print(final_prompt[0].content)
+            # rich_print("="*80)
+
+            rich_print("\n" + "="*80)
+            rich_print("RESPONDER INVOKE MESSAGES (exact objects)")
+            rich_print("="*80)
+            for i, m in enumerate(final_prompt):
+                rich_print(f"\n--- final_prompt[{i}] ---")
+                rich_print(format_msg(m))
+            rich_print("="*80)
+        #--------------------------------------------------------------
+
         summary = model.invoke(final_prompt)
+
         final_text = (summary.content or "").strip()
 
         return {"messages": [summary], "final_answer": final_text}
