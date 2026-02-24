@@ -200,13 +200,118 @@ def _parse_plan(raw: str) -> Dict:
     return {"steps": [], "missing_args": []}
 
 
+#============================HELPERS===============================
+def _safe_json_loads(s: str):
+    try:
+        return json.loads(s)
+    except Exception:
+        return None
+
+def _compact_json(obj: Any, max_chars: int = 900) -> str:
+    """Compact JSON-ish object to a bounded string."""
+    try:
+        s = json.dumps(obj, ensure_ascii=False, default=str)
+    except Exception:
+        s = str(obj)
+    if len(s) > max_chars:
+        return s[:max_chars] + " ...[truncated]"
+    return s
+
+def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
+    """
+    Turn your ToolMessage JSON envelope into a compact, human-usable line/block.
+    Your executor wraps tool outputs like: {"ok": True, "result": ...}
+    """
+    payload = _safe_json_loads(tool_content) if isinstance(tool_content, str) else None
+    if not payload:
+        return f"TOOL[{tool_name}] -> {tool_content}"
+
+    # unwrap envelope if present
+    result = payload.get("result", payload)
+
+    # Special-case: get_charity_stats / donor counts
+    if tool_name == "get_charity_stats" and isinstance(result, dict):
+        data = result.get("data")
+        tool = result.get("tool") or result.get("query")
+        if tool == "charity_donor_count" and isinstance(data, list):
+            # Example: [{"charityName": "...", "donorCount": 4}, ...]
+            pairs = []
+            for row in data:
+                name = row.get("charityName")
+                cnt = row.get("donorCount")
+                if name is not None and cnt is not None:
+                    pairs.append(f"{name}: {cnt}")
+            if pairs:
+                return "TOOL[get_charity_stats:charity_donor_count] -> " + "; ".join(pairs)
+
+    # Special-case: Python_REPL
+    if tool_name.lower() in ("python_repl", "pythonrepl", "python_repltool") or tool_name == "Python_REPL":
+        return f"TOOL[Python_REPL] -> {_compact_json(result, max_chars=300)}"
+
+    return f"TOOL[{tool_name}] -> {_compact_json(result, max_chars=700)}"
+
+def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_user: bool = True) -> str:
+    """
+    Planner-friendly history:
+    - Natural-ish but concise
+    - Tool results summarized
+    - Optionally drop last HumanMessage to avoid repeating current prompt
+      (because you already append the current user message before invoking the graph)
+    """
+    msgs = list(messages) if messages else []
+    if drop_last_user:
+        # Remove the most recent HumanMessage (the current user turn)
+        for i in range(len(msgs) - 1, -1, -1):
+            if isinstance(msgs[i], HumanMessage):
+                msgs = msgs[:i]  # drop that and anything after (usually nothing after)
+                break
+
+    lines = []
+    for m in msgs:
+        if isinstance(m, HumanMessage):
+            lines.append(f"USER: {m.content}")
+        elif isinstance(m, ToolMessage):
+            lines.append(_summarize_tool_output(m.name, m.content))
+        elif isinstance(m, AIMessage):
+            # Hide internal "System Note:" chatter from planner signal
+            if (m.content or "").strip().startswith("System Note:"):
+                continue
+            lines.append(f"ASSISTANT: {m.content}")
+        else:
+            lines.append(f"{m.__class__.__name__}: {getattr(m, 'content', '')}")
+
+    return "\n".join(lines) if lines else "(no prior history)"
+
+def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
+    """
+    Responder-friendly full transcript:
+    - Ordered
+    - Human-readable
+    - Tool results summarized
+    - Keeps the latest user prompt (since responder needs to answer it)
+    """
+    lines = []
+    for m in messages or []:
+        if isinstance(m, HumanMessage):
+            lines.append(f"USER: {m.content}")
+        elif isinstance(m, ToolMessage):
+            lines.append(_summarize_tool_output(m.name, m.content))
+        elif isinstance(m, AIMessage):
+            # Skip internal system notes in final transcript
+            if (m.content or "").strip().startswith("System Note:"):
+                continue
+            lines.append(f"ASSISTANT: {m.content}")
+        else:
+            lines.append(f"{m.__class__.__name__}: {getattr(m, 'content', '')}")
+
+    return "\n".join(lines) if lines else "(empty)"
 
 # ========================== PLANNER NODE ==========================
 def make_planner_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
 
     def planner_node(state: AgentState) -> Dict:
-        chat_history = "\n".join([f"{msg.type}: {msg.content}" for msg in state.get("messages", [])])
+        chat_history = format_history_for_planner(state.get("messages", []), drop_last_user=True)
         tool_context = build_tool_context(tools_by_name)
 
         prompt = f"""
@@ -457,7 +562,6 @@ def make_responder_node():
     model = make_model(temperature=0.0)
 
     def responder(state: AgentState) -> Dict:
-        message_summary = state["messages"]
 
         system_prompt = """
 You are a specialized Charity & Data Assistant.
@@ -468,7 +572,8 @@ CRITICAL TOPIC BOUNDARIES:
 Base your answer strictly on the conversation history below:
 """
 
-        final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{message_summary}")]
+        transcript = format_history_for_responder(state.get("messages", []))
+        final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{transcript}")]
 
         #--------------------------------------------------------------
         if DEBUG_MESSAGES == 1:
