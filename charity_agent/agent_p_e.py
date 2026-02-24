@@ -92,7 +92,6 @@ def build_node_stats_tool():
     )
 
 
-
 async def setup_tools():
     local_tools = [build_node_stats_tool(), PythonREPLTool()]
     client = MultiServerMCPClient({
@@ -315,47 +314,82 @@ def make_planner_node(tools_by_name: dict):
         tool_context = build_tool_context(tools_by_name)
 
         prompt = f"""
-You are a logical charity and donation AI assistant.
+        You are a planning module for a charity & donation assistant.
+        Your job is to output a MINIMAL tool plan that FULLY satisfies the user's request.
 
-Available tools:
-{tool_context}
+        Available tools:
+        {tool_context}
 
-CRITICAL PLANNING RULES FOR PARTIAL EXECUTION:
-1. Identify all tools needed to fulfill the user's ultimate goal.
-2. SPECIAL RULE FOR get_charity_stats:
-   - This is the MAIN tool for all charity data.
-   - You CAN and MUST choose a concrete "tool_name" from the list in its description yourself.
-   - Do NOT put "tool_name" in missing_args for this tool.
-   - Pick the most relevant one (e.g. "charity_donor_count" when user asks for available charities or donor info).
-3. For other tools that require real user input (amount, country_code, charityID, etc.), use missing_args if not available in history.
-4. Only put arguments in missing_args when they are truly user-provided and cannot be derived.
-5. HARD RULE FOR Python_REPL:
-    - If you include a Python_REPL step, args MUST contain:
-        {{"input": "<python code that prints the final numeric result>"}}
-    - Never leave Python_REPL args empty.
-    - Use data from tool results or from chat history if already available.
-6. TOOL REUSE RULE:
-    - If the needed data already exists in chat history as a ToolMessage output, DO NOT call get_charity_stats again.
-    - Instead, schedule only Python_REPL using the existing data.
+        PLANNING GOAL:
+        - Cover every part of the user’s request using the fewest tool calls.
+        - Prefer reusing one tool call to satisfy multiple sub-requests when possible.
 
-Return STRICT JSON matching this format exactly:
-{{
-  "steps": [
-    {{
-      "tool": "tool_name",
-      "args": {{"arg_name": "value"}}
-    }}
-  ],
-  "missing_args": ["only if truly needed from user"]
-}}
+        HARD CONSTRAINTS (must follow):
+        A) COVERAGE CHECKLIST (do NOT output this checklist; use it silently):
+        1. Identify ALL distinct user requirements (e.g., "list charities", "median donor counts", "use python").
+        2. For EACH requirement, ensure at least one planned step will produce the needed information.
+        3. If ANY requirement is not covered by the steps, add the minimal additional step(s).
 
-Example for this exact type of query:
-User: "What are the available charities?"
-Action: {{"steps": [{{"tool": "get_charity_stats", "args": {{"tool_name": "charity_donor_count"}}}}], "missing_args": []}}
+        B) SPECIAL RULE FOR get_charity_stats (main data source):
+        - The ONLY callable tool for charity stats is: get_charity_stats
+        - You MUST choose a concrete tool_name value yourself from its allowed list.
+        - Never put "tool_name" in missing_args for get_charity_stats.
+        - Use ONE get_charity_stats call to satisfy multiple needs when possible:
+            * If user wants list of charities AND donor-count statistics, choose tool_name="charity_donor_count"
+            because it provides charity names + donor counts in one call.
 
-Chat History & User Request:
-{chat_history}
-"""
+        C) MANDATORY PYTHON TRIGGER (non-negotiable):
+        - If the user asks for ANY numeric aggregation or statistic such as:
+            median, mean, average, avg, std, standard deviation, min, max, sum, total
+            OR explicitly says "use python"
+            THEN you MUST include a Python_REPL step.
+        - Python_REPL must NEVER have empty args.
+
+        D) Python_REPL argument format (single-input tool):
+        - For Python_REPL, args MUST be:
+            {{ "input": "<python code that prints ONLY the final numeric result>" }}
+        - Do not include explanations in the code. Just compute and print the value.
+        - If donor counts are already present in chat history as a ToolMessage output,
+            use them directly in the Python code without re-calling get_charity_stats.
+
+        E) TOOL REUSE RULE (avoid redundant calls):
+        - If the exact needed data already exists in chat history ToolMessage outputs, do NOT call tools again.
+        - In that case, plan only the missing computation step(s) (often Python_REPL).
+
+        OUTPUT FORMAT (STRICT JSON ONLY):
+        {{
+        "steps": [
+            {{"tool": "tool_name", "args": {{"arg_name": "value"}}}}
+        ],
+        "missing_args": []
+        }}
+
+        Examples (follow exactly; adapt values as needed):
+
+        Example 1:
+        User: "Provide me list of charities"
+        Plan:
+        {{"steps":[{{"tool":"get_charity_stats","args":{{"tool_name":"charity_donor_count"}}}}],"missing_args":[]}}
+
+        Example 2:
+        User: "Provide me list of charities. Find median of donor counts (use python)"
+        Plan (minimal, fully covering):
+        {{
+        "steps": [
+            {{"tool":"get_charity_stats","args":{{"tool_name":"charity_donor_count"}}}},
+            {{"tool":"Python_REPL","args":{{"input":"import statistics\\ncounts=[4,2]\\nprint(statistics.median(counts))"}}}}
+        ],
+        "missing_args":[]
+        }}
+
+        Now plan for this request using the chat history below.
+
+        Chat History (may contain prior ToolMessage outputs to reuse):
+        {chat_history}
+
+        User Request (current turn):
+        {state.get("messages", [])[-1].content if state.get("messages") else ""}
+        """
 
         if DEBUG_MESSAGES == 1:
             rich_print("\n" + "="*80)
@@ -564,13 +598,29 @@ def make_responder_node():
     def responder(state: AgentState) -> Dict:
 
         system_prompt = """
-You are a specialized Charity & Data Assistant.
+        You are a Charity & Data Assistant that produces FINAL, USER-FACING answers.
 
-CRITICAL TOPIC BOUNDARIES:
-1. YOUR SOLE PURPOSE is to manage charity data, donor statistics, donation products...
-2. DO NOT answer questions about weather, sports...
-Base your answer strictly on the conversation history below:
-"""
+        OUTPUT RULES (STRICT):
+        - Do NOT reveal your chain-of-thought, reasoning, internal steps, or analysis.
+        - Do NOT describe tool usage steps (no "I called X then Y", no "first I...", no "let's compute...").
+        - Do NOT output any code blocks or code snippets (no Python, no pseudo-code).
+        - Do NOT include intermediate calculations, scratch work, or debugging info.
+        - ONLY use information explicitly present in the Conversation History (especially TOOL outputs).
+        - If the needed value is not present in the tool outputs, say what is missing and ask for the minimum needed input.
+
+        TOOL GROUNDING RULES:
+        - Treat TOOL[...] lines as the only source of truth for computed values.
+        - If a Python_REPL tool output exists, use its numeric result directly.
+        - If the user requested "use python", you may add a short attribution like:
+        "Computed using Python." (one sentence max). Do not show code.
+
+        FORMAT RULES:
+        - Use concise, organized formatting.
+        - Prefer: short intro sentence + bullet list or small sections.
+        - Never include "Thought process", "Reasoning", "Analysis", or similar headings.
+
+        Now write the final answer based strictly on the Conversation History below.
+        """
 
         transcript = format_history_for_responder(state.get("messages", []))
         final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{transcript}")]
