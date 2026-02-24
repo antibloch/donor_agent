@@ -51,6 +51,9 @@ class AgentState(TypedDict, total=False):
     past_turns: List[Tuple[str, str]]
     final_answer: str
 
+    # NEW:
+    repair_attempts: int
+    last_tool_error: Dict[str, Any]  # {"tool": str, "error": str, "tool_message": str}
 # ========================== YOUR ORIGINAL TOOLS ==========================
 # ========================== 1. UPDATED build_node_stats_tool (now StructuredTool) ==========================
 def build_node_stats_tool():
@@ -658,6 +661,194 @@ def route_after_validator(state: AgentState) -> str:
     return "executor" if len(steps) > 0 else "responder"
 
 
+#============================ HELPERS FOR GATE NODE =============================
+def _safe_json_loads(s: str):
+    try:
+        return json.loads(s)
+    except Exception:
+        return None
+
+def detect_latest_tool_error(messages: Sequence[BaseMessage]) -> Dict[str, Any] | None:
+    """
+    Generic: finds the most recent ToolMessage that looks like an error.
+    We treat as error if:
+      - payload JSON has {"ok": false, ...}
+      - OR payload.result is a string containing common error markers
+      - OR raw tool content contains error markers
+    """
+    error_markers = ["Traceback", "NameError", "KeyError", "TypeError", "ValueError",
+                     "Exception", "Error:", "ERROR", "invalid", "missing", "failed"]
+
+    for m in reversed(list(messages or [])):
+        if not isinstance(m, ToolMessage):
+            continue
+
+        raw = (m.content or "").strip()
+        payload = _safe_json_loads(raw)
+
+        # Case 1: our normalized envelope {"ok": ..., "result": ...}
+        if isinstance(payload, dict):
+            if payload.get("ok") is False:
+                return {"tool": m.name, "error": _compact_err(payload), "tool_message": raw}
+
+            result = payload.get("result", None)
+            if isinstance(result, str) and any(k in result for k in error_markers):
+                return {"tool": m.name, "error": result, "tool_message": raw}
+
+        # Case 2: raw contains typical error markers
+        if any(k in raw for k in error_markers):
+            return {"tool": m.name, "error": raw[:600], "tool_message": raw}
+
+    return None
+
+def _compact_err(payload: dict) -> str:
+    try:
+        s = json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        s = str(payload)
+    return s[:800] + (" ...[truncated]" if len(s) > 800 else "")
+
+def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
+    """
+    Gate sees only user/assistant/tool lines (no internal System Note).
+    Tool outputs are shown as-is (or truncated) so repair can be general.
+    """
+    lines = []
+    for m in messages or []:
+        if isinstance(m, HumanMessage):
+            lines.append(f"USER: {m.content}")
+        elif isinstance(m, ToolMessage):
+            content = (m.content or "").strip()
+            if len(content) > 1200:
+                content = content[:1200] + " ...[truncated]"
+            lines.append(f"TOOL[{m.name}]: {content}")
+        elif isinstance(m, AIMessage):
+            if (m.content or "").strip().startswith("System Note:"):
+                continue
+            lines.append(f"ASSISTANT: {m.content}")
+    return "\n".join(lines) if lines else "(empty)"
+
+def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 1200) -> str:
+    """
+    Generic cache: last ToolMessage per tool name.
+    This helps the LLM repair without domain-specific extraction.
+    """
+    last_by_tool: Dict[str, str] = {}
+    for m in messages or []:
+        if isinstance(m, ToolMessage):
+            last_by_tool[m.name] = m.content or ""
+
+    if not last_by_tool:
+        return "(none)"
+
+    blocks = []
+    for tool_name, content in last_by_tool.items():
+        c = content.strip()
+        if len(c) > max_chars:
+            c = c[:max_chars] + " ...[truncated]"
+        blocks.append(f"- {tool_name}: {c}")
+    return "\n".join(blocks)
+
+
+# =========================== GATE NODE (NEW) ===========================
+def make_gate_node(tools_by_name: dict, max_repairs: int = 2):
+    model = make_model(temperature=0.0)
+
+    def gate_node(state: AgentState) -> Dict:
+        attempts = int(state.get("repair_attempts") or 0)
+        if attempts >= max_repairs:
+            return {
+                "messages": [AIMessage(content="System Note: Repair limit reached. Proceeding to final response.")],
+                "plan": {"steps": [], "missing_args": []},
+            }
+
+        messages = list(state.get("messages", []) or [])
+        last_error = detect_latest_tool_error(messages)
+        if not last_error:
+            # No tool errors -> no repair needed
+            return {"plan": {"steps": [], "missing_args": []}}
+
+        # Provide only non-system transcript + a compact cache of last tool outputs
+        history = format_history_for_gate(messages)
+        cache = build_cached_tool_outputs(messages)
+
+        tool_context = build_tool_context(tools_by_name)
+        valid_tool_names = list(tools_by_name.keys())
+
+        prompt = f"""
+You are a TOOL-REPAIR PLANNER.
+
+Goal:
+- Produce a MINIMAL plan to fix the most recent tool error and allow the user request to be answered.
+
+Available tools:
+{tool_context}
+
+Valid tool names (must match exactly):
+{valid_tool_names}
+
+Most recent tool error:
+- tool: {last_error["tool"]}
+- error: {last_error["error"]}
+
+Cached recent tool outputs (reuse if helpful; do NOT re-call tools unnecessarily):
+{cache}
+
+STRICT RULES:
+1) Output ONLY strict JSON in this format:
+{{
+  "steps": [
+    {{"tool": "tool_name", "args": {{"arg": "value"}}}}
+  ],
+  "missing_args": []
+}}
+2) Steps must be the MINIMUM required to fix the error.
+3) If the error is from Python_REPL (or any code-execution tool):
+   - Ensure the code defines all variables it uses.
+   - Ensure it prints the final value needed by the user.
+4) Prefer reusing cached tool outputs to reconstruct missing variables instead of re-calling tools.
+5) Do NOT include any narrative text. JSON only.
+
+Conversation History:
+{history}
+"""
+
+        if DEBUG_MESSAGES == 1:
+            rich_print("\n" + "="*80)
+            rich_print("GATE INPUT")
+            rich_print("="*80)
+            rich_print(prompt)
+            rich_print("="*80)
+
+        resp = model.invoke([HumanMessage(content=prompt)])
+
+        if DEBUG_MESSAGES == 1:
+            rich_print("\n" + "="*80)
+            rich_print("GATE RAW OUTPUT")
+            rich_print("="*80)
+            rich_print(resp.content)
+            rich_print("="*80)
+
+        repair_plan = _parse_plan(resp.content)
+
+        return {
+            "plan": repair_plan,
+            "repair_attempts": attempts + 1,
+            "last_tool_error": last_error,
+            "messages": [
+                AIMessage(content=f"System Note: Detected tool error in {last_error['tool']}. Attempting automatic repair.")
+            ],
+        }
+
+    return gate_node
+
+
+#============================= ROUTING UPDATE TO INCLUDE GATE =============================
+def route_after_gate(state: AgentState) -> str:
+    plan = state.get("plan", {}) or {}
+    steps = plan.get("steps", []) or []
+    return "validator" if steps else "responder"
+
 # ========================== BUILD GRAPH ==========================
 async def build_graph():
     tools = await setup_tools()
@@ -667,16 +858,28 @@ async def build_graph():
     workflow.add_node("planner", make_planner_node(tools_by_name))
     workflow.add_node("validator", make_validator_node(tools_by_name))
     workflow.add_node("executor", make_executor_node(tools_by_name))
+    workflow.add_node("gate", make_gate_node(tools_by_name, max_repairs=2))
     workflow.add_node("responder", make_responder_node())
 
     workflow.set_entry_point("planner")
-    workflow.add_edge("planner", "validator")   # direct to validator (reflection removed)
+    workflow.add_edge("planner", "validator")
 
-    workflow.add_conditional_edges("validator", route_after_validator, {"executor": "executor", "responder": "responder"})
+    workflow.add_conditional_edges(
+        "validator",
+        route_after_validator,
+        {"executor": "executor", "responder": "responder"},
+    )
 
-    workflow.add_edge("executor", "responder")
+    # After executing planned steps, run gate to detect & repair tool errors
+    workflow.add_edge("executor", "gate")
+
+    workflow.add_conditional_edges(
+        "gate",
+        route_after_gate,
+        {"validator": "validator", "responder": "responder"},
+    )
+
     workflow.add_edge("responder", END)
-
     return workflow.compile()
 
 
@@ -710,7 +913,7 @@ async def main():
         rich_print("\n(Agent is thinking...)\n")
 
         try:
-            async for step in graph.astream({"messages": chat_memory}, stream_mode="updates"):
+            async for step in graph.astream({"messages": chat_memory, "repair_attempts": 0}, stream_mode="updates"):
                 for node_name, node_output in step.items():
                     if not node_output:
                         continue
