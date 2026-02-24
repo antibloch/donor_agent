@@ -6,7 +6,6 @@ import json
 from typing import Annotated, Sequence, TypedDict, Optional
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from langgraph.graph.message import add_messages
-# from langchain_nvidia import ChatNVIDIA
 from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
 from langchain_core.tools import tool
@@ -29,435 +28,373 @@ langfuse = Langfuse(
 langfuse_handler = CallbackHandler()
 
 # ----------------------------
-# Variables Definition & File Handling
+# Constants
 # ----------------------------
-MODEL_NAME='llama-3.1-8b-instant'
-
+MODEL_NAME = "llama-3.1-8b-instant"
+BASE_URL = "http://localhost:3000"
+MOCK_USER_ID = "usr_mujtaba"
 
 # ----------------------------
-# 1) Graph state
+# 1) Graph State
 # ----------------------------
 class AgentState(TypedDict):
     messages: Annotated[Sequence[BaseMessage], add_messages]
     plan: Optional[dict]
+    selected_auction: Optional[dict]
+    skip_planner: Optional[bool]
 
 # ----------------------------
-# 2) Tools Definition
+# 2) Tool Definitions
 # ----------------------------
-POST_BASE_URL = "http://localhost:3000"
-GET_BASE_URL = "http://localhost:3000"
 
 @tool
-def check_wallet_balance():
+def get_wallet_balance():
     """
-    Fetch the wallet and associated virtual card details
-    for the authenticated user.
+    Fetch the current wallet balance for the authenticated user.
 
     Returns:
         dict:
-            - success (bool): Indicates whether the request was successful
-            - message (str): Response message from the API 
-
-            - wallet (dict | None):
-                - _id (str): Wallet ID
-                - user (str): Associated user ID
-                - balance (float): Available balance
-                - lockedBalance (float): Locked amount
-                - isDeleted (bool): Deletion status
-                - isActive (bool): Wallet active status
-                - transactionsHistory (list): List of transaction records
-                - createdAt (str): Creation timestamp (ISO format)
-                - __v (int): Document version
-
-            - virtualCard (dict | None):
-                - _id (str): Virtual card ID
-                - user (str): Associated user ID
-                - cardNumber (str): Virtual card number
-                - cardHolder (str): Card holder name
-                - expiryDate (str): Card expiry date (YYYY-MM-DD)
-                - cvv (str): Card security code (⚠ sensitive)
-                - isActive (bool): Card active statusk
-                - isBlocked (bool): Card blocked status
-                - cardType (str): Card network type (e.g., VISA)
-                - currency (str): Card currency
-                - limit (float): Spending limit
-                - createdAt (str): Creation timestamp
-                - updatedAt (str): Last update timestamp
-                - __v (int): Document version
-
-        If the wallet is not found:
-            - success (bool): False
-            - message (str): Error message
+            - success (bool)
+            - wallet_id (str)
+            - balance (float): Total balance
+            - lockedBalance (float): Amount locked in active bids
+            - availableBalance (float): balance minus lockedBalance
+            - isActive (bool)
     """
-    return requests.get(
-        f"{GET_BASE_URL}/api/v1/wallet/balance"
-    ).json()
+    return requests.get(f"{BASE_URL}/wallet/{MOCK_USER_ID}").json()
 
-@tool
-def get_payment_methods():
-    """
-    Retrieve available payment methods for the authenticated mock user.
-
-    Returns:
-        dict:
-            - success (bool): Indicates if the request was successful
-            - data (dict):
-                - success (bool): Internal operation status
-                - message (str): Operation result message
-                - count (int): Number of payment methods returned
-                - data (list): List of payment method objects, each including:
-                    - last4 (str): Last four digits of the card
-                    - type (int): Payment method type identifier
-                    - createdAt (str): Creation timestamp (ISO 8601 format)
-                    - brand (str): Card brand (e.g., visa)
-                    - expiryDate (str): Card expiry date (YYYY-MM-DD)
-                    - uid (str): Unique payment method identifier
-                    - country (str): Issuing country code (ISO 2-letter)
-
-
-        If retrieval fails:
-            - error (str): Error message explaining the issue
-    """
-    return requests.get(
-        f"{GET_BASE_URL}/api/v1/payment-apis/get-payment-methods"
-    ).json()
-
-@tool
-def add_payment_method():
-    """
-    Generate a hosted payment method page URL for the authenticated mock user.
-
-    Returns:
-        dict:
-            - success (bool): Indicates if the request was successful
-            - data (dict):
-                - success (bool): Internal operation status
-                - message (str): Operation result message
-                - url (str): Hosted payment page URL where user can add new payment methods
-    """
-    return requests.get(
-        f"{GET_BASE_URL}/api/v1/payment-apis/add-method"
-    ).json()
-
-@tool
-def fund_wallet(amount: float, paymentMethodId: str):
-    """
-    Fund a user's wallet using a selected payment method.
-
-    This tool sends a funding request to the wallet service using the
-    provided paymentMethodId and amount. It does not perform local
-    wallet or card validation logic; validation is handled by the backend API.
-
-    Args:
-        amount (float): The amount to fund into the wallet. 
-            Must be greater than zero.
-        paymentMethodId (str): Unique identifier of the selected
-            payment method (card) to be charged.
-
-    Returns:
-        dict: A dictionary containing:
-            - success (bool): Indicates if the request was successful.
-            - message (str): Confirmation message.
-            - data (dict):
-                - paymentRequestUid (str): Unique identifier of the payment request.
-                - customerId (str): Unique customer identifier.
-                - walletUid (str): Unique wallet identifier.
-                - newBalance (float): Updated wallet balance after funding.
-
-        If the request fails:
-            - success (bool): False
-            - message (str): Error description (e.g., missing fields,
-              invalid payment method, limit exceeded).
-    """
-    return requests.post(
-            f"{POST_BASE_URL}/api/v1/payment-apis/fund-wallet",
-            json={
-                "amount": amount,
-                "paymentMethodId":paymentMethodId
-            }
-        ).json()
-
-@tool
-def get_charities_by_country(country_code: str):
-    """
-    Retrieve a list of charities available in the specified country.
-
-    Args:
-        country_code (str): The country for which to fetch charities for e.g., (PK)
-
-    Returns:
-        dict: 
-            - success (bool): Indicates if the request was successful
-            - charities (list[dict]): List of charity objects, each containing:
-                - _id (str): Charity ID
-                - name (str): Charity name
-                - email (str): Contact email
-                - phone (str): Contact phone number
-                - description (str): Charity description
-                - address (dict): Charity address with fields:
-                    - street (str), city (str), state (str), country (str), countryCode (str), postalCode (str), latitude (float), longitude (float)
-                - documents (dict): Verification documents with fields like registrationCertificate, taxExemptionCertificate, annualReport, governmentApproval
-                - verificationStatus (str): Approval status
-                - CountryAvailability (list[dict]): List of countries where the charity operates
-                - website (str): Charity website URL
-                - logo (str): URL to charity logo
-                - isLikedByMe (bool): Whether the current user has liked this charity
-                - other fields like paymentCustomerId, registrationNumber, walletUid, partOfGiver, isDeleted, isSuspended, user, createdAt, updatedAt, __v
-            - pagination (dict):
-                - currentPage (int): Current page number
-                - totalPages (int): Total number of pages
-                - totalResults (int): Total number of charities
-                - hasMore (bool): Whether more pages are available
-    """
-    return requests.get(
-        f"{GET_BASE_URL}/api/v1/donations/charities/:{country_code}"
-    ).json()
 
 @tool
 def get_active_auctions():
     """
-    Fetch all currently active auctions from the backend Node service.
+    Fetch all currently active auctions. Only returns auctions where
+    status is Active and current time is within start and end timestamps.
 
     Returns:
-        list: List of active auctions with fields:
-            - _id
-            - title
-            - description
-            - minBidAmount
-            - incrementType
-            - incrementValue
-            - reservePrice
-            - startTimeStamp
-            - endTimeStamp
+        dict:
+            - success (bool)
+            - count (int)
+            - auctions (list): Each item includes _id, title, description,
+              minBidAmount, incrementType, incrementValue, reservePrice,
+              startTimeStamp, endTimeStamp, status,
+              currentHighestBid (float or null), totalBids (int)
     """
-    return requests.get("http://localhost:3000/auctions/active").json()
+    return requests.get(f"{BASE_URL}/auctions/active").json()
+
 
 @tool
 def get_auction_details(auction_id: str):
     """
     Retrieve full details of a single auction by its ID.
+    Includes currentHighestBid and totalBids.
 
     Args:
         auction_id (str): The unique ID of the auction.
 
     Returns:
-        dict: Full auction details if found, else:
-            {"error": "Auction not found"}
+        dict:
+            - success (bool)
+            - auction (dict): Full auction object
     """
-    return requests.get(f"http://localhost:3000/auctions/{auction_id}").json()
+    return requests.get(f"{BASE_URL}/auctions/{auction_id}").json()
 
+
+@tool
+def get_auction_bids(auction_id: str):
+    """
+    Retrieve all bids for a specific auction including the highest bid.
+
+    Args:
+        auction_id (str): The unique ID of the auction.
+
+    Returns:
+        dict:
+            - success (bool)
+            - auction_id (str)
+            - totalBids (int)
+            - highestBid (dict or null): amount, status, profile
+            - bids (list): All bids sorted by amount descending
+    """
+    return requests.get(f"{BASE_URL}/auctions/{auction_id}/bids").json()
+
+
+@tool
+def get_auction_items(auction_id: str):
+    """
+    Retrieve all items listed under a specific auction.
+
+    Args:
+        auction_id (str): The unique ID of the auction.
+
+    Returns:
+        dict:
+            - success (bool)
+            - auction_id (str)
+            - totalItems (int)
+            - items (list): Each item has name, description, condition, status
+    """
+    return requests.get(f"{BASE_URL}/auctions/{auction_id}/items").json()
+
+
+@tool
+def get_my_bid_history():
+    """
+    Retrieve the authenticated user's full bid history across all auctions.
+    Sorted newest first.
+
+    Returns:
+        dict:
+            - success (bool)
+            - user_id (str)
+            - totalBids (int)
+            - bids (list): Each entry has amount, status (Leading/Outbid/Won/Lost),
+              auctionTitle, auctionStatus, and timestamps
+    """
+    return requests.get(f"{BASE_URL}/users/{MOCK_USER_ID}/bids").json()
+
+
+@tool
+def place_bid(auction_id: str, amount: float):
+    """
+    Place a bid on an active auction on behalf of the authenticated user.
+    Server validates auction status, bid config, minimum bid, increment
+    rules, and wallet balance. On success the bid amount is locked in
+    the wallet. If outbid later, the locked amount is automatically released.
+
+    Args:
+        auction_id (str): The unique ID of the auction to bid on.
+        amount (float): The bid amount in USD.
+
+    Returns:
+        dict:
+            - success (bool)
+            - message (str)
+            - bidId (str)
+            - auctionTitle (str)
+            - amount (float)
+            - nextMinimumBid (float)
+            - newLockedBalance (float)
+            - availableBalance (float)
+    """
+    try:
+        response = requests.post(
+            f"{BASE_URL}/auction/bid",
+            json={
+                "user_id": MOCK_USER_ID,
+                "auction_id": auction_id,
+                "amount": amount,
+            },
+            timeout=5,
+        )
+        if not response.text.strip():
+            return {"success": False, "error": "Empty response from server"}
+        return response.json()
+    except requests.exceptions.ConnectionError:
+        return {"success": False, "error": "Could not connect to auction server."}
+    except requests.exceptions.Timeout:
+        return {"success": False, "error": "Auction server timed out."}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+@tool
+def finalize_ended_auctions():
+    """
+    Finalize all auctions that have ended. Deducts winning bid from
+    winner wallet and releases locked funds for all other bidders.
+
+    Returns:
+        dict:
+            - success (bool)
+            - message (str)
+    """
+    return requests.post(f"{BASE_URL}/auction/finalize").json()
+
+
+# ----------------------------
+# 3) Tool Registry
+# ----------------------------
 def build_tools():
-    # Both are "single input" tools
-    return [ get_active_auctions, get_auction_details]
+    return [
+        get_wallet_balance,
+        get_active_auctions,
+        get_auction_details,
+        get_auction_bids,
+        get_auction_items,
+        get_my_bid_history,
+        place_bid,
+        finalize_ended_auctions,
+    ]
 
-# ----------------------------
-# 3) Tools Processing for Planner
-# ----------------------------
 tools = build_tools()
 tools_by_name = {t.name: t for t in tools}
+
+
 def build_tool_context(tools_by_name):
     blocks = []
-
-    for tool in tools_by_name.values():
-        name = tool.name
-        description = tool.description or "No description."
-
-        args_schema = getattr(tool, "args_schema", None)
-
+    for t in tools_by_name.values():
+        name = t.name
+        description = (t.description or "No description.").split("\n")[0]  # first line only
+        args_schema = getattr(t, "args_schema", None)
         if args_schema:
             fields = args_schema.model_fields
-            arg_lines = []
-            for field_name, field in fields.items():
-                required = "required" if field.is_required() else "optional"
-                arg_lines.append(f"- {field_name} ({required})")
-
-            args_text = "\n".join(arg_lines)
+            arg_lines = [
+                f"  - {fn} ({'required' if f.is_required() else 'optional'})"
+                for fn, f in fields.items()
+            ]
+            args_text = "\n".join(arg_lines) if arg_lines else "  none"
         else:
-            args_text = "No parameters"
-
-        block = f"""
-{name}
-Description:
-{description}
-
-Arguments:
-{args_text}
-"""
-        blocks.append(block)
-
+            args_text = "  none"
+        blocks.append(f"{name}\n  Args:\n{args_text}")
     return "\n\n".join(blocks)
 
+
 # ----------------------------
-# 4) Model Definition
+# 4) Models
 # ----------------------------
 planner_model = ChatGroq(
-        model=MODEL_NAME,
-        api_key=os.environ.get('GROQ_API_KEY'), 
-        temperature=0.0,
-        callbacks=[langfuse_handler],
-        # extra_body={"chat_template_kwargs":{"enable_thinking":False,"clear_thinking":False}}
+    model=MODEL_NAME,
+    api_key=os.environ.get("GROQ_API_KEY"),
+    temperature=0.0,
+    callbacks=[langfuse_handler],
 )
-
-executor_model = ChatGroq(
-        model=MODEL_NAME,
-        api_key=os.environ.get('GROQ_API_KEY'), 
-        temperature=0.0,
-        callbacks=[langfuse_handler],
-        # extra_body={"chat_template_kwargs":{"enable_thinking":False,"clear_thinking":False}}
-).bind_tools(tools) 
 
 responder_model = ChatGroq(
-        model=MODEL_NAME,
-        api_key=os.environ.get('GROQ_API_KEY'), 
-        temperature=0.0,
-        callbacks=[langfuse_handler],
-        # extra_body={"chat_template_kwargs":{"enable_thinking":False,"clear_thinking":False}}
+    model=MODEL_NAME,
+    api_key=os.environ.get("GROQ_API_KEY"),
+    temperature=0.0,
+    callbacks=[langfuse_handler],
 )
 
 # ----------------------------
-# 4) Planner Node
-# ---------------------------- 
+# 5) Planner Node
+# ----------------------------
 def planner_node(state: AgentState):
-    # Only take the recent messages so context doesn't blow up
-    
-    chat_history = "\n".join([f"{msg.type}: {msg.content}" for msg in state["messages"]])
-    
+    chat_history = "\n".join(
+        [f"{msg.type}: {msg.content}" for msg in state["messages"]]
+    )
     tool_context = build_tool_context(tools_by_name)
+
     prompt = f"""
-    You are a specialized Auction Assistant.
+You are a planning assistant for a charity auction chatbot.
 
-YOUR DOMAIN:
-- Viewing active auctions
-- Viewing auction details
-- (Later) placing bids
+Your ONLY job is to decide which tools to call based on the user's request.
+Return a JSON plan. Nothing else — no explanation, no markdown.
 
-STRICT BOUNDARIES:
-- You are ONLY allowed to help with auction-related queries.
-- If the user asks about wallet, weather, sports, history, coding, or anything unrelated to auctions:
-    - Do NOT plan any tools.
-    - Return:
-      {{
-        "steps": [],
-        "missing_args": []
-      }}
+STRICT RULES:
+1. Use EXACT tool names from the list below.
+2. Only schedule a tool if you have ALL required arguments from the chat history.
+3. If a required argument is missing, add it to missing_args, do NOT schedule the tool.
+4. No-argument tools: get_wallet_balance, get_active_auctions, get_my_bid_history, finalize_ended_auctions.
+5. For place_bid you need BOTH auction_id AND amount explicitly stated by the user.
+6. If the user types ONLY a number like "1", "2", "3" — return empty steps. The UI handles number selection.
+7. If the user types a bid amount while viewing an auction — return empty steps. The UI handles bid placement.
+8. Do NOT schedule place_bid unless the user explicitly said "place a bid" with a clear amount AND auction context.
+9. Do NOT schedule get_auction_details, get_auction_items, or get_wallet_balance unless specifically asked.
+10. If no tool clearly matches the request, return empty steps and empty missing_args.
+11. Never schedule more than 2 tools at once.
 
-PLANNING RULES:
-1. Only schedule auction tools.
-2. Never invent arguments.
-3. If a required argument (like auction_id) is missing:
-   - DO NOT schedule the tool
-   - Put the parameter name in "missing_args"
-4. If the user is off-topic, return empty steps and empty missing_args.
+AVAILABLE TOOLS:
+{tool_context}
 
-    Return STRICT JSON matching this format exactly:
-    {{
-      "steps": [
-        {{
-          "tool": "tool_name",
-          "args": {{"arg_name": "value or $reference"}}
-        }}
-      ],
-      "missing_args": ["list", "of", "missing", "user", "inputs"]
-    }}
+OUTPUT FORMAT (strict JSON, no markdown):
+{{
+  "steps": [
+    {{"tool": "tool_name", "args": {{"arg": "value"}}}}
+  ],
+  "missing_args": []
+}}
 
-    7. If a tool requires an argument (e.g., 'country_code') and you do not have it in the Chat History:
-       - STOP: Do NOT put this tool in the "steps" array.
-       - INSTEAD: Add the parameter name to the "missing_args" array.
-    8. NEVER use "$ask.user", "$user_input", or any reference to a tool that hasn't run yet.
-    9. The "steps" array should ONLY contain tools where you have 100% of the data right now (either from history or from a tool scheduled earlier in this same plan).
-    10. 10. You MUST use tool names exactly as listed in AVAILABLE TOOLS.
-    Do NOT rename, paraphrase, or invent tool names.
-    
-    Example:
-    User: "Explore charities"
-    Action: {{"steps": [], "missing_args": ["country_code"]}} 
-    (Note: steps is empty because country_code is missing)
+Chat History:
+{chat_history}
+"""
 
-    AVAILABLE TOOLS (YOU MUST USE EXACT NAMES):
-
-    {tool_context}
-
-    Chat History & User Request:
-    {chat_history}
-    """
     response = planner_model.invoke(prompt)
+    print(f"\n  [Planner Raw]: {response.content[:400]}\n")
+
     try:
-        plan = json.loads(re.search(r"\{.*\}", response.content, re.DOTALL).group())
-    except:
+        match = re.search(r"\{.*\}", response.content, re.DOTALL)
+        plan = json.loads(match.group())
+    except Exception as e:
+        print(f"  [Planner Parse FAILED]: {e}")
         plan = {"steps": [], "missing_args": []}
+
     return {"plan": plan}
 
+
 # ----------------------------
-# 5) Validator Node 
-# ---------------------------- 
+# 6) Validator Node
+# ----------------------------
 def validator_node(state: AgentState):
     plan = state.get("plan", {})
     steps = plan.get("steps", [])
     missing_args = plan.get("missing_args", [])
     messages = []
 
-    # 1. FILTER STEPS: Remove tools that don't have arguments if we know args are missing
     valid_steps = []
     for step in steps:
         tool_name = step.get("tool")
         args = step.get("args", {})
 
-        # Safety: Check if tool exists
         if tool_name not in tools_by_name:
-            messages.append(AIMessage(content=f"System Note: Tool '{tool_name}' not found."))
+            messages.append(
+                AIMessage(content=f"System Note: Tool '{tool_name}' not found. Skipping.")
+            )
             continue
 
-        # CRITICAL CHECK: 
-        # If the tool is in 'steps' but has no arguments, and the planner 
-        # also put things in 'missing_args', this tool call is invalid.
+        # Skip steps that have no args when args are missing
         if not args and missing_args:
-            # We skip this step so the executor doesn't crash
             continue
-            
+
         valid_steps.append(step)
 
-    # 2. Update the plan in the state with the filtered steps
     updated_plan = {"steps": valid_steps, "missing_args": missing_args}
 
-    # 3. Handle the "Nothing to execute" cases
     if missing_args and not valid_steps:
         return {
             "plan": updated_plan,
-            "messages": [AIMessage(content=f"System Note: STOP EXECUTION. The planner needs input. Ask the user strictly for: {', '.join(missing_args)}")]
+            "messages": [
+                AIMessage(
+                    content=f"System Note: STOP. Ask the user for: {', '.join(missing_args)}"
+                )
+            ],
         }
 
     if not valid_steps and not missing_args:
         return {
             "plan": updated_plan,
-            "messages": [AIMessage(content="System Note: No tools needed. Reply nicely based on chat history.")]
+            "messages": [
+                AIMessage(content="System Note: No tools needed. Reply based on chat history.")
+            ],
         }
 
-    # Return the updated plan so the Router sees the correct number of steps
     return {"plan": updated_plan, "messages": messages}
 
+
 # ----------------------------
-# 6) Executor Node
-# ---------------------------- 
+# 7) Executor Node
+# ----------------------------
+active_auctions_cache = {}  # maps "1","2","3" -> auction dict
+
+
 def get_historical_tool_data(ref_tool, local_results, all_messages):
-    """Fetches tool data from current turn OR previous conversational turns."""
     if ref_tool in local_results:
         return local_results[ref_tool]
-    
-    # Search backwards through chat history for the previous tool execution
     for msg in reversed(all_messages):
         if isinstance(msg, ToolMessage) and msg.name == ref_tool:
             try:
                 return json.loads(msg.content)
-            except:
+            except Exception:
                 pass
     return None
+
 
 def executor_node(state: AgentState):
     plan = state.get("plan", {})
     steps = plan.get("steps", [])
     missing_args = plan.get("missing_args", [])
-    
-    if not steps: 
+
+    if not steps:
         return {}
 
     messages = []
@@ -468,76 +405,94 @@ def executor_node(state: AgentState):
         raw_args = dict(step.get("args", {}))
         resolved_args = {}
 
+        # Resolve $reference args
         for key, value in raw_args.items():
             if isinstance(value, str) and value.startswith("$"):
                 ref = value[1:]
                 parts = ref.split(".", 1)
                 ref_tool = parts[0]
                 path = parts[1] if len(parts) > 1 else ""
-
                 data = get_historical_tool_data(ref_tool, tool_results, state["messages"])
-                
                 if data is None:
-                    return {"messages": [AIMessage(content=f"Execution aborted: Tool '{ref_tool}' has no data for reference '${ref}'.")]}
-
+                    return {
+                        "messages": [
+                            AIMessage(
+                                content=f"Execution aborted: no data from '{ref_tool}' for '${ref}'."
+                            )
+                        ]
+                    }
                 for part in path.replace("[", ".").replace("]", "").split("."):
-                    if not part: continue
+                    if not part:
+                        continue
                     if part.isdigit():
                         try:
                             data = data[int(part)]
                         except (IndexError, TypeError):
-                            return {"messages": [AIMessage(content=f"Execution aborted: Index {part} out of bounds in '${ref}'.")]}
+                            return {"messages": [AIMessage(content=f"Index {part} out of bounds.")]}
                     else:
-                        if isinstance(data, dict):
-                            data = data.get(part)
-                        else:
-                            return {"messages": [AIMessage(content=f"Execution aborted: Path '{part}' not found in '${ref}'.")]}
-
+                        data = data.get(part) if isinstance(data, dict) else None
                 resolved_args[key] = data
             else:
                 resolved_args[key] = value
 
-        tool = tools_by_name[tool_name]
-        result = tool.invoke(resolved_args)
-        parsed = result if not isinstance(result, str) else json.loads(result)
+        # Execute tool — real API call
+        tool_fn = tools_by_name[tool_name]
+        print(f"  [Executor] {tool_name}({resolved_args})")
+        result = tool_fn.invoke(resolved_args)
+        parsed = result if isinstance(result, dict) else json.loads(result)
         tool_results[tool_name] = parsed
+        print(f"  [Executor] Result: {json.dumps(parsed, default=str)[:300]}")
 
-        # --- NEW: Cache active auctions ---
+        # Build user-friendly message for get_active_auctions
         if tool_name == "get_active_auctions":
-            active_auctions_cache.clear()  # Clear old cache
-            for i, auction in enumerate(parsed):
-                # Number them 1, 2, 3,... for user-friendly selection
-                active_auctions_cache[str(i+1)] = auction
+            active_auctions_cache.clear()
+            auctions_list = parsed.get("auctions", [])
+            for i, auction in enumerate(auctions_list):
+                active_auctions_cache[str(i + 1)] = auction
 
-            # Optional: create a formatted message to display to the user
-            auction_lines = []
-            for i, auction in enumerate(parsed):
-                auction_lines.append(f"{i+1}. {auction['title']} | Current Bid: {auction.get('currentBid', 'N/A')}")
-            formatted_list = "\n".join(auction_lines)
+            if auctions_list:
+                lines = []
+                for i, a in enumerate(auctions_list):
+                    current = f"${a['currentHighestBid']}" if a.get("currentHighestBid") else "No bids yet"
+                    lines.append(
+                        f"{i+1}. {a['title']}\n"
+                        f"   Min Bid: ${a['minBidAmount']} | "
+                        f"Current Highest: {current} | "
+                        f"Ends: {a['endTimeStamp'][:10]}"
+                    )
+                messages.append(
+                    AIMessage(
+                        content=(
+                            f"Here are the active auctions:\n\n"
+                            + "\n".join(lines)
+                            + "\n\nType a number to view details and place a bid."
+                        )
+                    )
+                )
+            else:
+                messages.append(AIMessage(content="There are no active auctions at the moment."))
 
-            messages.append(AIMessage(
-                content=f"Here are the active auctions:\n{formatted_list}\n\nPlease type the number of the auction you'd like details about."
-            ))
+        # Append raw tool result for LLM context
+        messages.append(
+            ToolMessage(
+                content=json.dumps(parsed, ensure_ascii=False, default=str),
+                name=tool_name,
+                tool_call_id=str(uuid4()),
+            )
+        )
 
-        messages.append(ToolMessage(
-            content=json.dumps(parsed, ensure_ascii=False, default=str),
-            name=tool_name, tool_call_id=str(uuid4())
-        ))
-
-    # IMPORTANT: If tools were executed but the planner still indicated missing arguments for FUTURE steps, ask the user!
     if missing_args:
-        messages.append(AIMessage(content=f"System Note: Tools executed successfully. Now ask the user to provide: {', '.join(missing_args)}"))
+        messages.append(
+            AIMessage(content=f"System Note: Ask the user for: {', '.join(missing_args)}")
+        )
 
     return {"messages": messages}
 
-# ----------------------------
-# 7) Responder Node
-# ----------------------------
-# Cache for active auctions mapping numbers -> auction dict
-active_auctions_cache = {}
 
+# ----------------------------
+# 8) Responder Node
+# ----------------------------
 def responder(state: AgentState):
-    # Get the last user message
     user_last_msg = ""
     for msg in reversed(state["messages"]):
         if isinstance(msg, HumanMessage):
@@ -546,92 +501,333 @@ def responder(state: AgentState):
 
     messages_to_send = []
 
-    # --- Step 1: Check if user typed a number corresponding to an active auction ---
+    # Helper: get the most recent result for a specific tool this turn
+    def get_latest_tool_result(tool_name):
+        for msg in reversed(state["messages"]):
+            if isinstance(msg, ToolMessage) and msg.name == tool_name:
+                try:
+                    return json.loads(msg.content)
+                except Exception:
+                    return None
+        return None
+
+    # Helper: check if a tool was called in the most recent executor turn
+    def tool_was_just_called(tool_name):
+        # Walk backwards — stop if we hit a HumanMessage (means it was a prior turn)
+        for msg in reversed(state["messages"]):
+            if isinstance(msg, HumanMessage):
+                break
+            if isinstance(msg, ToolMessage) and msg.name == tool_name:
+                return True
+        return False
+
+    # -------------------------------------------------------
+    # CASE 1: place_bid was just executed — show result
+    # -------------------------------------------------------
+    if tool_was_just_called("place_bid"):
+        result = get_latest_tool_result("place_bid")
+        if result:
+            if result.get("success"):
+                state["selected_auction"] = None
+                messages_to_send.append(
+                    AIMessage(
+                        content=(
+                            f"Your bid of ${result.get('amount')} on "
+                            f"'{result.get('auctionTitle')}' was placed successfully!\n\n"
+                            f"Locked Balance:    ${result.get('newLockedBalance')}\n"
+                            f"Available Balance: ${result.get('availableBalance')}\n"
+                            f"Next Minimum Bid:  ${result.get('nextMinimumBid')}\n\n"
+                            f"You are currently the highest bidder.\n"
+                            f"If someone outbids you, your ${result.get('amount')} will be "
+                            f"automatically unlocked and returned to your available balance."
+                            f"Your bid of ${result.get('amount')} on "
+                            f"'{result.get('auctionTitle')}' was placed successfully!\n\n"
+                            f"Bid Reference:     {result.get('bidId')}\n"   # add this line
+                            f"Locked Balance:    ${result.get('newLockedBalance')}\n"
+                            f"Available Balance: ${result.get('availableBalance')}\n"
+                            f"Next Minimum Bid:  ${result.get('nextMinimumBid')}\n\n"
+                        )
+                    )
+                )
+            else:
+                messages_to_send.append(
+                    AIMessage(
+                        content=(
+                            f"Could not place bid: "
+                            f"{result.get('message', result.get('error', 'Unknown error'))}\n\n"
+                            f"Please try a different amount, or type 'cancel' to go back."
+                        )
+                    )
+                )
+        return {"messages": messages_to_send}
+
+    # -------------------------------------------------------
+    # CASE 2: get_wallet_balance was just called — show balance
+    # -------------------------------------------------------
+    if tool_was_just_called("get_wallet_balance"):
+        result = get_latest_tool_result("get_wallet_balance")
+        if result and result.get("success"):
+            # If user is mid-bid, remind them of the context too
+            auction_reminder = ""
+            if state.get("selected_auction"):
+                a = state["selected_auction"]
+                auction_reminder = (
+                    f"\n\nYou are currently viewing '{a.get('title')}'. "
+                    f"Type a bid amount to proceed or 'cancel' to go back."
+                )
+            messages_to_send.append(
+                AIMessage(
+                    content=(
+                        f"Your current wallet:\n\n"
+                        f"Total Balance:     ${result.get('balance')}\n"
+                        f"Locked in Bids:    ${result.get('lockedBalance')}\n"
+                        f"Available to Spend: ${result.get('availableBalance')}"
+                        f"{auction_reminder}"
+                    )
+                )
+            )
+        return {"messages": messages_to_send}
+
+    # -------------------------------------------------------
+    # CASE 3: get_my_bid_history was just called
+    # -------------------------------------------------------
+    if tool_was_just_called("get_my_bid_history"):
+        result = get_latest_tool_result("get_my_bid_history")
+        if result and result.get("success"):
+            bids = result.get("bids", [])
+            if not bids:
+                messages_to_send.append(AIMessage(content="You have no bid history yet."))
+            else:
+                lines = []
+                for b in bids:
+                    lines.append(
+                        f"- {b.get('auctionTitle')} | "
+                        f"${b.get('amount')} | "
+                        f"Status: {b.get('status')} | "
+                        f"Auction: {b.get('auctionStatus')}"
+                    )
+                messages_to_send.append(
+                    AIMessage(
+                        content=f"Your bid history ({result.get('totalBids')} total):\n\n"
+                        + "\n".join(lines)
+                    )
+                )
+        return {"messages": messages_to_send}
+
+    # -------------------------------------------------------
+    # CASE 4: get_auction_bids was just called
+    # -------------------------------------------------------
+    if tool_was_just_called("get_auction_bids"):
+        result = get_latest_tool_result("get_auction_bids")
+        if result and result.get("success"):
+            highest = result.get("highestBid")
+            total = result.get("totalBids", 0)
+            if total == 0:
+                msg = "No bids have been placed on this auction yet."
+            else:
+                msg = (
+                    f"This auction has {total} bid(s).\n"
+                    f"Current highest bid: ${highest['amount']} (Status: {highest['status']})"
+                )
+            messages_to_send.append(AIMessage(content=msg))
+        return {"messages": messages_to_send}
+
+    # -------------------------------------------------------
+    # CASE 5: get_auction_items was just called
+    # -------------------------------------------------------
+    if tool_was_just_called("get_auction_items"):
+        result = get_latest_tool_result("get_auction_items")
+        if result and result.get("success"):
+            items = result.get("items", [])
+            if not items:
+                messages_to_send.append(AIMessage(content="No items found for this auction."))
+            else:
+                lines = [
+                    f"- {item.get('name')} ({item.get('condition')}): "
+                    f"{item.get('description', '').replace('<p>', '').replace('</p>', '')}"
+                    for item in items
+                ]
+                messages_to_send.append(
+                    AIMessage(
+                        content=f"Items in this auction:\n\n" + "\n".join(lines)
+                    )
+                )
+        return {"messages": messages_to_send}
+
+    # -------------------------------------------------------
+    # CASE 6: get_auction_details was just called (not from number selection)
+    # -------------------------------------------------------
+    if tool_was_just_called("get_auction_details") and not tool_was_just_called("place_bid"):
+        result = get_latest_tool_result("get_auction_details")
+        if result and result.get("success"):
+            auction_data = result.get("auction", {})
+            current_bid = auction_data.get("currentHighestBid")
+            increment_type = auction_data.get("incrementType", "fixed")
+            increment_value = auction_data.get("incrementValue", 0)
+            min_bid = auction_data.get("minBidAmount", 0)
+
+            if current_bid:
+                next_min = (
+                    round(current_bid + increment_value, 2)
+                    if increment_type == "fixed"
+                    else round(current_bid * (1 + increment_value / 100), 2)
+                )
+            else:
+                next_min = min_bid
+
+            state["selected_auction"] = auction_data
+
+            text = (
+                f"--- {auction_data.get('title', 'N/A')} ---\n\n"
+                f"{auction_data.get('description', '').replace('<p>', '').replace('</p>', '')}\n\n"
+                f"Minimum Bid:     ${min_bid}\n"
+                f"Current Highest: {'$' + str(current_bid) if current_bid else 'No bids yet'}\n"
+                f"Your Minimum:    ${next_min}\n"
+                f"Ends:            {auction_data.get('endTimeStamp', 'N/A')[:10]}\n\n"
+                f"Type the amount you want to bid (minimum ${next_min}), or type 'cancel' to go back."
+            )
+            messages_to_send.append(AIMessage(content=text))
+        return {"messages": messages_to_send}
+
+    # -------------------------------------------------------
+    # CASE 7: User picked auction by number
+    # -------------------------------------------------------
     if user_last_msg.isdigit() and user_last_msg in active_auctions_cache:
         auction = active_auctions_cache[user_last_msg]
-        # Call the details tool
         details_result = get_auction_details.invoke({"auction_id": auction["_id"]})
-
-        
-
-        # The result may be a string (JSON) or dict depending on your tool setup
         details = details_result if isinstance(details_result, dict) else json.loads(details_result)
+        auction_data = details.get("auction", details)
 
-        auction_text = f"""
-        Title: {details.get('title', 'N/A')}
+        current_bid = auction_data.get("currentHighestBid")
+        increment_type = auction_data.get("incrementType", "fixed")
+        increment_value = auction_data.get("incrementValue", 0)
+        min_bid = auction_data.get("minBidAmount", 0)
 
-        Description: {details.get('description', 'N/A')}
-        Minimum Bid: {details.get('minBidAmount', 'N/A')}
-        Current Bid: {details.get('currentBid', 'N/A')}
-        Start Time: {details.get('startTimeStamp', 'N/A')}
-        End Time: {details.get('endTimeStamp', 'N/A')}
-        """
-        messages_to_send.append(AIMessage(content=auction_text))
-        active_auctions_cache.clear()  # clear cache after selection
+        if current_bid:
+            next_min = (
+                round(current_bid + increment_value, 2)
+                if increment_type == "fixed"
+                else round(current_bid * (1 + increment_value / 100), 2)
+            )
+        else:
+            next_min = min_bid
 
+        state["selected_auction"] = auction_data
+
+        text = (
+            f"--- {auction_data.get('title', 'N/A')} ---\n\n"
+            f"{auction_data.get('description', '').replace('<p>', '').replace('</p>', '')}\n\n"
+            f"Minimum Bid:     ${min_bid}\n"
+            f"Current Highest: {'$' + str(current_bid) if current_bid else 'No bids yet'}\n"
+            f"Your Minimum:    ${next_min}\n"
+            f"Ends:            {auction_data.get('endTimeStamp', 'N/A')[:10]}\n\n"
+            f"Type the amount you want to bid (minimum ${next_min}), or type 'cancel' to go back."
+        )
+        messages_to_send.append(AIMessage(content=text))
         return {"messages": messages_to_send}
 
-    # --- Step 2: User typed a number but invalid ---
-    elif user_last_msg.isdigit() and user_last_msg not in active_auctions_cache and active_auctions_cache:
-        messages_to_send.append(AIMessage(
-            content=f"Invalid selection. Please choose a number between 1 and {len(active_auctions_cache)}."
-        ))
+    # Invalid number
+    if user_last_msg.isdigit() and active_auctions_cache and user_last_msg not in active_auctions_cache:
+        messages_to_send.append(
+            AIMessage(
+                content=f"Invalid selection. Please choose a number between 1 and {len(active_auctions_cache)}."
+            )
+        )
         return {"messages": messages_to_send}
 
-    # --- Step 3: Normal auction assistant flow ---
+    # -------------------------------------------------------
+    # CASE 8: User is in bid placement flow (typed an amount)
+    # -------------------------------------------------------
+    if state.get("selected_auction"):
+        auction = state["selected_auction"]
+
+        if user_last_msg.lower() in ["cancel", "back", "no"]:
+            state["selected_auction"] = None
+            messages_to_send.append(
+                AIMessage(content="Bid cancelled. You can view active auctions again.")
+            )
+            return {"messages": messages_to_send}
+
+        try:
+            bid_amount = float(user_last_msg)
+        except ValueError:
+            messages_to_send.append(
+                AIMessage(
+                    content="Please enter a valid numeric bid amount, or type 'cancel' to go back."
+                )
+            )
+            return {"messages": messages_to_send}
+
+        # Make the real API call
+        print(f"  [Responder] Placing bid: {auction['_id']} amount={bid_amount}")
+        bid_result = place_bid.invoke({"auction_id": auction["_id"], "amount": bid_amount})
+        bid_result = bid_result if isinstance(bid_result, dict) else json.loads(bid_result)
+        print(f"  [Responder] Bid result: {bid_result}")
+
+        if bid_result.get("success"):
+            state["selected_auction"] = None
+            messages_to_send.append(
+                AIMessage(
+                    content=(
+                        f"Your bid of ${bid_amount} on '{bid_result.get('auctionTitle')}' "
+                        f"was placed successfully!\n\n"
+                        f"Locked Balance:    ${bid_result.get('newLockedBalance')}\n"
+                        f"Available Balance: ${bid_result.get('availableBalance')}\n"
+                        f"Next Minimum Bid:  ${bid_result.get('nextMinimumBid')}\n\n"
+                        f"You are currently the highest bidder.\n"
+                        f"If someone outbids you, your ${bid_amount} will be "
+                        f"automatically unlocked and returned to your available balance."
+                    )
+                )
+            )
+        else:
+            messages_to_send.append(
+                AIMessage(
+                    content=(
+                        f"Could not place bid: "
+                        f"{bid_result.get('message', bid_result.get('error', 'Unknown error'))}\n\n"
+                        f"Please try a different amount, or type 'cancel' to go back."
+                    )
+                )
+            )
+        return {"messages": messages_to_send}
+
+    # -------------------------------------------------------
+    # CASE 9: Default — LLM handles general conversation
+    # -------------------------------------------------------
     message_summary = state["messages"]
-    
-    # Strict System Prompt
     system_prompt = """
-        You are a specialized Auction Assistant.
+You are a specialized Auction Assistant for a charitable organization.
 
-        CRITICAL TOPIC BOUNDARIES:
-        1. You ONLY assist with auction-related actions:
-        - Viewing active auctions
-        - Viewing auction details
-        - (Later) placing bids
-        2. DO NOT answer questions about:
-        - Wallets
-        - Payments
-        - Donations
-        - Weather
-        - Sports
-        - Coding
-        - History
-        - General knowledge
-        3. If the user asks anything outside auctions:
-        - Politely refuse
-        - State that you are an Auction Assistant only
-        - Ask if they would like to view active auctions
+You ONLY assist with:
+- Viewing active auctions
+- Viewing auction details and items
+- Checking bid history
+- Checking wallet balance
+- Placing bids
 
-        DO NOT use emojis.
-        Base your answer strictly on conversation history and tool outputs.
-            """
-
-    # Combine instructions with history
+If the user asks about anything outside this scope, politely decline.
+Do NOT use emojis. Keep responses short and factual.
+Do NOT invent auction data, bid amounts, or any numbers.
+If you do not know something, say so and suggest the user asks to view auctions.
+"""
     final_prompt = [
         HumanMessage(
             content=f"{system_prompt}\n\nConversation History:\n{message_summary}"
         )
     ]
-    
     summary = responder_model.invoke(final_prompt)
     messages_to_send.append(summary)
-    
     return {"messages": messages_to_send}
 
+
 # ----------------------------
-# 8) Control Flow
+# 9) Routing
 # ----------------------------
 def route_after_validator(state: AgentState):
-    plan = state.get("plan", {})
-    steps = plan.get("steps", [])
-    
-    # If there are steps to run, route to executor. 
-    # If no steps, route directly to responder (to chat or ask for missing args).
-    if len(steps) > 0:
-        return "executor"
-    return "responder"
+    steps = state.get("plan", {}).get("steps", [])
+    return "executor" if steps else "responder"
+
 
 def build_graph():
     workflow = StateGraph(AgentState)
@@ -639,37 +835,31 @@ def build_graph():
     workflow.add_node("validator", validator_node)
     workflow.add_node("executor", executor_node)
     workflow.add_node("responder", responder)
-    
+
     workflow.set_entry_point("planner")
     workflow.add_edge("planner", "validator")
-    
-    # Clean string returns to avoid KeyErrors
     workflow.add_conditional_edges("validator", route_after_validator)
-    
     workflow.add_edge("executor", "responder")
     workflow.add_edge("responder", END)
-    
+
     return workflow.compile()
 
+
 # ----------------------------
-# Run - Interactive Chat Loop
+# 10) Main
 # ----------------------------
 def main():
     graph = build_graph()
-    
-    # "Memory" for the conversation
     chat_memory = []
-    
-    
+
     print("\n==================================================")
-    print("💰 FINANCIAL WALLET AGENT (CLI MODE)")
-    print("Type 'exit', 'quit', or 'q' to stop.")
+    print("  CHARITY AUCTION AGENT")
+    print("  Type 'exit' to quit.")
     print("==================================================\n")
 
     while True:
-        # 1. Get User Input
         try:
-            user_input = input("User: ")
+            user_input = input("You: ")
         except (KeyboardInterrupt, EOFError):
             print("\nGoodbye!")
             break
@@ -677,60 +867,58 @@ def main():
         if user_input.lower() in ["exit", "quit", "q"]:
             print("Goodbye!")
             break
-        
-        # 2. Add User Message to Memory
-        user_msg = HumanMessage(content=user_input)
-        chat_memory.append(user_msg)
-        
-        # 3. Stream the Graph
-        print("\n(Agent is thinking...)\n")
-        
+
+        user_input_stripped = user_input.strip()
+
+        in_bid_flow = any(
+            isinstance(msg, AIMessage) and "Type the amount you want to bid" in msg.content
+            for msg in reversed(chat_memory[-6:])
+        )
+
+        skip = user_input_stripped.isdigit() or in_bid_flow
+
+        chat_memory.append(HumanMessage(content=user_input_stripped))
+        print("\n(thinking...)\n")
+
         try:
-            for step in graph.stream({"messages": chat_memory}, stream_mode="updates"):
+            for step in graph.stream(
+                {
+                    "messages": chat_memory,
+                    "plan": None,
+                    "selected_auction": None,
+                    "skip_planner": skip,
+                },
+                stream_mode="updates",
+            ):
                 for node_name, node_output in step.items():
-                    
-                    # --- FIX: SAFETY CHECK ---
-                    # If a node returns None or empty dict, skip it to prevent "NoneType" error
                     if not node_output:
                         continue
-                    
-                    # --- A) Display Planner Logic ---
-                    # safely check if "plan" is in the dictionary
+
                     if node_name == "planner" and "plan" in node_output:
                         plan = node_output["plan"]
-                        steps = plan.get("steps", [])
+                        scheduled = [s["tool"] for s in plan.get("steps", [])]
                         missing = plan.get("missing_args", [])
-                        
-                        if steps:
-                            print(f"  ➤ [Planner] Scheduled tools: {[s['tool'] for s in steps]}")
+                        if scheduled:
+                            print(f"  [Planner] Scheduled: {scheduled}")
                         if missing:
-                            print(f"  ➤ [Planner] Need user input for: {missing}")
+                            print(f"  [Planner] Missing: {missing}")
+                        if not scheduled and not missing:
+                            print(f"  [Planner] No tools needed")
 
-                    # --- B) Capture and Print New Messages ---
-                    # safely check if "messages" is in the dictionary
                     if "messages" in node_output:
-                        new_messages = node_output["messages"]
-                        for msg in new_messages:
-                            # CRITICAL: Append new messages to memory for the next turn
+                        for msg in node_output["messages"]:
                             chat_memory.append(msg)
-
-                            # Print outputs nicely
                             if isinstance(msg, ToolMessage):
-                                print(f"  ➤ [Tool Executed] {msg.name}")
-                            
+                                print(f"  [Tool Done] {msg.name}")
                             elif isinstance(msg, AIMessage):
-                                # Distinguish between hidden System Notes and actual Responses
-                                if "System Note:" in msg.content:
-                                    # (Optional) Print system logic for debugging
-                                    # print(f"  ➤ [Logic] {msg.content}")
-                                    pass
-                                else:
+                                if "System Note:" not in msg.content:
                                     print(f"\nAgent: {msg.content}\n")
-                                    
+
         except Exception as e:
-            print(f"\n[ERROR] An error occurred in the graph: {e}")
+            print(f"\n[ERROR] {e}")
             import traceback
             traceback.print_exc()
+
 
 if __name__ == "__main__":
     main()

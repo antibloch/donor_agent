@@ -1,16 +1,16 @@
 {
   "wallets": {
-    "6957c385b7df149a6c551b53": {
-      "_id": "6957c385b7df149a6c551b53",
-      "user": "6957c361b7df149a6c551b4c",
-      "balance": 4150.75,
-      "lockedBalance": 300,
+    "wlt_mujtaba": {
+      "_id": "wlt_mujtaba",
+      "user": "usr_mujtaba",
+      "balance": 5000,
+      "lockedBalance": 801.4,
       "isDeleted": false,
       "transactionsHistory": [
         {
           "transactionId": "tx_001",
           "type": "CREDIT",
-          "amount": 2000,
+          "amount": 5000,
           "currency": "USD",
           "timestamp": "2026-01-05T10:00:00Z"
         },
@@ -19,45 +19,24 @@
           "type": "DEBIT",
           "amount": 500,
           "currency": "USD",
-          "timestamp": "2026-01-06T12:30:00Z"
-        },
-        {
-          "transactionId": "8aff3280-516c-46cc-a15c-f73e92ef70d5",
-          "type": "CREDIT",
-          "amount": 550,
-          "currency": "USD",
-          "timestamp": "2026-02-17T12:32:14.593Z"
-        },
-        {
-          "transactionId": "1b43280b-d3ba-4f89-83fd-f27d346e47c5",
-          "type": "CREDIT",
-          "amount": 550,
-          "currency": "USD",
-          "timestamp": "2026-02-17T12:41:11.973Z"
-        },
-        {
-          "transactionId": "56c2da99-5b25-41ab-af9b-4ed60c36e185",
-          "type": "CREDIT",
-          "amount": 550,
-          "currency": "USD",
-          "timestamp": "2026-02-18T03:59:00.594Z"
+          "timestamp": "2026-01-10T12:30:00Z"
         }
       ],
       "isActive": true,
       "createdAt": "2026-01-02T13:09:25Z",
-      "__v": 3
+      "__v": 1
     },
-    "6957d111b7df149a6c552999": {
-      "_id": "6957d111b7df149a6c552999",
-      "user": "6957c3cdb7df149a6c551bf0",
-      "balance": 10000,
-      "lockedBalance": 0,
+    "wlt_wasil": {
+      "_id": "wlt_wasil",
+      "user": "usr_wasil",
+      "balance": 8000,
+      "lockedBalance": 267,
       "isDeleted": false,
       "transactionsHistory": [
         {
           "transactionId": "tx_010",
           "type": "CREDIT",
-          "amount": 10000,
+          "amount": 8000,
           "currency": "USD",
           "timestamp": "2026-01-10T09:15:00Z"
         }
@@ -65,39 +44,12 @@
       "isActive": true,
       "createdAt": "2026-01-08T09:00:00Z",
       "__v": 1
-    },
-    "6957d222b7df149a6c553abc": {
-      "_id": "6957d222b7df149a6c553abc",
-      "user": "6957d000b7df149a6c553000",
-      "balance": 0,
-      "lockedBalance": 0,
-      "isDeleted": false,
-      "transactionsHistory": [],
-      "isActive": false,
-      "createdAt": "2026-01-15T15:45:10Z",
-      "__v": 0
     }
   },
   "virtual_cards": {
-    "6957c3f8b7df149a6c551c22": {
-      "_id": "6957c3f8b7df149a6c551c22",
-      "user": "6957c3cdb7df149a6c551bf0",
-      "cardNumber": "8484887777800474",
-      "cardHolder": "Wasil Mughal",
-      "expiryDate": "2027-01-01",
-      "cvv": "280",
-      "isActive": true,
-      "isBlocked": false,
-      "cardType": "VISA",
-      "currency": "USD",
-      "limit": 100000,
-      "createdAt": "2026-01-02T13:11:20Z",
-      "updatedAt": "2026-01-02T13:11:20Z",
-      "__v": 0
-    },
-    "6957d555b7df149a6c554555": {
-      "_id": "6957d555b7df149a6c554555",
-      "user": "6957c361b7df149a6c551b4c",
+    "card_mujtaba_visa": {
+      "_id": "card_mujtaba_visa",
+      "user": "usr_mujtaba",
       "cardNumber": "4111111111111111",
       "cardHolder": "Mujtaba Mateen",
       "expiryDate": "2028-05-01",
@@ -109,11 +61,11 @@
       "limit": 5000,
       "createdAt": "2026-01-12T10:00:00Z",
       "updatedAt": "2026-01-12T10:00:00Z",
-      "__v": 1
+      "__v": 0
     },
-    "6957d666b7df149a6c556666": {
-      "_id": "6957d666b7df149a6c556666",
-      "user": "6957c361b7df149a6c551b4c",
+    "card_mujtaba_mc_blocked": {
+      "_id": "card_mujtaba_mc_blocked",
+      "user": "usr_mujtaba",
       "cardNumber": "5555555555554444",
       "cardHolder": "Mujtaba Mateen",
       "expiryDate": "2026-12-01",
@@ -125,109 +77,354 @@
       "limit": 2000,
       "createdAt": "2026-01-15T11:00:00Z",
       "updatedAt": "2026-01-20T11:00:00Z",
-      "__v": 2
+      "__v": 1
     },
-    "6957d777b7df149a6c557777": {
-      "_id": "6957d777b7df149a6c557777",
-      "user": "6957d000b7df149a6c553000",
-      "cardNumber": "378282246310005",
-      "cardHolder": "Ali Khan",
-      "expiryDate": "2029-09-01",
-      "cvv": "789",
-      "isActive": false,
+    "card_wasil_visa": {
+      "_id": "card_wasil_visa",
+      "user": "usr_wasil",
+      "cardNumber": "8484887777800474",
+      "cardHolder": "Wasil Mughal",
+      "expiryDate": "2027-01-01",
+      "cvv": "280",
+      "isActive": true,
       "isBlocked": false,
-      "cardType": "AMEX",
+      "cardType": "VISA",
       "currency": "USD",
-      "limit": 15000,
-      "createdAt": "2026-01-18T08:30:00Z",
-      "updatedAt": "2026-01-18T08:30:00Z",
+      "limit": 10000,
+      "createdAt": "2026-01-02T13:11:20Z",
+      "updatedAt": "2026-01-02T13:11:20Z",
       "__v": 0
     }
   },
+  "auctionitemcategories": {
+    "cat_food": {
+      "_id": "cat_food",
+      "name": "Food & Groceries",
+      "description": "Charity food hampers and grocery bundles",
+      "color": "#FFD93D",
+      "status": "Active"
+    },
+    "cat_drinks": {
+      "_id": "cat_drinks",
+      "name": "Beverages",
+      "description": "Drinks and beverage packages",
+      "color": "#6BCB77",
+      "status": "Active"
+    },
+    "cat_essentials": {
+      "_id": "cat_essentials",
+      "name": "Household Essentials",
+      "description": "Basic household and hygiene supplies",
+      "color": "#4D96FF",
+      "status": "Active"
+    }
+  },
   "auctions": {
-    "a1": {
-      "_id": "a1",
-      "title": "Painting by Picasso",
-      "description": "Abstract painting from 1930s",
-      "minBidAmount": 500,
+    "auc_active_fixed": {
+      "_id": "auc_active_fixed",
+      "profile": "usr_charity_hope",
+      "profileModel": "CharityOrganization",
+      "title": "Premium Ramadan Food Hamper",
+      "category": "cat_food",
+      "condition": "New",
+      "description": "<p>A curated Ramadan hamper with dates, nuts, canned goods and dry rations for a family of four.</p>",
+      "minBidAmount": 50,
       "incrementType": "fixed",
-      "incrementValue": 50,
-      "reservePrice": 1000,
-      "startTimeStamp": "2026-02-17T10:00:00Z",
-      "endTimeStamp": "2026-02-25T10:00:00Z",
-      "status": "Active"
+      "incrementValue": 10,
+      "reservePrice": 150,
+      "startTimeStamp": "2026-02-01T10:00:00Z",
+      "endTimeStamp": "2026-03-10T10:00:00Z",
+      "status": "Active",
+      "createdAt": "2026-01-30T10:00:00Z",
+      "updatedAt": "2026-01-30T10:00:00Z",
+      "__v": 0
     },
-    "a2": {
-      "_id": "a2",
-      "title": "Vintage Guitar",
-      "description": "Fender Stratocaster 1960",
-      "minBidAmount": 1000,
-      "incrementType": "fixed",
-      "incrementValue": 100,
-      "reservePrice": 2000,
-      "startTimeStamp": "2026-02-14T10:00:00Z",
-      "endTimeStamp": "2026-02-16T10:00:00Z",
-      "status": "Closed"
-    },
-    "a3": {
-      "_id": "a3",
-      "title": "Luxury Watch",
-      "description": "Rolex Submariner, 2020 edition",
-      "minBidAmount": 3000,
-      "incrementType": "percentage",
-      "incrementValue": 5,
-      "reservePrice": 5000,
-      "startTimeStamp": "2026-02-20T09:00:00Z",
-      "endTimeStamp": "2026-03-01T09:00:00Z",
-      "status": "Active"
-    },
-    "a4": {
-      "_id": "a4",
-      "title": "Antique Vase",
-      "description": "Ming Dynasty porcelain vase",
-      "minBidAmount": 800,
-      "incrementType": "fixed",
-      "incrementValue": 80,
-      "reservePrice": 1500,
-      "startTimeStamp": "2026-01-15T12:00:00Z",
-      "endTimeStamp": "2026-01-30T12:00:00Z",
-      "status": "Closed"
-    },
-    "a5": {
-      "_id": "a5",
-      "title": "Classic Car Model",
-      "description": "1967 Mustang Fastback",
-      "minBidAmount": 10000,
-      "incrementType": "fixed",
-      "incrementValue": 500,
-      "reservePrice": 15000,
-      "startTimeStamp": "2026-02-18T08:00:00Z",
-      "endTimeStamp": "2026-02-28T08:00:00Z",
-      "status": "Active"
-    },
-    "a6": {
-      "_id": "a6",
-      "title": "Signed Football Jersey",
-      "description": "Signed by Lionel Messi",
-      "minBidAmount": 200,
-      "incrementType": "fixed",
-      "incrementValue": 25,
-      "reservePrice": 500,
-      "startTimeStamp": "2026-02-10T10:00:00Z",
-      "endTimeStamp": "2026-02-15T10:00:00Z",
-      "status": "Closed"
-    },
-    "a7": {
-      "_id": "a7",
-      "title": "Rare Comic Book",
-      "description": "First edition Spider-Man #1",
-      "minBidAmount": 1500,
+    "auc_active_pct": {
+      "_id": "auc_active_pct",
+      "profile": "usr_charity_hope",
+      "profileModel": "CharityOrganization",
+      "title": "Fresh Juice & Beverage Bundle",
+      "category": "cat_drinks",
+      "condition": "New",
+      "description": "<p>12 bottles of assorted fresh-pressed juices donated to support local families.</p>",
+      "minBidAmount": 30,
       "incrementType": "percentage",
       "incrementValue": 10,
-      "reservePrice": 3000,
-      "startTimeStamp": "2026-02-21T11:00:00Z",
-      "endTimeStamp": "2026-03-05T11:00:00Z",
-      "status": "Active"
+      "reservePrice": 80,
+      "startTimeStamp": "2026-02-10T09:00:00Z",
+      "endTimeStamp": "2026-03-15T18:00:00Z",
+      "status": "Active",
+      "createdAt": "2026-02-01T08:00:00Z",
+      "updatedAt": "2026-02-01T08:00:00Z",
+      "__v": 0
+    },
+    "auc_active_nobids": {
+      "_id": "auc_active_nobids",
+      "profile": "usr_charity_green",
+      "profileModel": "CharityOrganization",
+      "title": "Monthly Household Essentials Box",
+      "category": "cat_essentials",
+      "condition": "New",
+      "description": "<p>One month supply of household essentials: soap, shampoo, toothpaste and cleaning supplies for a family of four.</p>",
+      "minBidAmount": 25,
+      "incrementType": "fixed",
+      "incrementValue": 5,
+      "reservePrice": 60,
+      "startTimeStamp": "2026-02-20T12:00:00Z",
+      "endTimeStamp": "2026-03-20T12:00:00Z",
+      "status": "Active",
+      "createdAt": "2026-02-15T10:00:00Z",
+      "updatedAt": "2026-02-15T10:00:00Z",
+      "__v": 0
+    },
+    "auc_ended_winner": {
+      "_id": "auc_ended_winner",
+      "profile": "usr_charity_hope",
+      "profileModel": "CharityOrganization",
+      "title": "Winter Dry Ration Pack",
+      "category": "cat_food",
+      "condition": "New",
+      "description": "<p>Winter dry ration pack with rice, lentils, flour, oil and spices for one month for a small family.</p>",
+      "minBidAmount": 40,
+      "incrementType": "fixed",
+      "incrementValue": 10,
+      "reservePrice": 100,
+      "startTimeStamp": "2026-01-01T10:00:00Z",
+      "endTimeStamp": "2026-02-01T10:00:00Z",
+      "status": "Closed",
+      "createdAt": "2025-12-28T10:00:00Z",
+      "updatedAt": "2026-02-01T10:00:00Z",
+      "__v": 1
+    }
+  },
+  "auctionitems": {
+    "item_hamper_1": {
+      "_id": "item_hamper_1",
+      "profile": "usr_charity_hope",
+      "profileModel": "CharityOrganization",
+      "auction": "auc_active_fixed",
+      "name": "Ramadan Hamper - Main Box",
+      "description": "<p>Dates 2kg, mixed nuts 1kg, canned goods x6, dry rations x4 packs.</p>",
+      "category": "cat_food",
+      "condition": "New",
+      "status": "Active",
+      "createdAt": "2026-01-30T10:05:00Z",
+      "updatedAt": "2026-01-30T10:05:00Z",
+      "__v": 0
+    },
+    "item_juice_1": {
+      "_id": "item_juice_1",
+      "profile": "usr_charity_hope",
+      "profileModel": "CharityOrganization",
+      "auction": "auc_active_pct",
+      "name": "Assorted Juice Bundle x12",
+      "description": "<p>Mango, orange, apple and guava — 3 bottles each, fresh-pressed.</p>",
+      "category": "cat_drinks",
+      "condition": "New",
+      "status": "Active",
+      "createdAt": "2026-02-01T08:05:00Z",
+      "updatedAt": "2026-02-01T08:05:00Z",
+      "__v": 0
+    },
+    "item_essentials_1": {
+      "_id": "item_essentials_1",
+      "profile": "usr_charity_green",
+      "profileModel": "CharityOrganization",
+      "auction": "auc_active_nobids",
+      "name": "Household Essentials Bundle",
+      "description": "<p>Soap x4, shampoo x2, toothpaste x2, dishwashing liquid x2, cleaning cloths x3.</p>",
+      "category": "cat_essentials",
+      "condition": "New",
+      "status": "Active",
+      "createdAt": "2026-02-15T10:05:00Z",
+      "updatedAt": "2026-02-15T10:05:00Z",
+      "__v": 0
+    },
+    "item_ration_1": {
+      "_id": "item_ration_1",
+      "profile": "usr_charity_hope",
+      "profileModel": "CharityOrganization",
+      "auction": "auc_ended_winner",
+      "name": "Winter Dry Ration Pack",
+      "description": "<p>Rice 5kg, lentils 2kg, flour 5kg, cooking oil 2L, mixed spices.</p>",
+      "category": "cat_food",
+      "condition": "New",
+      "status": "Closed",
+      "createdAt": "2025-12-28T10:05:00Z",
+      "updatedAt": "2026-02-01T10:00:00Z",
+      "__v": 1
+    }
+  },
+  "auctionbids": {
+    "bid_hamper_mujtaba_outbid": {
+      "_id": "bid_hamper_mujtaba_outbid",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_fixed",
+      "amount": 50,
+      "status": "Outbid",
+      "createdAt": "2026-02-05T11:00:00Z",
+      "updatedAt": "2026-02-05T12:00:00Z",
+      "__v": 0
+    },
+    "bid_hamper_mujtaba_leading": {
+      "_id": "bid_hamper_mujtaba_leading",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_fixed",
+      "amount": 60,
+      "status": "Outbid",
+      "createdAt": "2026-02-05T12:00:00Z",
+      "updatedAt": "2026-02-24T21:26:27.981Z",
+      "__v": 0
+    },
+    "bid_juice_mujtaba_outbid": {
+      "_id": "bid_juice_mujtaba_outbid",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_pct",
+      "amount": 30,
+      "status": "Outbid",
+      "createdAt": "2026-02-12T09:00:00Z",
+      "updatedAt": "2026-02-12T10:00:00Z",
+      "__v": 0
+    },
+    "bid_juice_wasil_leading": {
+      "_id": "bid_juice_wasil_leading",
+      "profile": "usr_wasil",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_pct",
+      "amount": 33,
+      "status": "Outbid",
+      "createdAt": "2026-02-12T10:00:00Z",
+      "updatedAt": "2026-02-24T21:55:08.201Z",
+      "__v": 0
+    },
+    "bid_ration_mujtaba_won": {
+      "_id": "bid_ration_mujtaba_won",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_ended_winner",
+      "amount": 120,
+      "status": "Won",
+      "createdAt": "2026-01-20T14:00:00Z",
+      "updatedAt": "2026-02-01T10:00:00Z",
+      "__v": 1
+    },
+    "bid_ration_wasil_lost": {
+      "_id": "bid_ration_wasil_lost",
+      "profile": "usr_wasil",
+      "profileModel": "DonorProfile",
+      "auction": "auc_ended_winner",
+      "amount": 100,
+      "status": "Lost",
+      "createdAt": "2026-01-18T11:00:00Z",
+      "updatedAt": "2026-02-01T10:00:00Z",
+      "__v": 1
+    },
+    "cc889a4e11634573a83fdac4": {
+      "_id": "cc889a4e11634573a83fdac4",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_fixed",
+      "amount": 200,
+      "status": "Leading",
+      "createdAt": "2026-02-24T21:26:27.982Z",
+      "updatedAt": "2026-02-24T21:26:27.982Z",
+      "__v": 0
+    },
+    "ad43294c14d1487e8b353efd": {
+      "_id": "ad43294c14d1487e8b353efd",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_nobids",
+      "amount": 25,
+      "status": "Leading",
+      "createdAt": "2026-02-24T21:35:41.611Z",
+      "updatedAt": "2026-02-24T21:35:41.611Z",
+      "__v": 0
+    },
+    "97a4ca1a0e9746f0a6bb57bf": {
+      "_id": "97a4ca1a0e9746f0a6bb57bf",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_pct",
+      "amount": 36.4,
+      "status": "Leading",
+      "createdAt": "2026-02-24T21:55:08.201Z",
+      "updatedAt": "2026-02-24T21:55:08.201Z",
+      "__v": 0
+    }
+  },
+  "auctionbidconfigs": {
+    "cfg_mujtaba_hamper": {
+      "_id": "cfg_mujtaba_hamper",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_fixed",
+      "limit": 200,
+      "status": "Active",
+      "createdAt": "2026-02-04T10:00:00Z",
+      "updatedAt": "2026-02-04T10:00:00Z",
+      "__v": 0
+    },
+    "cfg_mujtaba_juice": {
+      "_id": "cfg_mujtaba_juice",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_pct",
+      "limit": 150,
+      "status": "Active",
+      "createdAt": "2026-02-10T10:00:00Z",
+      "updatedAt": "2026-02-10T10:00:00Z",
+      "__v": 0
+    },
+    "cfg_mujtaba_essentials": {
+      "_id": "cfg_mujtaba_essentials",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_nobids",
+      "limit": 100,
+      "status": "Active",
+      "createdAt": "2026-02-20T12:00:00Z",
+      "updatedAt": "2026-02-20T12:00:00Z",
+      "__v": 0
+    },
+    "cfg_wasil_juice": {
+      "_id": "cfg_wasil_juice",
+      "profile": "usr_wasil",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_pct",
+      "limit": 300,
+      "status": "Active",
+      "createdAt": "2026-02-10T09:00:00Z",
+      "updatedAt": "2026-02-10T09:00:00Z",
+      "__v": 0
+    }
+  },
+  "auctionitemdeliveryaddresses": {
+    "delivery_mujtaba_ration": {
+      "_id": "delivery_mujtaba_ration",
+      "auction": "auc_ended_winner",
+      "item": "item_ration_1",
+      "winner": "usr_mujtaba",
+      "winnerModel": "DonorProfile",
+      "auctionHost": "usr_charity_hope",
+      "auctionHostModel": "CharityOrganization",
+      "address": {
+        "line1": "12 Baker Street",
+        "line2": "Apt 3B",
+        "city": "Karachi",
+        "state": "Sindh",
+        "country": "Pakistan",
+        "postalCode": "75500",
+        "countryCode": "PK"
+      },
+      "deliveryNotes": "Call before delivery.",
+      "status": "Pending",
+      "createdAt": "2026-02-02T09:00:00Z",
+      "updatedAt": "2026-02-02T09:00:00Z",
+      "__v": 0
     }
   }
 }
