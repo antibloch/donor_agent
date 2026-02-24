@@ -1,0 +1,16 @@
+# langchain-core
+# langgraph
+# requests
+# python-dotenv
+# typing-extensions
+# langchain-groq
+
+# #groq
+# langchain-groq 
+langchain>=0.2.0
+langchain-core>=0.2.0
+langchain-groq>=0.1.0
+langgraph>=0.1.0
+python-dotenv>=1.0.0
+requests>=2.31.0
+
