@@ -30,8 +30,12 @@ langfuse_handler = CallbackHandler()
 # ----------------------------
 # Variables Definition & File Handling
 # ----------------------------
-MODEL_NAME='mistralai/mistral-large-3-675b-instruct-2512'
-
+MODEL_NAME='moonshotai/kimi-k2-instruct-0905'
+BASE_URL = "https://giverr-api.verior.co"
+DONATION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhOTVkMTIwZGI2MWFmYWYwM2UiLCJyb2xlIjoiRG9ub3IiLCJwcm9maWxlVHlwZSI6IkRvbm9yIiwiaWF0IjoxNzcxNDg1NzYyLCJleHAiOjQ5MjcyNDU3NjJ9.9bTr--7-iHIemenKrFRYL3uTDx9auCY98GvYa0NnaOg"
+headers = {
+    "Authorization": f"Bearer {DONATION_TOKEN}"
+}
 # ----------------------------
 # 1) Graph state
 # ----------------------------
@@ -42,9 +46,10 @@ class AgentState(TypedDict):
 # ----------------------------
 # 2) Tools Definition
 # ----------------------------
-POST_BASE_URL = "http://localhost:3000"
-GET_BASE_URL = "http://localhost:3000"
 
+# ----------------------------
+# GET APIs
+# ----------------------------
 @tool
 def check_wallet_balance():
     """
@@ -85,15 +90,16 @@ def check_wallet_balance():
             - success (bool): False
             - message (str): Error message
     """
+
     return requests.get(
-        f"{GET_BASE_URL}/api/v1/wallet/balance"
+        f"{BASE_URL}/api/v1/wallet/balance", headers=headers
     ).json()
 
 @tool
 def get_payment_methods():
     """
     Retrieve available payment methods for the authenticated mock user.
-hkhkjhjkhkj
+
     Returns:
         dict:
             - success (bool): Indicates if the request was successful
@@ -114,7 +120,7 @@ hkhkjhjkhkj
             - error (str): Error message explaining the issue.
     """
     return requests.get(
-        f"{GET_BASE_URL}/api/v1/payment-apis/get-payment-methods"
+        f"{BASE_URL}/api/v1/payment-apis/get-payment-methods", headers=headers
     ).json()
 
 @tool
@@ -131,55 +137,17 @@ def add_payment_method():
                 - url (str): Hosted payment page URL where user can add new payment methods
     """
     return requests.get(
-        f"{GET_BASE_URL}/api/v1/payment-apis/add-method"
+        f"{BASE_URL}/api/v1/payment-apis/add-method", headers=headers
     ).json()
 
 @tool
-def fund_wallet(amount: float, paymentMethodId: str):
-    """
-    Fund a user's wallet using a selected payment method.
-
-    This tool sends a funding request to the wallet service using the
-    provided paymentMethodId and amount. It does not perform local
-    wallet or card validation logic; validation is handled by the backend API.
-    
-    Args:
-        amount (float): The amount to fund into the wallet. 
-            Must be greater than zero.
-        paymentMethodId (str): Unique identifier of the selected
-            payment method (card) to be charged.
-
-    Returns:
-        dict: A dictionary containing:
-            - success (bool): Indicates if the request was successful.
-            - message (str): Confirmation message.
-            - data (dict):
-                - paymentRequestUid (str): Unique identifier of the payment request.
-                - customerId (str): Unique customer identifier.
-                - walletUid (str): Unique wallet identifier.
-                - newBalance (float): Updated wallet balance after funding.
-
-        If the request fails:
-            - success (bool): False
-            - message (str): Error description (e.g., missing fields,
-              invalid payment method, limit exceeded).
-    """
-    return requests.post(
-            f"{POST_BASE_URL}/api/v1/payment-apis/fund-wallet",
-            json={
-                "amount": amount,
-                "paymentMethodId":paymentMethodId
-            }
-        ).json()
-
-@tool
-def get_charities_by_country(country_code: str):
+def list_charities_by_country(country_code: str):
     """
     Retrieve a list of charities available in the specified country.
 
     Args:
         country_code (str): The country for which to fetch charities for e.g., (PK)
-    
+
     Returns:
         dict: 
             - success (bool): Indicates if the request was successful
@@ -206,13 +174,14 @@ def get_charities_by_country(country_code: str):
 
     """
     return requests.get(
-        f"{GET_BASE_URL}/api/v1/donations/charities/:{country_code}"
+        f"{BASE_URL}/api/v1/donations/charities/:{country_code}", headers=headers
     ).json()
 
 @tool
-def get_donation_products_per_charity(charityID: str):
+def get_charity_donation_products(charityID: str):
     """
-    Retrieve a paginated list of donation products for a specific charity.
+    Retrieve the information regarding donation products for a specific charity.
+    User can donate in any of the following product.
 
     Args:
         charityID (str): The unique identifier of the charity whose products 
@@ -271,7 +240,7 @@ def get_donation_products_per_charity(charityID: str):
                 - hasPrev (bool): Whether a previous page exists.
     """
     return requests.get(
-        f"{GET_BASE_URL}/api/v1/donors/get-charity-products/{charityID}"
+        f"{BASE_URL}/api/v1/donors/get-charity-products/{charityID}", headers=headers
     ).json()
 
 @tool
@@ -331,12 +300,103 @@ def get_all_charities_with_grants():
             - hasPrev (bool): Whether a previous page exists.
     """
     return requests.get(
-        f"{GET_BASE_URL}/api/v3/donors/all-charities",
+        f"{BASE_URL}/api/v3/donors/all-charities", headers=headers
     ).json()
+
+# ----------------------------
+# POST APIs
+# ----------------------------
+@tool
+def fund_wallet(amount: float, paymentMethodId: str):
+    """
+    Fund a user's wallet using a selected payment method.
+
+    This tool sends a funding request to the wallet service using the
+    provided paymentMethodId and amount. It does not perform local
+    wallet or card validation logic; validation is handled by the backend API.
+    
+    Args:
+        amount (float): The amount to fund into the wallet. 
+            Must be greater than zero.
+        paymentMethodId (str): Unique identifier of the selected
+            payment method (card) to be charged.
+
+    Returns:
+        dict: A dictionary containing:
+            - success (bool): Indicates if the request was successful.
+            - message (str): Confirmation message.
+            - data (dict):
+                - paymentRequestUid (str): Unique identifier of the payment request.
+                - customerId (str): Unique customer identifier.
+                - walletUid (str): Unique wallet identifier.
+                - newBalance (float): Updated wallet balance after funding.
+
+        If the request fails:
+            - success (bool): False
+            - message (str): Error description (e.g., missing fields,
+              invalid payment method, limit exceeded).
+    """
+    return requests.post(
+            f"{BASE_URL}/api/v1/payment-apis/fund-wallet", headers=headers,
+            json={
+                "amount": amount,
+                "paymentMethodId":paymentMethodId
+            }
+        ).json()
+
+@tool
+def product_donation(charityId: str, partners: list, categories: list, country: str, countryCode: str, products: list):
+    """
+    Create a product donation for a specific charity.
+
+    This tool sends a product-based donation request to the donation service.
+    It does not perform local validation of IDs, pricing, or quantities.
+    All validation logic is handled by the backend API.
+
+    Args:
+        charityId (str): Unique identifier of the charity.
+        partners (list): List of partner IDs involved in the donation.
+        categories (list): List of category IDs related to the donation.
+        country (str): Country name for the delivery address.
+        countryCode (str): ISO country code (e.g., PK).
+        products (list): List of product objects. Each product must contain:
+            - partner (str): Partner ID
+            - charityProd (str): Charity product ID
+            - partnerProd (str): Partner product ID
+            - category (str): Category ID
+            - charityProdPrice (float): Product price
+            - quantity (int): Quantity of the product
+
+    Returns:
+        dict: A dictionary containing:
+            - success (bool): Indicates if the request was successful.
+            - message (str): Confirmation or error message.
+            - data (dict): Donation details returned by backend.
+
+        If the request fails:
+            - success (bool): False
+            - message (str): Error description (e.g., invalid IDs,
+              insufficient balance, validation failure).
+    """
+    return requests.post(
+        f"{BASE_URL}/api/v1/donations/donate",
+        headers=headers,
+        json={
+            "charityId": charityId,
+            "partners": partners,
+            "categories": categories,
+            "address": {
+                "country": country,
+                "countryCode": countryCode
+            },
+            "products": products
+        }
+    ).json()
+
 
 def build_tools():
     # Both are "single input" tools
-    return [check_wallet_balance, fund_wallet, get_payment_methods, add_payment_method, get_charities_by_country, get_donation_products_per_charity, get_all_charities_with_grants]
+    return [check_wallet_balance, fund_wallet, get_payment_methods, add_payment_method, list_charities_by_country, get_charity_donation_products, get_all_charities_with_grants, product_donation]
 
 # ----------------------------
 # 3) Tools Processing for Planner
@@ -392,7 +452,7 @@ executor_model = ChatNVIDIA(
         temperature=0.0,
         callbacks=[langfuse_handler],
         extra_body={"chat_template_kwargs":{"enable_thinking":False,"clear_thinking":False}}
-).bind_tools(tools) 
+).bind_tools(tools)
 
 responder_model = ChatNVIDIA(
         model=MODEL_NAME,
@@ -411,26 +471,32 @@ def planner_node(state: AgentState):
     
     tool_context = build_tool_context(tools_by_name)
     prompt = f"""
-    You are a logical wallet and donation AI assistant.
+    SITUATION:
+    You are a logical wallet and donation AI assistant that helps users manage donations and financial transactions. 
+    You have access to a set of tools that retrieve and process donation-related data. Your role is to plan and execute 
+    user requests by intelligently determining which tools to call, in what order, and what data is needed.
 
     Available tools:
     {tool_context}
 
-    CRITICAL PLANNING RULES FOR PARTIAL EXECUTION:
-    1. Identify all tools needed to fulfill the user's ultimate goal.
-    2. DEPENDENCY CHECK: For any required tool, check where its arguments will come from:
-       - Are they in the Chat History already?
-       - Can another tool provide them? (e.g. `paymentMethodId` comes from `get_payment_methods`, `CharityID comes from `get_charities_by_country). Schedule that tool!
-    3. MISSING INPUT RULE (THE MOST IMPORTANT):
-       - If a tool requires a specific argument (like 'country_code' or 'amount' or 'CharityID) and you DO NOT have it in the history, and NO other tool can provide it:
-       - **DO NOT** add that tool to the "steps" array.
-       - **ONLY** add the missing argument name to the "missing_args" array.
-    4. EXECUTE WHAT YOU CAN NOW: 
-       - If you have Tool A (needs no input) and Tool B (needs missing input), put Tool A in "steps", but leave Tool B out.
-    5. NEVER invent fake variables like "$ask.user".
-    6. Only schedule tools for which all required arguments are available.
+    TASK:
+    Analyze the user's request and the chat history to create an execution plan. 
+    Determine which tools should be called immediately, which tools depend on other tools' outputs, and what information is missing from the user. 
+    Return a structured JSON plan that specifies the tools to execute now and any missing arguments needed from the user.
 
-    Return STRICT JSON matching this format exactly:
+    OBJECTIVE: 
+    Enable the user to accomplish their donation and wallet management goals by orchestrating tool calls efficiently, 
+    resolving dependencies automatically where possible, and only requesting user input when absolutely necessary.
+
+    CRITICAL PLANNING RULES:
+    1. Dependency Mapping: For each tool needed, identify where its arguments come from: chat history, another tool's output, or user input.
+    2. GET-Before-POST Rule: Always call relevant GET tools first to retrieve and validate required arguments before executing any POST tools. For example, retrieve charityID via get_charities_by_country before calling a donation POST tool.
+    3. Name-to-ID Resolution: When users provide entity names (e.g., "Alkhidmat" charity, "Visa" payment method), automatically schedule the appropriate GET tool to resolve the ID. Never ask for an ID if a lookup tool can retrieve it.
+    4. Partial Execution: Execute tools that have all required arguments immediately. Defer tools with missing arguments and request only the missing information from the user.
+    5. No Invented References: Never use placeholder variables like $ask.user, $user_input, or references to tools that haven't executed yet. Only reference data that exists in chat history or will be produced by tools scheduled earlier in the same plan.
+    6. Strict Scheduling: Only include tools in the "steps" array when you have 100% of their required arguments available right now.
+    
+    Return STRICT JSON matching this FORMAT exactly:
     {{
       "steps": [
         {{
@@ -441,16 +507,8 @@ def planner_node(state: AgentState):
       "missing_args": ["list", "of", "missing", "user", "inputs"]
     }}
 
-    7. If a tool requires an argument (e.g., 'country_code') and you do not have it in the Chat History:
-       - STOP: Do NOT put this tool in the "steps" array. 
-       - INSTEAD: Add the parameter name to the "missing_args" array.
-    8. NEVER use "$ask.user", "$user_input", or any reference to a tool that hasn't run yet.
-    9. The "steps" array should ONLY contain tools where you have 100% of the data right now (either from history or from a tool scheduled earlier in this same plan).
-    
-    Example:
-    User: "Explore charities"
-    Action: {{"steps": [], "missing_args": ["country_code"]}} 
-    (Note: steps is empty because country_code is missing)
+    The "steps" array contains only tools ready to execute. 
+    The "missing_args" array contains parameter names (not questions) that the user must provide.
 
     Chat History & User Request:
     {chat_history}
@@ -596,22 +654,28 @@ def responder(state: AgentState):
     
     # We define a strict System Prompt here
     system_prompt = """
-    You are a specialized Financial Wallet and Donation Assistant.
-    
-    CRITICAL TOPIC BOUNDARIES:
-    1. YOUR SOLE PURPOSE is to manage the user's wallet and donations (Balance, Payment Methods, Adding Funds, Performing donations, Providing charities data).
-    2. DO NOT answer questions about: Weather, Sports, General Knowledge, Coding, History, or anything unrelated to the wallet/donations.
-    3. DO NOT use any emojis and icons.
-    4. The currency is always USD. 
-    5. DO NOT show any kind of ID (userID, charityID, paymentmethodID, etc,) to user.
-    6. If the user asks an off-topic question (e.g., "What is the weather?", "Who is the president?"):
-       - Politely decline. 
-       - State clearly that you can ONLY assist with wallet and financial transactions.
-       - Immediately steer the conversation back to their wallet and donation. Keep in mind currently you can do the following {tools_by_name}
-       
-    Example of Off-Topic Response:
-    "I apologize, but I am a dedicated Wallet and Donation Assistant and cannot provide weather updates."
-    Base your answer strictly on the conversation history below: 
+    SITUATION:
+    You are a specialized Financial Wallet and Donation Assistant designed to operate within a financial application. Users interact with you to manage their personal wallet and make charitable donations. Your responses must remain strictly within the scope of wallet management and donation functionality.
+
+    TASK:
+    The assistant should manage user wallet operations (balance inquiries, payment methods, adding funds) and facilitate donations to verified charities. The assistant should decline off-topic requests politely and redirect users back to wallet and donation services.
+
+    OBJECTIVE:
+    Provide a focused, secure, and user-friendly experience that helps users confidently manage their finances and support charitable causes without distraction or confusion about system capabilities.
+
+    KNOWLEDGE/RULES
+    - All financial transactions are conducted in USD only.
+    - Internal system architecture, proprietary tools, and implementation details must never be disclosed to users.
+    - User identifiers (userID, charityID, paymentmethodID, etc.) should never be displayed to users.
+    - Show the relevant informations always, such as limits and balance in check wallet balance, etc.
+    - Off-topic questions include but are not limited to: weather, sports, general knowledge, coding, history, or any topic unrelated to wallet and donation management.
+    - The assistant has access to specific tools for wallet and donation management as defined in {tools_by_name}.
+    - Provide the response based on the factual informations from tools.
+    - Respond to all wallet and donation-related requests with accurate, helpful information based on available tools and conversation history.
+    - When users ask off-topic questions, politely decline, clearly state that you can only assist with wallet and donation services, and immediately redirect to available wallet or donation options.
+    - Never use emojis, icons, or decorative formatting in responses.
+    - Never disclose internal system details, tool names, architecture, or proprietary information.
+    - Base all responses strictly on the conversation history provided and current user context.
     """
     
 
@@ -708,7 +772,7 @@ def main():
                         if steps:
                             print(f"  ➤ [Planner] Scheduled tools: {[s['tool'] for s in steps]}")
                         if missing:
-                            print(f"  ➤ [Planner] Need user input for: {missing}")
+                            print(f"  ➤ [Planner] Need input either from other tool or from user: {missing}")
 
                     # --- B) Capture and Print New Messages ---
                     # safely check if "messages" is in the dictionary

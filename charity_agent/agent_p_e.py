@@ -1,68 +1,143 @@
 import os
 import json
 import asyncio
-import time
 import requests
-from typing import Annotated, Sequence, TypedDict, Any, Dict, List, Tuple, Optional
+from typing import Annotated, Sequence, TypedDict, Any, List, Dict
 
 from rich.console import Console
-from rich.markdown import Markdown
-from rich import print
+from rich import print as rich_print
 
-from pydantic import BaseModel, Field
-
-from langchain_core.tools import Tool
 from langchain_core.messages import (
     BaseMessage,
     HumanMessage,
-    SystemMessage,
     AIMessage,
     ToolMessage,
 )
-from langchain_core.runnables import RunnableConfig
-from langchain_core.output_parsers import PydanticOutputParser
-
 from langgraph.graph.message import add_messages
-from langgraph.graph import StateGraph, START, END
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.graph import StateGraph, END
 
 from langchain_experimental.tools import PythonREPLTool
-
 from langchain_openai import ChatOpenAI
-from langchain_ollama import ChatOllama
-
-
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
+from pydantic import BaseModel, Field
+from langchain_core.tools import StructuredTool
+
 import re
-from langchain_core.exceptions import OutputParserException
-from langchain_core.language_models.chat_models import BaseChatModel
+from uuid import uuid4
 
+DEBUG_MESSAGES = 1
 
+# ========================== TRANSCRIPT HELPERS ==========================
+def format_msg(m: BaseMessage) -> str:
+    role = m.__class__.__name__
+    content = (getattr(m, "content", "") or "").strip()
 
-DEBUG_MESSAGES = 1 # set to 1 to enable detailed debug prints, comment otherwise
-TRANSCRIPT_LIMIT = 15000  # character limit for transcript to be summarized
+    if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+        content += "\n\n[tool_calls]\n" + json.dumps(getattr(m, "tool_calls"), indent=2, ensure_ascii=False)
 
+    if getattr(m, "name", None):
+        content = f"[tool={m.name}]\n{content}"
+    return f"{role}:\n{content}\n"
+
+# ========================== STATE ==========================
+class AgentState(TypedDict, total=False):
+    messages: Annotated[Sequence[BaseMessage], add_messages]
+    plan: Dict[str, Any]
+    repair_attempts: int
+    last_tool_error: Dict[str, Any]
+
+# ========================== TOOLS ==========================
+def build_node_stats_tool():
+    BASE_URL = "http://localhost:3000"
+    CANONICAL_TOOLS = [
+        "charity_donor_count", "charity_impactlife", "charity_donor_amount",
+        "charity_total_donation", "charity_items_category",
+        "charity_product_price_description", "charity_blogs",
+        "charity_address", "charity_country_availability", "charity_contact_info",
+    ]
+
+    def call_node_stats(tool_name: str) -> str:
+        tool_name = (tool_name or "").strip()
+        if not tool_name:
+            return json.dumps({"ok": False, "error": "Tool name is required.", "valid_tools": CANONICAL_TOOLS})
+        if tool_name not in CANONICAL_TOOLS:
+            return json.dumps({"ok": False, "error": "Invalid tool name", "provided": tool_name, "valid_tools": CANONICAL_TOOLS})
+        try:
+            r = requests.get(f"{BASE_URL}/api/stats", params={"q": tool_name}, timeout=10)
+            r.raise_for_status()
+            return json.dumps(r.json())
+        except requests.RequestException as e:
+            return json.dumps({"ok": False, "error": str(e), "tool": tool_name})
+
+    class CharityStatsInput(BaseModel):
+        tool_name: str = Field(..., description="Exact one tool name from the CANONICAL_TOOLS list above")
+
+    return StructuredTool.from_function(
+        func=call_node_stats,
+        name="get_charity_stats",
+        description=(
+            "Fetch internal charity data from Node-js server.\n"
+            "IMPORTANT: The ONLY callable tool is 'get_charity_stats'.\n"
+            "The following are NOT tools; they are allowed VALUES for the argument 'tool_name':\n"
+            + "\n".join([f"- {t}" for t in CANONICAL_TOOLS])
+        ),
+        args_schema=CharityStatsInput,
+    )
+
+async def setup_tools():
+    local_tools = [build_node_stats_tool(), PythonREPLTool()]
+    client = MultiServerMCPClient({
+        "fetch": {"transport": "stdio", "command": "npx", "args": ["-y", "fetcher-mcp"]}
+    })
+    mcp_tools = await client.get_tools()
+    return [*local_tools, *mcp_tools]
+
+def build_tool_context(tools_by_name: dict):
+    blocks = []
+    for tool in tools_by_name.values():
+        name = tool.name
+        description = (getattr(tool, "description", "") or "No description.").strip()
+        args_schema = getattr(tool, "args_schema", None)
+        if args_schema and hasattr(args_schema, "model_fields"):
+            fields = args_schema.model_fields
+            arg_lines = []
+            for k, v in fields.items():
+                req = getattr(v, "is_required", lambda: False)()
+                arg_lines.append(f"- {k} ({'required' if req else 'optional'})")
+            args_text = "\n".join(arg_lines) if arg_lines else "No parameters"
+        else:
+            args_text = "- input (required string). For Python_REPL, this must be python code."
+        blocks.append(f"""
+{name}
+Description:
+{description}
+
+Arguments:
+{args_text}
+""")
+    return "\n\n".join(blocks)
+
+def make_model(temperature: float = 0.0):
+    return ChatOpenAI(
+        base_url="https://integrate.api.nvidia.com/v1",
+        api_key=os.getenv("NVIDIA_API_KEY"),
+        model="nvidia/nemotron-3-nano-30b-a3b",
+        temperature=temperature,
+        max_tokens=8192,
+    )
+
+# ========================== JSON HELPERS ==========================
 def _extract_first_json_object(text: str) -> str:
-    """Extract the first top-level JSON object from arbitrary text.
-    Works even if the model adds <think>, markdown fences, or extra commentary.
-    """
     if not text:
         raise ValueError("Empty LLM output")
-
-    # Remove common wrappers (optional)
     cleaned = text.strip()
-
-    # Try to find a fenced json block first
     m = re.search(r"```(?:json)?\s*({.*?})\s*```", cleaned, flags=re.DOTALL | re.IGNORECASE)
     if m:
         return m.group(1).strip()
-
-    # Otherwise, find the first balanced {...} object
     start = cleaned.find("{")
     if start == -1:
         raise ValueError("No '{' found in LLM output")
-
     depth = 0
     in_str = False
     esc = False
@@ -84,1134 +159,796 @@ def _extract_first_json_object(text: str) -> str:
                 depth -= 1
                 if depth == 0:
                     return cleaned[start : i + 1].strip()
-
     raise ValueError("Unbalanced JSON braces in LLM output")
 
-
-
-
-
-
-
-
-def format_msg(m: BaseMessage) -> str:
-    role = m.__class__.__name__
-    content = (getattr(m, "content", "") or "").strip()
-
-    # Tool calls (from AIMessage)
-    tool_calls = getattr(m, "tool_calls", None)
-    if tool_calls:
-        content += "\n\n[tool_calls]\n" + json.dumps(tool_calls, indent=2)
-
-    # ToolMessage has tool name/id info sometimes
-    tool_name = getattr(m, "name", None)
-    if tool_name:
-        content = f"[tool={tool_name}]\n{content}"
-
-    return f"{role}:\n{content}\n"
-
-
-# ----------------------------
-# Tool text helper (optional, for prompt clarity)
-# ----------------------------
-def tool_to_text(t: Any) -> str:
-    name = getattr(t, "name", t.__class__.__name__)
-    desc = (getattr(t, "description", "") or "").strip()
-
-    schema = None
-    args_schema = getattr(t, "args_schema", None)
-    if args_schema is not None:
-        try:
-            if hasattr(args_schema, "model_json_schema"):
-                schema = args_schema.model_json_schema()
-            elif hasattr(args_schema, "schema"):
-                schema = args_schema.schema()
-        except Exception:
-            schema = None
-
-    if schema is None:
-        raw_schema = getattr(t, "tool_call_schema", None) or getattr(t, "schema", None)
-        if isinstance(raw_schema, dict):
-            schema = raw_schema
-
-    parts = [f"- {name}"]
-    if desc:
-        parts.append(f"  Description: {desc}")
-    if schema:
-        props = schema.get("properties", {})
-        required = schema.get("required", [])
-        if props:
-            parts.append(f"  Args: {', '.join(props.keys())}")
-        if required:
-            parts.append(f"  Required: {', '.join(required)}")
-    return "\n".join(parts)
-
-
-
-
-def textual_description_of_tools(tools) -> str:
-    return "\n\n".join(tool_to_text(t) for t in tools)
-
-
-
-def format_past_context(past_turns: List[Tuple[str, str]], max_turns: int = 5, max_chars: int = 6000) -> str:
-    past_turns = past_turns or []
-    if not past_turns:
-        return ""
-
-    turns = past_turns[-max_turns:]
-    blocks = []
-    for i, (q, a) in enumerate(turns, start=max(1, len(past_turns) - len(turns) + 1)):
-        q = (q or "").strip()
-        a = (a or "").strip()
-        blocks.append(
-            f"TURN {i}\n"
-            f"USER:\n{q}\n\n"
-            f"ASSISTANT (final answer):\n{a}"
-        )
-
-    text = "\n\n---\n\n".join(blocks)
-    text = text.strip()
-    if len(text) > max_chars:
-        text = text[-max_chars:]  # keep most recent
-    return text
-
-
-# ----------------------------
-# Plan schema
-# ----------------------------
-class Plan(BaseModel):
-    steps: List[str] = Field(
-        description="A short ordered list of concrete steps to solve the user's request."
-    )
-
-
-# ----------------------------
-# Graph state
-# ----------------------------
-class AgentState(TypedDict, total=False):
-    messages: Annotated[Sequence[BaseMessage], add_messages]
-    prompt_messages: List[BaseMessage]   # NEW (no reducer, so overwrites)
-    user_query: str
-    plan: List[str]
-    step_idx: int
-    current_step: Optional[str]
-    completed: List[Tuple[str, str]]
-    final_answer: str
-    history_cursor: int
-    context_summaries: List[str]
-    step_start_idx: int
-    past_turns: List[Tuple[str, str]]   # [(user_query, final_answer), ...]
-    past_context: str                  # formatted string derived from past_turns
-
-# ----------------------------
-# Node stats tool (your tool)
-# ----------------------------
-def build_node_stats_tool():
-    BASE_URL = "http://localhost:3000"
-
-    CANONICAL_TOOLS = [
-        "charity_donor_count",
-        "charity_impactlife",
-        "charity_donor_amount",
-        "charity_total_donation",
-        "charity_items_category",
-        "charity_product_price_description",
-        "charity_blogs",
-        "charity_address",
-        "charity_country_availability",
-        "charity_contact_info",
-    ]
-
-    def call_node_stats(tool_name: str) -> str:
-        tool_name = (tool_name or "").strip()
-        if not tool_name:
-            return json.dumps(
-                {"ok": False, "error": "Tool name is required.", "valid_tools": CANONICAL_TOOLS}
-            )
-
-        if tool_name not in CANONICAL_TOOLS:
-            return json.dumps(
-                {
-                    "ok": False,
-                    "error": "Invalid tool name for Node stats endpoint.",
-                    "provided": tool_name,
-                    "valid_tools": CANONICAL_TOOLS,
-                }
-            )
-
-        try:
-            r = requests.get(f"{BASE_URL}/api/stats", params={"q": tool_name}, timeout=10)
-            r.raise_for_status()
-            return json.dumps(r.json())
-        except requests.RequestException as e:
-            return json.dumps({"ok": False, "error": str(e), "tool": tool_name})
-
-    return Tool(
-        name="get_charity_stats",
-        description=(
-            "Fetch internal charity data from Node-js server.\n"
-            "Input MUST be EXACTLY one tool name.\n"
-            "Valid tool names:\n"
-            + "\n".join([f"- {t}" for t in CANONICAL_TOOLS])
-            + "\nReturns JSON: {ok, tool, query, data, meta}.\n"
-            "'data' field contains the actual response from the Node server for the given tool query."
-        ),
-        func=call_node_stats,
-    )
-
-
-def build_local_tools():
-    return [
-        build_node_stats_tool(),
-        PythonREPLTool(),
-    ]
-
-
-
-
-HINTS = {
-    "Python_REPL": (
-        "Only printed output is returned.\n"
-        "ALWAYS end your code with print(...) of the final result.\n"
-        "Prefer minimal Python; avoid heavy libraries unless necessary.\n"
-        "If computing statistics, print a compact JSON-like dict."
-    ),
-    "get_charity_stats": (
-        "Input must be EXACTLY one valid tool name string.\n"
-        "The response is JSON. The actual results are in the 'data' field.\n"
-        "Do not guess tool names — use only listed valid names."
-    ),
-    "fetch_url": (
-        "Use this when you already have a specific URL and need the page content.\n"
-        "Prefer this over web search when the task says 'read this URL' or 'extract details from this page'."
-    ),
-    "fetch_urls": (
-        "Fetch multiple URLs in one call when you need to read several pages quickly."
-    ),
-}
-
-
-def patch_tool_descriptions(tools: list) -> list:
-    """
-    Docstring for patch_tool_descriptions with additional hints for better performance
-    
-    :param tools: Description
-    :type tools: list
-    :return: Description
-    :rtype: list
-    """
-    patched_tools = []
-
-    for tool in tools:
-        name = getattr(tool, "name", tool.__class__.__name__)
-        original_desc = (getattr(tool, "description", "") or "").strip()
-
-        hint = HINTS.get(name)
-
-        if hint:
-            new_desc = (
-                original_desc
-                + "\n\nUSAGE HINTS:\n"
-                + hint
-            )
-
-            try:
-                tool.description = new_desc
-            except Exception:
-                # Some tools may not allow mutation (StructuredTool edge cases)
-                pass
-
-        patched_tools.append(tool)
-
-    return patched_tools
-
-
-
-async def setup_tools():
-    local_tools = build_local_tools()
-
-    # MCP tools
-    client = MultiServerMCPClient(
-        {
-            "fetch": {
-                "transport": "stdio",
-                "command": "npx",
-                "args": ["-y", "fetcher-mcp"],
-            }
-        }
-    )
-    mcp_tools = await client.get_tools()
-    return [*local_tools, *mcp_tools]
-
-
-# ----------------------------
-# LLM helper
-# ----------------------------
-def make_model_chat(temperature: float, bind_tools: Optional[list] = None, choice: str="nvidia") -> BaseChatModel:
-    if choice == "openrouter":
-        api_key = os.getenv("OPENROUTER_API_KEY")
-        chat = ChatOpenAI(
-            # model="nvidia/nemotron-3-nano-30b-a3b:free",
-            model = "qwen/qwen3-coder:free",
-            openai_api_key=api_key,
-            base_url="https://openrouter.ai/api/v1",
-            temperature=temperature,
-        )
-        if bind_tools:
-            chat = chat.bind_tools(bind_tools)
-
-    elif choice == "ollama": 
-        chat = ChatOllama(
-            model="qwen3.5:cloud", 
-            # model="qwen:latest",
-            temperature=temperature
-            )
-        if bind_tools:
-            chat = chat.bind_tools(bind_tools)
-
-    elif choice == "nvidia":
-        chat = ChatOpenAI(
-                # Point to NVIDIA instead of OpenAI
-                base_url="https://integrate.api.nvidia.com/v1", 
-                
-                # Pass your NVIDIA key
-                api_key=os.getenv("NVIDIA_API_KEY"), 
-                
-                # model="openai/gpt-oss-120b",
-
-                # model= "openai/gpt-oss-20b", 
-
-                # model="nv-mistralai/mistral-nemo-12b-instruct",
-
-                # model="mistralai/mistral-nemotron",
-
-                # model = "mistralai/mistral-large-3-675b-instruct-2512",
-
-                model = "nvidia/nemotron-3-nano-30b-a3b",
-                
-                temperature=0.0,
-
-                max_tokens=8192
-            )
-        if bind_tools:
-            chat = chat.bind_tools(bind_tools)
-
-    else:
-        raise ValueError(f"Invalid model choice: {choice}")
-    return chat
-
-
-
-def make_summarizer_chat(choice: str = "ollama") -> BaseChatModel:
-    # Separate model instance; no tools bound; temperature 0 for stability
-    return make_model_chat(temperature=0.0, bind_tools=None, choice=choice)
-
-
-
-def _parse_plan_with_retries(raw: str, 
-                             user_query: str, 
-                             config: RunnableConfig, 
-                             system_msg: SystemMessage, 
-                             model: BaseChatModel, 
-                             debug_prefix: str = "planner") -> Plan:
-    
-    parser = PydanticOutputParser(pydantic_object=Plan)
-
-    def dbg(msg: str) -> None:
-        if DEBUG_MESSAGES == 1:
-            print(f"[{debug_prefix}] {msg}")
-
-    if not (raw or "").strip():
-        dbg("RAW output is empty.")
-
-    # 1) try direct parse
-    try:
-        plan = parser.parse(raw)
-        dbg("Direct parse: SUCCESS")
-        return plan
-    except Exception as e:
-        dbg(f"Direct parse: FAIL ({type(e).__name__}: {e})")
-
-    # 2) try extracting JSON object
+def _parse_plan(raw: str) -> Dict:
+    if not raw:
+        return {"steps": [], "missing_args": []}
     try:
         json_str = _extract_first_json_object(raw)
-        plan = parser.parse(json_str)
-        dbg("Extract-first-JSON parse: SUCCESS")
-        return plan
-    except Exception as e:
-        dbg(f"Extract-first-JSON parse: FAIL ({type(e).__name__}: {e})")
+        return json.loads(json_str)
+    except:
+        try:
+            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            if match:
+                return json.loads(match.group(0))
+        except:
+            pass
+    return {"steps": [], "missing_args": []}
 
-    # 3) ask model to re-emit ONLY JSON (1 retry)
-    repair_prompt = HumanMessage(
-        content=(
-            "Your previous output was invalid or empty.\n"
-            "Re-output ONLY the JSON object that matches the schema. No extra text.\n\n"
-            f"USER QUERY:\n{user_query}\n\n"
-            "Return ONLY JSON now."
-        )
-    )
-    dbg("Requesting JSON repair (one retry).")
-
-    repaired_msg = model.invoke([system_msg, repair_prompt], config=config)   # model will be in scope when called
-    repaired = (repaired_msg.content or "")
-
+def _safe_json_loads(s: str):
     try:
-        json_str = _extract_first_json_object(repaired)
-        plan = parser.parse(json_str)
-        dbg("Repair parse: SUCCESS")
-        return plan
-    except Exception as e:
-        dbg(f"Repair parse: FAIL ({type(e).__name__}: {e})")
+        return json.loads(s)
+    except Exception:
+        return None
 
-    # 4) fallback
-    dbg("FALLBACK: Using 1-step plan.")
-    return Plan(steps=[f"Answer the user query directly: {user_query}"])
+def _compact_json(obj: Any, max_chars: int = 900) -> str:
+    try:
+        s = json.dumps(obj, ensure_ascii=False, default=str)
+    except Exception:
+        s = str(obj)
+    if len(s) > max_chars:
+        return s[:max_chars] + " ...[truncated]"
+    return s
 
+def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
+    payload = _safe_json_loads(tool_content) if isinstance(tool_content, str) else None
+    if not payload:
+        return f"TOOL[{tool_name}] -> {tool_content}"
 
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        err = payload.get("error") or payload.get("result") or payload
+        return f"TOOL[{tool_name}] ERROR -> {_compact_json(err, max_chars=700)}"
 
+    result = payload.get("result", payload)
 
-# ----------------------------
-# Planner node
-# ----------------------------
-def make_planner_node(tools):
-    model = make_model_chat(temperature=0.0)  # important: reduce drift
-    parser = PydanticOutputParser(pydantic_object=Plan)
-    tools_description = textual_description_of_tools(tools)
+    if tool_name == "get_charity_stats" and isinstance(result, dict):
+        data = result.get("data")
+        tool = result.get("tool") or result.get("query")
+        if tool == "charity_donor_count" and isinstance(data, list):
+            pairs = []
+            for row in data:
+                name = row.get("charityName")
+                cnt = row.get("donorCount")
+                if name is not None and cnt is not None:
+                    pairs.append(f"{name}: {cnt}")
+            if pairs:
+                return "TOOL[get_charity_stats:charity_donor_count] -> " + "; ".join(pairs)
 
-    EXEC_SYSTEM_TEMPLATE = (
-        "You are a tool-using execution agent.\n"
-        "You will be given ONE plan step at a time.\n"
-        "Solve the CURRENT step fully. Use tools as needed.\n"
-        "If you did not call a tool, DO NOT claim you did.\n\n"
-        "PAST_CONTEXT (previous turns; use only if relevant):\n"
-        "{past_context}\n"
-    )
+    if tool_name in ("Python_REPL", "python_repl", "PythonREPLTool"):
+        return f"TOOL[Python_REPL] -> {_compact_json(result, max_chars=300)}"
 
+    return f"TOOL[{tool_name}] -> {_compact_json(result, max_chars=700)}"
 
-    def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
-        user_query = state["user_query"]
-        past_context = format_past_context(state.get("past_turns", []))
-        past_context_text = past_context if past_context else "(none)"
+# ========================== CURRENT-ROUND + REPLACEMENT HELPERS ==========================
+def get_current_round_messages(messages: Sequence[BaseMessage]) -> List[BaseMessage]:
+    msgs = list(messages or [])
+    for i in range(len(msgs) - 1, -1, -1):
+        if isinstance(msgs[i], HumanMessage):
+            return msgs[i:]
+    return msgs
 
-        # IMPORTANT: build via concatenation to avoid `.format()` brace collisions
-        planner_system_text = (
-                "You are a planner. Your ONLY job is to break the user's request into "
-                "the MINIMAL number of concrete, executable steps for the executor.\n\n"
-                "CRITICAL RULES (follow strictly):\n"
-                "- Use the FEWEST steps possible. Prefer 1 step for simple or summarization requests.\n"
-                "- Maximum 3 steps. Never create more than 3.\n"
-                "- The finalizer node will automatically compile ALL step results into the final user answer.\n"
-                "- Therefore, NEVER add a step that says 'summarize', 'compile', 'combine', 'return the final answer', "
-                "'produce the overall result', or similar. The last step must be a concrete action that produces data or a clear result.\n"
-                "- For queries that are purely about summarizing previous conversation or context "
-                "(e.g. 'Summarize previous conversation', 'Summarize what we discussed'), "
-                "ALWAYS use EXACTLY ONE step: 'Summarize the provided PAST_CONTEXT and any relevant context_summaries.'\n"
-                "- Steps must be concrete and actionable by the executor (e.g. 'Fetch charity data using get_charity_stats', "
-                "'Calculate mean and median using Python REPL', 'Extract key facts from the page').\n\n"
-                + parser.get_format_instructions()
-                + "\n\n"
-                "PAST_CONTEXT (previous conversation turns — already summarized; use only if relevant):\n"
-                + past_context_text
-                + "\n\n"
-                "AVAILABLE TOOLS:\n"
-                + tools_description
-            )
-        planner_system = SystemMessage(content=planner_system_text)
+def get_latest_tool_per_name(messages: Sequence[BaseMessage]) -> Dict[str, ToolMessage]:
+    """
+    Prefer the latest successful (ok=True) ToolMessage per tool name.
+    If no successful exists, fall back to the latest ToolMessage.
+    """
+    latest_any: Dict[str, ToolMessage] = {}
+    latest_ok: Dict[str, ToolMessage] = {}
+    for m in messages or []:
+        if isinstance(m, ToolMessage):
+            latest_any[m.name] = m
+            payload = _safe_json_loads((m.content or "").strip())
+            if isinstance(payload, dict) and payload.get("ok") is True:
+                latest_ok[m.name] = m
+    out = dict(latest_any)
+    out.update(latest_ok)
+    return out
 
-        # exec_system still uses `.format()` safely because it contains no JSON braces
-        exec_system = SystemMessage(
-            content=EXEC_SYSTEM_TEMPLATE.format(past_context=past_context_text)
-        )
+# NEW: Map tool_call_id -> ToolMessage (latest ok preferred, else latest any)
+def get_best_tool_message_by_call_id(messages: Sequence[BaseMessage]) -> Dict[str, ToolMessage]:
+    latest_any: Dict[str, ToolMessage] = {}
+    latest_ok: Dict[str, ToolMessage] = {}
+    for m in messages or []:
+        if isinstance(m, ToolMessage):
+            tcid = getattr(m, "tool_call_id", None)
+            if not tcid:
+                continue
+            latest_any[tcid] = m
+            payload = _safe_json_loads((m.content or "").strip())
+            if isinstance(payload, dict) and payload.get("ok") is True:
+                latest_ok[tcid] = m
+    out = dict(latest_any)
+    out.update(latest_ok)
+    return out
 
-        planner_input = [planner_system, HumanMessage(content=user_query)]
+def _compact_err(payload: dict) -> str:
+    try:
+        s = json.dumps(payload, ensure_ascii=False, default=str)
+    except Exception:
+        s = str(payload)
+    return s[:800] + (" ...[truncated]" if len(s) > 800 else "")
 
-        # Call model with bounded retry (empty outputs)
-        raw = ""
-        for attempt in range(3):
-            raw = (model.invoke(planner_input, config=config).content or "").strip()
-            if raw:
+def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) -> Dict[str, Any] | None:
+    """
+    Only attends to the last K tool outputs inside the CURRENT conversation round.
+    Detects failure when payload ok=False OR error markers appear in result/error strings.
+    """
+    current_round = get_current_round_messages(messages)
+    tool_msgs = [m for m in current_round if isinstance(m, ToolMessage)][-max_k:]
+
+    error_markers = [
+        "Traceback",
+        "IndentationError",
+        "SyntaxError",
+        "NameError",
+        "KeyError",
+        "TypeError",
+        "ValueError",
+        "Exception",
+        "Error:",
+        "ERROR",
+        "invalid",
+        "missing",
+        "failed",
+    ]
+
+    for m in reversed(tool_msgs):
+        raw = (m.content or "").strip()
+        payload = _safe_json_loads(raw)
+
+        if isinstance(payload, dict):
+            if payload.get("ok") is False:
+                return {"tool": m.name, "error": _compact_err(payload), "tool_message": raw}
+            
+            # Sometimes tools return errors in `result` even when ok=True (we try to prevent this in executor),
+            # but keep this extra guard:
+
+            result = payload.get("result", None)
+            if isinstance(result, str) and any(k in result for k in error_markers):
+                return {"tool": m.name, "error": result[:800], "tool_message": raw}
+
+            err = payload.get("error", None)
+            if isinstance(err, str) and any(k in err for k in error_markers):
+                return {"tool": m.name, "error": err[:800], "tool_message": raw}
+
+        if any(k in raw for k in error_markers):
+            return {"tool": m.name, "error": raw[:800], "tool_message": raw}
+
+    return None
+
+# ========================== UPDATED FORMATTERS ==========================
+def _format_tool_calls_block(tool_calls: list) -> str:
+    out = []
+    for tc in tool_calls or []:
+        tid = tc.get("id") or tc.get("tool_call_id") or ""
+        name = tc.get("name") or ""
+        args = tc.get("args") or {}
+        out.append(f"TOOL_CALL[{name} id={tid}] args={_compact_json(args, max_chars=600)}")
+    return "\n".join(out)
+
+def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
+    """Gate sees ONLY current round history (and we hide synthetic tool-call AI messages)."""
+    current_round = get_current_round_messages(messages)
+    lines = []
+    for m in current_round:
+        if isinstance(m, HumanMessage):
+            lines.append(f"USER: {m.content}")
+        elif isinstance(m, AIMessage):
+            if getattr(m, "tool_calls", None) and not (m.content or "").strip():
+                continue
+            if (m.content or "").strip().startswith("System Note:"):
+                continue
+            lines.append(f"ASSISTANT: {m.content}")
+        elif isinstance(m, ToolMessage):
+            content = (m.content or "").strip()
+            if len(content) > 1200:
+                content = content[:1200] + " ...[truncated]"
+            lines.append(f"TOOL[{m.name}]: {content}")
+    return "\n".join(lines) if lines else "(empty)"
+
+def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 1200) -> str:
+    current_round = get_current_round_messages(messages)
+    last_by_tool: Dict[str, str] = {}
+    for m in current_round:
+        if isinstance(m, ToolMessage):
+            last_by_tool[m.name] = m.content or ""
+    if not last_by_tool:
+        return "(none)"
+    blocks = []
+    for tool_name, content in last_by_tool.items():
+        c = content.strip()
+        if len(c) > max_chars:
+            c = c[:max_chars] + " ...[truncated]"
+        blocks.append(f"- {tool_name}: {c}")
+    return "\n".join(blocks)
+
+# REVISED: Planner history now includes tool call bodies + best tool results per call_id (like responder)
+def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_user: bool = True) -> str:
+    """
+    Planner sees:
+    - USER + ASSISTANT content (excluding System Note)
+    - TOOL_CALL bodies (AIMessage.tool_calls)
+    - TOOL outputs, but:
+        * tool outputs are filtered to avoid showing stale failures
+        * per tool_call_id, we prefer latest ok=True ToolMessage (else latest any)
+        * per tool name, we also prefer ok=True (get_latest_tool_per_name)
+    """
+    msgs = list(messages) if messages else []
+    if drop_last_user:
+        for i in range(len(msgs) - 1, -1, -1):
+            if isinstance(msgs[i], HumanMessage):
+                msgs = msgs[:i]
                 break
-            if DEBUG_MESSAGES == 1:
-                print(f"[planner] Empty output attempt {attempt+1}/3")
+
+    latest_tools_by_name = get_latest_tool_per_name(msgs)
+    best_tool_by_call_id = get_best_tool_message_by_call_id(msgs)
+
+    lines = []
+    for m in msgs:
+        if isinstance(m, HumanMessage):
+            lines.append(f"USER: {m.content}")
+
+        elif isinstance(m, AIMessage):
+            if (m.content or "").strip().startswith("System Note:"):
+                continue
+
+            # Include tool call bodies
+            if getattr(m, "tool_calls", None):
+                lines.append(_format_tool_calls_block(m.tool_calls))
+
+                # Right after tool call body, also include matching tool results (if already present)
+                for tc in m.tool_calls or []:
+                    tcid = tc.get("id") or tc.get("tool_call_id")
+                    if tcid and tcid in best_tool_by_call_id:
+                        tm = best_tool_by_call_id[tcid]
+                        # also respect per-tool-name "latest ok preferred" to avoid re-showing old failures
+                        if tm is latest_tools_by_name.get(tm.name) or (tm.name not in latest_tools_by_name):
+                            lines.append(_summarize_tool_output(tm.name, tm.content))
+
+            # Include normal assistant text if any
+            if (m.content or "").strip():
+                lines.append(f"ASSISTANT: {m.content}")
+
+        elif isinstance(m, ToolMessage):
+            # ToolMessages are already inserted right after tool calls above (by call_id pairing).
+            # Here, only include tool messages that have no corresponding call_id pairing.
+            tcid = getattr(m, "tool_call_id", None)
+            if tcid and tcid in best_tool_by_call_id and best_tool_by_call_id[tcid] is not m:
+                continue
+
+            # Prefer latest ok=True per tool name
+            if m is not latest_tools_by_name.get(m.name):
+                continue
+
+            lines.append(_summarize_tool_output(m.name, m.content))
+
+        else:
+            lines.append(f"{m.__class__.__name__}: {getattr(m, 'content', '')}")
+
+    return "\n".join(lines) if lines else "(no prior history)"
+
+def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
+    latest_tools_by_name = get_latest_tool_per_name(messages)
+    best_tool_by_call_id = get_best_tool_message_by_call_id(messages)
+
+    lines = []
+    seen_call_ids: set[str] = set()
+
+    for m in messages or []:
+        if isinstance(m, HumanMessage):
+            lines.append(f"USER: {m.content}")
+
+        elif isinstance(m, AIMessage):
+            if (m.content or "").strip().startswith("System Note:"):
+                continue
+
+            if getattr(m, "tool_calls", None):
+                lines.append(_format_tool_calls_block(m.tool_calls))
+
+                for tc in m.tool_calls or []:
+                    tcid = tc.get("id") or tc.get("tool_call_id")
+                    if not tcid:
+                        continue
+                    tm = best_tool_by_call_id.get(tcid)
+                    if not tm:
+                        continue
+
+                    # mark as emitted so we don't emit again in ToolMessage pass
+                    seen_call_ids.add(tcid)
+
+                    # optionally still apply "latest ok per tool name" filter:
+                    # keep only if it's the chosen best for that tool name
+                    if tm is not latest_tools_by_name.get(tm.name):
+                        continue
+
+                    lines.append(_summarize_tool_output(tm.name, tm.content))
+
+            if (m.content or "").strip():
+                lines.append(f"ASSISTANT: {m.content}")
+
+        elif isinstance(m, ToolMessage):
+            tcid = getattr(m, "tool_call_id", None)
+
+            # If already emitted via pairing, skip
+            if tcid and tcid in seen_call_ids:
+                continue
+
+            # Prior behavior: keep only latest ok=True per tool name
+            if m is not latest_tools_by_name.get(m.name):
+                continue
+
+            lines.append(_summarize_tool_output(m.name, m.content))
+
+        else:
+            lines.append(f"{m.__class__.__name__}: {getattr(m, 'content', '')}")
+
+    return "\n".join(lines) if lines else "(empty)"
+
+# ========================== PLANNER NODE ==========================
+def make_planner_node(tools_by_name: dict):
+    model = make_model(temperature=0.0)
+
+    def planner_node(state: AgentState) -> Dict:
+        chat_history = format_history_for_planner(state.get("messages", []), drop_last_user=True)
+        tool_context = build_tool_context(tools_by_name)
+
+        prompt = f"""
+You are a planning module for a charity & donation assistant.
+Your job is to output a MINIMAL tool plan that FULLY satisfies the user's request.
+
+Available tools:
+{tool_context}
+
+PLANNING GOAL:
+- Cover every part of the user’s request using the fewest tool calls.
+- Prefer reusing one tool call to satisfy multiple sub-requests when possible.
+
+HARD CONSTRAINTS (must follow):
+A) COVERAGE CHECKLIST (do NOT output this checklist; use it silently):
+1. Identify ALL distinct user requirements.
+2. For EACH requirement, ensure at least one planned step will produce the needed information.
+3. If ANY requirement is not covered, add the minimal additional step(s).
+
+B) SPECIAL RULE FOR get_charity_stats:
+- The ONLY callable tool for charity stats is: get_charity_stats
+- You MUST choose a concrete tool_name value yourself from its allowed list.
+- Use ONE get_charity_stats call to satisfy multiple needs when possible.
+
+C) MANDATORY PYTHON TRIGGER:
+- If the user asks for ANY numeric aggregation (median, mean, average, avg, std, min, max, sum, total)
+  OR explicitly says "use python" → MUST include a Python_REPL step.
+- Python_REPL must NEVER have empty args.
+
+D) Python_REPL argument format:
+- {{ "input": "<python code that prints ONLY the final numeric result>" }}
+
+E) TOOL REUSE RULE:
+- If the exact needed data already exists in chat history ToolMessage outputs, do NOT call tools again.
+
+OUTPUT FORMAT (STRICT JSON ONLY):
+{{
+"steps": [
+    {{"tool": "tool_name", "args": {{"arg_name": "value"}}}}
+],
+"missing_args": []
+}}
+
+Chat History (may contain prior TOOL_CALL + TOOL outputs to reuse):
+{chat_history}
+
+User Request (current turn):
+{state.get("messages", [])[-1].content if state.get("messages") else ""}
+"""
 
         if DEBUG_MESSAGES == 1:
-            print("\n\n============================================================")
-            print("PLANNER INPUT")
-            print("------------------------------------------------------------")
-            for i, m in enumerate(planner_input):
-                print(f"\n--- msg[{i}] ---")
-                print(format_msg(m))
+            rich_print("\n" + "="*80)
+            rich_print("PLANNER INPUT")
+            rich_print("="*80)
+            rich_print(prompt)
+            rich_print("="*80)
 
-            print("\n------------------------------------------------------------")
-            print("PLANNER RAW OUTPUT")
-            print("------------------------------------------------------------")
-            print(raw)
-            print("============================================================\n")
-
-        plan_obj = _parse_plan_with_retries(raw, user_query, config, planner_system, model, debug_prefix="planner")
+        response = model.invoke([HumanMessage(content=prompt)])
 
         if DEBUG_MESSAGES == 1:
-            print("------------------------------------------------------------")
-            print("PLANNER PARSED STEPS")
-            print("------------------------------------------------------------")
-            for i, step in enumerate(plan_obj.steps):
-                print(f"[{i}] {step}")
-            print("============================================================\n")
+            rich_print("\n" + "="*80)
+            rich_print("PLANNER RAW OUTPUT")
+            rich_print("="*80)
+            rich_print(response.content)
+            rich_print("="*80)
 
-        return {
-            "plan": plan_obj.steps,
-            "step_idx": 0,
-            "current_step": None,
-            "completed": [],
-            "history_cursor": 0,
-            "context_summaries": [],
-            "step_start_idx": 1,  # base is now [exec_system] only
-            "messages": [exec_system],
-            "prompt_messages": [exec_system],
-        }
+        plan = _parse_plan(response.content)
+
+        if DEBUG_MESSAGES == 1:
+            steps_list = [s.get("tool", "") for s in plan.get("steps", [])]
+            rich_print(f"[PLANNER] Scheduled tools: {steps_list}")
+
+        return {"plan": plan}
 
     return planner_node
 
+# ========================== VALIDATOR NODE ==========================
+def make_validator_node(tools_by_name: dict):
+    def validator_node(state: AgentState) -> Dict:
+        plan = state.get("plan", {})
+        steps = plan.get("steps", [])
+        missing_args = plan.get("missing_args", [])
+        messages = []
 
+        valid_steps = []
+        for step in steps:
+            tool_name = step.get("tool")
+            args = step.get("args", {})
+            if tool_name not in tools_by_name:
+                messages.append(AIMessage(content=f"System Note: Tool '{tool_name}' not found."))
+                continue
+            if not args and missing_args:
+                continue
+            valid_steps.append(step)
 
+        updated_plan = {"steps": valid_steps, "missing_args": missing_args}
 
-# ----------------------------
-# NEW: Reflection node (after planner, before executor)
-# ----------------------------
-def make_reflection_node(tools):
-    model = make_model_chat(temperature=0.0)   # deterministic
-    tools_description = textual_description_of_tools(tools)
+        if missing_args and not valid_steps:
+            return {
+                "plan": updated_plan,
+                "messages": [AIMessage(content=f"System Note: STOP EXECUTION. The planner needs input. Ask the user strictly for: {', '.join(missing_args)}")]
+            }
+        if not valid_steps and not missing_args:
+            return {
+                "plan": updated_plan,
+                "messages": [AIMessage(content="System Note: No tools needed. Reply nicely based on chat history.")]
+            }
+        return {"plan": updated_plan, "messages": messages}
 
-    REFLECTION_SYSTEM_TEXT = (
-        "You are a strict plan validator and corrector. "
-        "Your ONLY job is to detect and fix hallucinations while preserving the original intent and number of steps.\n\n"
-        "CRITICAL RULES (follow strictly):\n"
-        "- Tool names that appear in any step MUST be exactly one of the AVAILABLE TOOLS listed below. "
-        "No other names are allowed.\n"
-        "- SPECIAL CASE — get_charity_stats:\n"
-        "  The names charity_donor_count, charity_impactlife, charity_donor_amount, … are NOT tools.\n"
-        "  They are arguments to the tool get_charity_stats.\n"
-        "  CORRECT phrasing:\n"
-        "    \"Use get_charity_stats with the exact argument 'charity_donor_count' to fetch donor count data for all charities.\"\n"
-        "  INCORRECT (do NOT allow):\n"
-        "    \"Use charity_donor_count\", \"Call charity_donor_count tool\", \"get_charity_stats('charity_donor_count')\" as a single tool.\n"
-        "- For any calculation, statistics, mean/median, etc. → the step MUST use Python_REPL.\n"
-        "- Maintain the exact original number of steps. "
-        "Only merge or delete a step if it is completely redundant or impossible. "
-        "Never drop a calculation or data-fetch step.\n"
-        "- Make the smallest possible change. If the original plan is already correct, return it unchanged.\n\n"
-        + PydanticOutputParser(pydantic_object=Plan).get_format_instructions()
-        + "\n\n"
-        "AVAILABLE TOOLS:\n"
-        + tools_description
-        + "\n\n"
-        "FEW-SHOT EXAMPLES:\n"
-        "Original plan:\n"
-        '  ["Use get_charity_stats with the exact tool name \'charity_donor_count\' to fetch donor count data.",\n'
-        '   "In Python_REPL, load the data, compute mean/median and highest donor charities."]\n'
-        "Corrected (only tiny fix if needed):\n"
-        '  ["Use get_charity_stats with the exact argument \'charity_donor_count\' to fetch donor count data for all charities.",\n'
-        '   "In Python_REPL, load the returned data, compute the mean and median of donor counts, identify the charities with the highest donor count, and print a JSON object."]\n\n'
-        "Original plan:\n"
-        '  ["charity_donor_count", "import json..."]\n'
-        "Corrected:\n"
-        '  ["Use get_charity_stats with argument \'charity_donor_count\' to fetch donor count data for all charities.",\n'
-        '   "Use Python_REPL to load the data and compute mean, median, and top charities."]\n'
-    )
+    return validator_node
 
+# ========================== EXECUTOR NODE (UPDATED) ==========================
+def make_executor_node(tools_by_name: dict):
+    def _invoke_tool(tool, raw_args: dict):
+        if getattr(tool, "args_schema", None) is not None:
+            return tool.invoke(raw_args)
+        if not raw_args:
+            return tool.invoke("")
+        if len(raw_args) == 1:
+            return tool.invoke(next(iter(raw_args.values())))
+        return tool.invoke(json.dumps(raw_args, ensure_ascii=False))
 
-    def reflection_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
-        original_plan = state.get("original_plan", state.get("plan", []))
-        user_query = state["user_query"]
-
-        reflection_system = SystemMessage(content=REFLECTION_SYSTEM_TEXT)
-        reflection_input = [
-            reflection_system,
-            HumanMessage(content=(
-                f"USER QUERY: {user_query}\n\n"
-                f"ORIGINAL PLAN TO REVIEW:\n"
-                + json.dumps({"steps": original_plan}, indent=2) + "\n\n"
-                "Review for hallucinations/wrong tool names and output the corrected plan JSON."
-            ))
-        ]
-
-        raw = ""
-        for attempt in range(3):
-            raw = (model.invoke(reflection_input, config=config).content or "").strip()
-            if raw:
-                break
-
-        # Reuse the same robust parser (we pass a dummy system_msg; the repair logic still works)
-        corrected_plan_obj = _parse_plan_with_retries(
-            raw, user_query, config, reflection_system, model, debug_prefix="reflection"
+    def _looks_like_error_text(s: str) -> bool:
+        if not s:
+            return False
+        error_markers = (
+            "Traceback (most recent call last):",
+            "IndentationError",
+            "SyntaxError",
+            "NameError",
+            "KeyError",
+            "TypeError",
+            "ValueError",
+            "Exception",
+            "ERROR",
+            "Error:",
         )
+        return any(m in s for m in error_markers)
 
-        corrected_steps = corrected_plan_obj.steps
+    def _normalize_result(tool_name: str, result):
+        """
+        Normalize to {"ok": bool, "result": ...} and mark ok=False when a tool returns error text.
+        This is critical for Python_REPLTool, which often returns errors as strings rather than raising.
+        """
+        if result is None:
+            return {"ok": True, "result": None}
 
-        if DEBUG_MESSAGES == 1:
-            print("------------------------------------------------------------")
-            print("REFLECTION RAW OUTPUT")
-            print("------------------------------------------------------------")
-            print(raw)
-            print("------------------------------------------------------------")
-            print("REFLECTION CORRECTED STEPS")
-            print("------------------------------------------------------------")
-            for i, step in enumerate(corrected_steps):
-                print(f"[{i}] {step}")
-            print("============================================================\n")
+        if isinstance(result, str):
+            s = result.strip()
 
-        # Return corrected plan (fallback to original if something went catastrophically wrong)
+            if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+                try:
+                    parsed = json.loads(s)
+                    if isinstance(parsed, dict) and parsed.get("ok") is False:
+                        return parsed
+                    return {"ok": True, "result": parsed}
+                except json.JSONDecodeError:
+                    pass
+
+            if tool_name in ("Python_REPL", "python_repl", "PythonREPLTool") and _looks_like_error_text(s):
+                return {"ok": False, "error": s}
+
+            if _looks_like_error_text(s):
+                return {"ok": False, "error": s}
+
+            return {"ok": True, "result": s}
+
+        if isinstance(result, (dict, list, int, float, bool)):
+            return {"ok": True, "result": result}
+
+        return {"ok": True, "result": str(result)}
+
+    def _mk_tool_call(tool_name: str, args: dict, tool_call_id: str) -> dict:
         return {
-            "plan": corrected_steps if corrected_steps else original_plan,
+            "name": tool_name,
+            "args": args or {},
+            "id": tool_call_id,
+            "type": "tool_call",
         }
 
-    return reflection_node
-
-
-
-# ----------------------------
-# Executor model node
-# ----------------------------
-def make_executor_model_node(tools):
-    model = make_model_chat(temperature=0.3, bind_tools=tools)
-
-    POST_TOOL_NUDGE = (
-        "Tool result received.\n"
-        "Now write the final result for THIS plan step in plain text.\n"
-        "- Do NOT call more tools unless strictly necessary.\n"
-        "- Be concise and specific.\n"
-    )
-
-    EMPTY_OUTPUT_NUDGE = (
-        "Your last message was empty.\n"
-        "You MUST now produce the final answer for this plan step in plain text.\n"
-        "Do not call tools unless absolutely required.\n"
-        "Do not output an empty message."
-    )
-
-    # How many consecutive empty assistant replies to tolerate within ONE node call
-    MAX_EMPTY_RETRIES = int(os.getenv("MAX_EMPTY_RETRIES", "4"))
-
-    def _is_empty_final(ai: AIMessage) -> bool:
-        # Empty if: no tool calls AND no text content
-        has_tools = bool(getattr(ai, "tool_calls", None))
-        content = (getattr(ai, "content", "") or "").strip()
-        return (not has_tools) and (not content)
-
-    def executor_model_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
-        plan = state.get("plan", [])
-        idx = int(state.get("step_idx", 0))
-        if idx >= len(plan):
+    def executor_node(state: AgentState) -> Dict:
+        plan = state.get("plan", {})
+        steps = plan.get("steps", [])
+        if not steps:
             return {}
 
-        step = plan[idx]
+        messages: List[BaseMessage] = []
+        for step in steps:
+            tool_name = step.get("tool")
+            raw_args = dict(step.get("args", {}) or {})
 
-        msgs_full: List[BaseMessage] = list(state.get("messages", []))          # authoritative log
-        msgs_prompt: List[BaseMessage] = list(state.get("prompt_messages", [])) # System/(Context)
+            if tool_name not in tools_by_name:
+                messages.append(AIMessage(content=f"System Note: Tool '{tool_name}' not found. Skipping."))
+                continue
 
-        starting_new_step = (state.get("current_step") != step)
+            tool = tools_by_name[tool_name]
+            tool_call_id = str(uuid4())
 
-        out: Dict[str, Any] = {}
-        new_messages: List[BaseMessage] = []
+            messages.append(AIMessage(content="", tool_calls=[_mk_tool_call(tool_name, raw_args, tool_call_id)]))
 
-        # ----------------------------
-        # Build model_input
-        # ----------------------------
-        if starting_new_step:
-            # Mark where THIS step begins in the full transcript (before we append PLAN STEP)
-            out["current_step"] = step
-            out["step_start_idx"] = len(msgs_full)
+            try:
+                result = _invoke_tool(tool, raw_args)
+                payload = _normalize_result(tool_name, result)
+            except Exception as e:
+                payload = {"ok": False, "error": str(e), "tool": tool_name, "args": raw_args}
 
-            plan_step_msg = HumanMessage(
-                content=(
-                    "PLAN STEP (execute only this step):\n"
-                    f"{step}\n\n"
-                    "If needed, call tools. Otherwise, you MUST produce a clear final answer in plain text. "
-                    "Do not output an empty message."
-                )
-            )
-            new_messages.append(plan_step_msg)
+            messages.append(ToolMessage(
+                content=json.dumps(payload, ensure_ascii=False, default=str),
+                name=tool_name,
+                tool_call_id=tool_call_id,
+            ))
 
-            # Executor input (no user query): System + (Context if any) + Plan Step
-            model_input: List[BaseMessage] = msgs_prompt + [plan_step_msg]
+            if DEBUG_MESSAGES == 1:
+                preview = payload.get("result") if payload.get("ok") else payload.get("error")
+                preview_s = _compact_json(preview, max_chars=200)
+                rich_print(f"[EXECUTOR] {tool_name} done ok={payload.get('ok')} args={raw_args} preview={preview_s}")
 
-        else:
-            # Continuing same step: include ONLY this step's trace (not full history)
-            step_start_idx = int(state.get("step_start_idx", 0))
-            current_step_msgs = msgs_full[step_start_idx:]  # PLAN STEP + tool loop + ToolMessages + etc.
+        return {"messages": messages}
 
-            last_full = msgs_full[-1] if msgs_full else None
-            if isinstance(last_full, ToolMessage):
-                new_messages.append(HumanMessage(content=POST_TOOL_NUDGE))
-            elif (
-                isinstance(last_full, AIMessage)
-                and not (last_full.content or "").strip()
-                and not getattr(last_full, "tool_calls", None)
-            ):
-                new_messages.append(HumanMessage(content=EMPTY_OUTPUT_NUDGE))
+    return executor_node
 
-            model_input = msgs_prompt + current_step_msgs + new_messages
+# ========================== RESPONDER NODE ==========================
+def make_responder_node():
+    model = make_model(temperature=0.0)
 
-        # ----------------------------
-        # Invoke model with bounded retries for empty final outputs
-        # ----------------------------
-        ai = model.invoke(model_input, config=config)
+    def responder(state: AgentState) -> Dict:
+        system_prompt = """
+You are a Charity & Data Assistant that produces FINAL, USER-FACING answers.
 
-        # We'll append everything we generated in THIS node call
-        appended: List[BaseMessage] = [*new_messages, ai]
+OUTPUT RULES (STRICT):
+- Do NOT reveal your chain-of-thought, reasoning, internal steps, or analysis.
+- Do NOT describe tool usage steps.
+- Do NOT output any code blocks or code snippets.
+- ONLY use information explicitly present in the Conversation History (especially TOOL outputs).
+- If the needed value is not present, say what is missing and ask for the minimum needed input.
 
-        # If the model returned empty *and* it wasn't a tool call, retry a few times
-        # within this same node invocation (prevents graph-level spam loops).
-        retries = 0
-        while _is_empty_final(ai) and retries < MAX_EMPTY_RETRIES:
-            retries += 1
-            retry_msg = HumanMessage(content=EMPTY_OUTPUT_NUDGE)
+Now write the final answer based strictly on the Conversation History below.
+"""
 
-            # Keep the retry context tight: the same model_input plus the retry instruction.
-            ai = model.invoke(model_input + [retry_msg], config=config)
+        transcript = format_history_for_responder(state.get("messages", []))
+        final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{transcript}")]
 
-            appended.extend([retry_msg, ai])
-
-            # If the model chooses to call tools on retry, stop here and let ToolNode run.
-            if getattr(ai, "tool_calls", None):
-                break
-
-        out["messages"] = appended
-        return out
-
-    return executor_model_node
-
-
-
-
-# ----------------------------
-# Advance node: record step result and move to next step
-# ----------------------------
-
-def format_message(m: BaseMessage) -> str:
-    role = m.__class__.__name__
-    content = (getattr(m, "content", "") or "").strip()
-
-    if isinstance(m, AIMessage):
-        tool_calls = getattr(m, "tool_calls", None)
-        if tool_calls:
-            content += "\n\n[tool_calls]\n" + json.dumps(tool_calls, indent=2)
-
-    if isinstance(m, ToolMessage):
-        tool_name = getattr(m, "name", None)
-        if tool_name:
-            content = f"[tool={tool_name}]\n{content}"
-
-    return f"{role}:\n{content}\n"
-
-
-
-
-
-
-def _safe_truncate(s: str, n: int = 4000) -> str:
-    s = (s or "").strip()
-    return s if len(s) <= n else s[:n] + "\n…(truncated)"
-
-
-def summarize_step_transcript_llm(
-    summarizer: BaseChatModel,
-    step: str,
-    step_msgs: List[BaseMessage],
-    config: RunnableConfig,
-) -> str:
-    """
-    Summarizes ONLY the step trace (PLAN STEP + tool calls + tool outputs + intermediate chatter).
-    It intentionally does NOT summarize the final natural-language result.
-    """
-    lines: List[str] = []
-    for m in step_msgs:
-        role = m.__class__.__name__
-        content = (getattr(m, "content", "") or "").strip()
-
-        if isinstance(m, AIMessage):
-            tc = getattr(m, "tool_calls", None)
-            if tc:
-                content += "\n[tool_calls]\n" + json.dumps(tc, indent=2)
-
-        if isinstance(m, ToolMessage):
-            tool_name = getattr(m, "name", None)
-            if tool_name:
-                content = f"[tool={tool_name}]\n{content}"
-
-        lines.append(f"{role}:\n{content}" if content else f"{role}:(empty)")
-
-    transcript = _safe_truncate("\n\n".join(lines), TRANSCRIPT_LIMIT)
-
-    system = SystemMessage(
-        content=(
-            "You are a step-trace summarizer for a planner-executor agent.\n"
-            "Summarize ONLY what happened in this one step's TRACE.\n"
-            "The final natural-language result will be attached separately, so DO NOT restate it.\n"
-            "\n"
-            "Rules:\n"
-            "- Do NOT mention internal frameworks (e.g., LangGraph, ToolNode).\n"
-            "- Preserve entity names and numeric values exactly as seen.\n"
-            "- Focus on tool outputs and key facts derived from them.\n"
-            "- Keep it compact and structured.\n"
-            "- Output plain text ONLY.\n"
-            "\n"
-            "Format:\n"
-            "STEP: <one line>\n"
-            "TRACE SUMMARY:\n"
-            "- <key action/fact>\n"
-            "- <key action/fact>\n"
-        )
-    )
-
-    user = HumanMessage(
-        content=(
-            f"STEP:\n{step}\n\n"
-            f"STEP TRACE (to summarize):\n{transcript}\n\n"
-            "Write the trace summary now."
-        )
-    )
-
-    try:
-        ai = summarizer.invoke([system, user], config=config)
-        summary = (ai.content or "").strip()
-        if summary:
-            return summary
-    except Exception as e:
         if DEBUG_MESSAGES == 1:
-            print(f"[summarizer error] {e}")
+            rich_print("\n" + "="*80)
+            rich_print("RESPONDER INVOKE MESSAGES")
+            rich_print("="*80)
+            for i, m in enumerate(final_prompt):
+                rich_print(f"\n--- final_prompt[{i}] ---")
+                rich_print(format_msg(m))
+            rich_print("="*80)
 
-    # Safe fallback
-    return (
-        f"STEP: {step}\n"
-        f"TRACE SUMMARY:\n"
-        f"- (trace summary unavailable)\n"
-    )
+        summary = model.invoke(final_prompt)
+        final_text = (summary.content or "").strip()
 
+        return {"messages": [summary], "final_answer": final_text}
 
+    return responder
 
+# ========================== GATE NODE ==========================
+def make_gate_node(tools_by_name: dict, max_repairs: int = 2):
+    model = make_model(temperature=0.0)
 
-def make_advance_node(summarizer: BaseChatModel):
-    def advance_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
+    def gate_node(state: AgentState) -> Dict:
+        attempts = int(state.get("repair_attempts") or 0)
+        if attempts >= max_repairs:
+            return {
+                "messages": [AIMessage(content="System Note: Repair limit reached. Proceeding to final response.")],
+                "plan": {"steps": [], "missing_args": []},
+            }
 
-        plan = state.get("plan", [])
-        idx = int(state.get("step_idx", 0))
-        if idx >= len(plan):
-            raise RuntimeError("advance_node called but no steps remain.")
+        messages = list(state.get("messages", []) or [])
+        last_error = detect_latest_tool_error(messages)
+        if not last_error:
+            return {"plan": {"steps": [], "missing_args": []}}
 
-        step = plan[idx]
-        msgs_full = list(state.get("messages", []))          # full transcript
-        msgs_prompt = list(state.get("prompt_messages", [])) # compact prompt base
+        history = format_history_for_gate(messages)
+        cache = build_cached_tool_outputs(messages)
 
-        # 1) Extract final natural-language AI result for THIS step from FULL transcript
-        step_start_idx = int(state.get("step_start_idx", 1))
-        step_msgs = msgs_full[step_start_idx:]
+        tool_context = build_tool_context(tools_by_name)
+        valid_tool_names = list(tools_by_name.keys())
 
-        step_result = None
+        prompt = f"""
+You are an EXPERT TOOL-REPAIR AGENT. Your sole job is to fix the most recent tool failure with MAXIMUM precision and correctness.
 
-        # Only inspect THIS step's messages
-        for m in reversed(step_msgs):
-            if isinstance(m, AIMessage):
-                content = (m.content or "").strip()
-                tool_calls = getattr(m, "tool_calls", None)
+Available tools:
+{tool_context}
 
-                # Must be a final natural-language result
-                if content and not tool_calls:
-                    step_result = content
-                    break
+Valid tool names (must match EXACTLY):
+{valid_tool_names}
 
-        if not step_result:
-            step_result = "(No valid final step result was produced.)"
+Most recent tool error:
+- tool: {last_error["tool"]}
+- error: {last_error["error"]}
 
+Cached recent tool outputs (USE THIS DATA EXACTLY — do NOT invent values):
+{cache}
 
-        completed = state.get("completed", []) + [(step, step_result)]
+CRITICAL INSTRUCTIONS — FOLLOW STRICTLY:
 
+1. Output ONLY valid JSON in this exact format, nothing else:
+{{
+"steps": [
+    {{"tool": "tool_name", "args": {{"arg_name": "value"}}}}
+],
+"missing_args": []
+}}
 
-        # DEBUG: print exactly what you want
+2. For Python_REPL repairs (the most common case):
+- ALWAYS start with proper imports: `import statistics`
+- Extract the REAL data from the "Cached recent tool outputs" section above and hard-code it into variables.
+- Use the CORRECT statistical function:
+        • median → statistics.median(your_list)
+        • mean   → statistics.mean(your_list)
+        • sum, min, max, etc. → built-in functions
+- The code must END with ONE clean `print(…)` statement that outputs ONLY the final numeric result (no lists, no extra text).
+- NEVER print the sorted list. NEVER use `sorted()` alone for median.
+- Avoid leading indentation on lines unless inside a block (IndentationError risk).
+
+3. Concrete good example for a median repair:
+{{
+"steps": [
+    {{
+    "tool": "Python_REPL",
+    "args": {{
+        "input": "import statistics\\ndonor_counts = [4, 2, 7, 5, 3]\\nprint(statistics.median(donor_counts))"
+    }}
+    }}
+],
+"missing_args": []
+}}
+
+4. Think step-by-step about the error and the cached data, then output ONLY the JSON fix.
+
+Conversation History (current round only):
+{history}
+"""
+
         if DEBUG_MESSAGES == 1:
-            print("\n\n============================================================")
-            print(f"STEP-[{idx}] {step}")
-            print("------------------------------------------------------------")
+            rich_print("\n" + "="*80)
+            rich_print("GATE INPUT")
+            rich_print("="*80)
+            rich_print(prompt)
+            rich_print("="*80)
 
-            # Order: System, User, Context (from prompt_messages) + step transcript (from full messages)
-            combined = list(msgs_prompt) + list(step_msgs)
+        resp = model.invoke([HumanMessage(content=prompt)])
 
-            for j, m in enumerate(combined):
-                print(f"\n--- msg[{j}] ---")
-                print(format_message(m))
+        if DEBUG_MESSAGES == 1:
+            rich_print("\n" + "="*80)
+            rich_print("GATE RAW OUTPUT")
+            rich_print("="*80)
+            rich_print(resp.content)
+            rich_print("="*80)
 
-            print("\n============================================================\n")
-
-        # 3) Build trace messages to summarize (exclude final natural-language result)
-        trace_msgs = list(step_msgs)
-        for k in range(len(trace_msgs) - 1, -1, -1):
-            m = trace_msgs[k]
-            if isinstance(m, AIMessage):
-                tool_calls = getattr(m, "tool_calls", None)
-                content = (m.content or "").strip()
-                if not tool_calls and content:
-                    trace_msgs.pop(k)
-                    break
-
-        # 4) Summarize ONLY the trace
-        trace_summary = summarize_step_transcript_llm(
-            summarizer=summarizer,
-            step=step,
-            step_msgs=trace_msgs,
-            config=config,
-        )
-
-        # 5) Append verbatim final result into the context entry
-        context_entry = (
-            f"{trace_summary.strip()}\n\n"
-            f"FINAL RESULT (verbatim):\n{step_result.strip()}"
-        )
-
-        context_summaries = list(state.get("context_summaries", []))
-        context_summaries.append(context_entry)
-
-        MAX_CONTEXT_STEPS = 20
-        if len(context_summaries) > MAX_CONTEXT_STEPS:
-            context_summaries = context_summaries[-MAX_CONTEXT_STEPS:]
-
-        # 6) Rebuild prompt_messages (this overwrites cleanly)
-        # prompt_messages always: [System, User Query, Context]
-        base_exec_system = msgs_prompt[0] if len(msgs_prompt) >= 1 else msgs_full[0]
-
-        context_block = "\n\n---\n\n".join(context_summaries)
-        context_msg = HumanMessage(content="CONTEXT (previous step summaries):\n\n" + context_block)
-
-        new_prompt_msgs = [base_exec_system, context_msg]
-
+        repair_plan = _parse_plan(resp.content)
 
         return {
-            "completed": completed,
-            "context_summaries": context_summaries,
-            "prompt_messages": new_prompt_msgs,  # IMPORTANT: executor uses this next
-            "step_idx": idx + 1,
-            "current_step": None,
-            "step_start_idx": len(msgs_full),    # next step transcript starts at end of full list
+            "plan": repair_plan,
+            "repair_attempts": attempts + 1,
+            "last_tool_error": last_error,
+            "messages": [
+                AIMessage(content=f"System Note: Detected tool error in {last_error['tool']}. Attempting automatic repair.")
+            ],
         }
 
-    return advance_node
+    return gate_node
 
+# ========================== ROUTING ==========================
+def route_after_validator(state: AgentState) -> str:
+    plan = state.get("plan", {})
+    steps = plan.get("steps", [])
+    return "executor" if len(steps) > 0 else "responder"
 
+def route_after_gate(state: AgentState) -> str:
+    plan = state.get("plan", {}) or {}
+    steps = plan.get("steps", []) or []
+    return "validator" if steps else "responder"
 
-
-# ----------------------------
-# Finalizer node
-# ----------------------------
-def make_finalizer_node():
-    model = make_model_chat(temperature=0.0)
-
-    FINALIZER_SYSTEM_PROMPT = """\
-    You are the finalizer.
-
-    Task: Write the final user answer by summarizing the executed (step, result) list.
-
-    Rules:
-    - Output only the final answer (no analysis / meta / self-talk; no tool mentions).
-    - Use only the provided step results; do not add new facts.
-    - Organize by user sub-questions as short headings with bullet points.
-    - If any requested part is not supported by the step results, add a final "Missing" section listing what’s missing (1 line each). Otherwise omit "Missing".
-    - If multiple step results repeat the same info, deduplicate and keep the clearest/latest.
-    """
-
-    system = SystemMessage(content=FINALIZER_SYSTEM_PROMPT)
-
-    def finalizer_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
-        completed = state.get("completed", []) or []
-        executed = "\n".join([f"- Step: {s}\n  Result: {r}" for s, r in completed])
-
-        msg = HumanMessage(
-            content=(
-                f"USER QUERY:\n{state.get('user_query','')}\n\n"
-                f"EXECUTED STEPS + RESULTS:\n{executed}\n\n"
-                "Write the final answer now."
-            )
-        )
-
-        ai = model.invoke([system, msg], config=config)
-        final = (ai.content or "").strip()
-
-        # Retry once if empty (common intermittent behavior in some Ollama setups)
-        if not final:
-            retry = HumanMessage(
-                content="Your last answer was empty. Output the final answer as plain text now."
-            )
-            ai2 = model.invoke([system, msg, retry], config=config)
-            final = (ai2.content or "").strip()
-
-            # Keep the finalizer transcript for debugging if needed
-            return {"messages": [msg, ai, retry, ai2], "final_answer": final}
-
-        # Keep the finalizer transcript for debugging if needed
-        return {"messages": [msg, ai], "final_answer": final}
-
-    return finalizer_node
-
-
-
-
-def should_continue(state: AgentState) -> str:
-    plan = state.get("plan", [])
-    idx = int(state.get("step_idx", 0))
-    return "executor" if idx < len(plan) else "finalize"
-
-
-
-def executor_routing(state: AgentState) -> str:
-    last = (list(state.get("messages", [])) or [None])[-1]
-    if isinstance(last, AIMessage) and getattr(last, "tool_calls", None):
-        return "tools"
-    return "advance"
-
-
-
-# ----------------------------
-# Build graph
-# ----------------------------
+# ========================== BUILD GRAPH ==========================
 async def build_graph():
     tools = await setup_tools()
-
-    # add hints to tool descriptions to improve performance
-    tools = patch_tool_descriptions(tools)
-
-    summarizer_model = make_summarizer_chat(choice="ollama")  # separate instance
+    tools_by_name = {t.name: t for t in tools}
 
     workflow = StateGraph(AgentState)
-    workflow.add_node("planner", make_planner_node(tools))
-    workflow.add_node("reflection", make_reflection_node(tools))   # ← NEW NODE
-    workflow.add_node("executor_model", make_executor_model_node(tools))
-    workflow.add_node("tools", ToolNode(tools))
-    workflow.add_node("advance", make_advance_node(summarizer_model))  # <- changed
-    workflow.add_node("finalizer", make_finalizer_node())
+    workflow.add_node("planner", make_planner_node(tools_by_name))
+    workflow.add_node("validator", make_validator_node(tools_by_name))
+    workflow.add_node("executor", make_executor_node(tools_by_name))
+    workflow.add_node("gate", make_gate_node(tools_by_name, max_repairs=1))
+    workflow.add_node("responder", make_responder_node())
 
-    workflow.add_edge(START, "planner")
-    workflow.add_edge("planner", "reflection")          # ← CHANGED
-    workflow.add_edge("reflection", "executor_model")   # ← NEW
+    workflow.set_entry_point("planner")
+    workflow.add_edge("planner", "validator")
 
-    # If tool_calls exist -> tools, else -> advance
     workflow.add_conditional_edges(
-        "executor_model",
-        executor_routing,
-        {"tools": "tools", "advance": "advance", "executor_model": "executor_model"},
+        "validator",
+        route_after_validator,
+        {"executor": "executor", "responder": "responder"},
     )
 
+    workflow.add_edge("executor", "gate")
 
-
-    # tools execute and append ToolMessages, then go back to model for the SAME step
-    workflow.add_edge("tools", "executor_model")
-
-    # after advancing, either do next step or finalize
     workflow.add_conditional_edges(
-        "advance",
-        should_continue,
-        {"executor": "executor_model", "finalize": "finalizer"},
+        "gate",
+        route_after_gate,
+        {"validator": "validator", "responder": "responder"},
     )
 
-
-    workflow.add_edge("finalizer", END)
-
+    workflow.add_edge("responder", END)
     return workflow.compile()
 
-
-# ----------------------------
-# Run
-# ----------------------------
+# ========================== MAIN ==========================
 async def main():
-
-    start_time = time.time()
     graph = await build_graph()
 
-    # ----------------------------
-    # TURN 1 (First QUERY)
-    # ----------------------------
-
-    query = (
-        "Find me all available charities. "
-        # " Which charities have the highest donor count, "
-        # " What are the mean and median of donor counts across charities, please calculate using python if needed, "
-    )
-
-    state: AgentState = {
-        "user_query": query,
-        "plan": [],
-        "step_idx": 0,
-        "current_step": None,
-        "completed": [],
-        "final_answer": "",
-        "messages": [],
-        "history_cursor": 0,
-        "context_summaries": [],
-        "step_start_idx": 0,
-        "past_turns": [],  # no past turns at the start
-    }
-
-    # IMPORTANT: async run so ToolNode uses tool.ainvoke for async-only tools (e.g., MCP)
-    out = await graph.ainvoke(state)
-    out_msg = out.get("final_answer", "")
-
+    chat_memory: List[BaseMessage] = []
     console = Console()
-    print("\n\n\nAgent Final Response:")
-    print("-----------------------------------------------------------------------")
-    console.print(Markdown(out_msg))
-    print("-----------------------------------------------------------------------")
 
+    rich_print("\n" + "="*60)
+    rich_print("CHARITY AGENT – Gate limited to current round + last K tools")
+    rich_print("Type 'exit', 'quit', or 'q' to stop.")
+    rich_print("="*60 + "\n")
 
-    # print("\n\nConversation Transcript:")
-    # print("======================================================================")
+    while True:
+        try:
+            user_input = input("User: ")
+        except (KeyboardInterrupt, EOFError):
+            rich_print("\nGoodbye!")
+            break
 
-    # for i, m in enumerate(out.get("messages", [])):
-    #     print(f"\n--- #{i} -------------------------------------------------------------")
-    #     print(format_msg(m))
+        if user_input.lower() in ["exit", "quit", "q"]:
+            rich_print("\nGoodbye!")
+            break
 
+        user_msg = HumanMessage(content=user_input)
+        chat_memory.append(user_msg)
 
-    # Store only (user_query, final_answer) as conversation memory
-    past_turns = list(out.get("past_turns", []))
-    past_turns.append((query, out_msg))
+        rich_print("\n(Agent is thinking...)\n")
 
+        try:
+            async for step in graph.astream({"messages": chat_memory, "repair_attempts": 0}, stream_mode="updates"):
+                for node_name, node_output in step.items():
+                    if not node_output:
+                        continue
+                    if "messages" in node_output:
+                        new_messages = node_output["messages"]
+                        for msg in new_messages:
+                            chat_memory.append(msg)
 
-    # ----------------------------
-    # TURN 2 (NEW QUERY)
-    # ----------------------------
-    query2 = "Summarize the previous conversation."
-
-    state2: AgentState = {
-        "user_query": query2,
-
-        # carry conversation-level memory forward
-        "past_turns": past_turns,
-
-        # reset run-level fields
-        "plan": [],
-        "step_idx": 0,
-        "current_step": None,
-        "completed": [],
-        "final_answer": "",
-        "messages": [],
-        "context_summaries": [],
-        "step_start_idx": 0,
-    }
-
-    out2 = await graph.ainvoke(state2)
-    out2_msg = (out2.get("final_answer", "") or "").strip()
-
-    print("\n\n\nAgent Final Response (Turn 2):")
-    print("-----------------------------------------------------------------------")
-    console.print(Markdown(out2_msg))
-    print("-----------------------------------------------------------------------")
-
-
-
-
-
-    end_time = time.time()
-    elapsed = end_time - start_time
-    print(f"\n\n**Total elapsed time**: {elapsed:.2f} seconds")
-
+                            if isinstance(msg, ToolMessage):
+                                rich_print(f" ➤ [Tool Executed] {msg.name}")
+                            elif isinstance(msg, AIMessage):
+                                if getattr(msg, "tool_calls", None) and not (msg.content or "").strip():
+                                    continue
+                                if "System Note:" not in (msg.content or ""):
+                                    rich_print(f"\nAgent: {msg.content}\n")
+        except Exception as e:
+            rich_print(f"\n[ERROR] {e}")
+            import traceback
+            traceback.print_exc()
 
 if __name__ == "__main__":
     asyncio.run(main())
-
