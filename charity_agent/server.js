@@ -3,20 +3,20 @@ const express = require("express");
 const app = express();
 const PORT = 3000;
 
-/**
- * ----------------------------
- * Dummy "DB" (in-memory)
- * ----------------------------
- * Shaped from your collections/fields:
- * - charityorganizations: core profile + address + country availability, etc. :contentReference[oaicite:2]{index=2}
- * - charityrankings: donationAmount, impactLife, donors :contentReference[oaicite:3]{index=3}
- * - charityproducts: name, pricePerUnit, totalDonated, category, charity :contentReference[oaicite:4]{index=4}
- * - charityblogs: title, description, file, charity :contentReference[oaicite:5]{index=5}
- */
+// ───────────────────────────────────────────────
+//  Constants
+// ───────────────────────────────────────────────
 
-// Simple deterministic IDs (string instead of ObjectId for dummy mode)
+// Authentication token (matches Postman: x-auth-token)
+const AUTH_TOKEN = "charity-demo-token-2026";
+
+// Dummy DB IDs
 const ORG_1 = "org_001";
 const ORG_2 = "org_002";
+
+// ───────────────────────────────────────────────
+// Dummy Database Collections (fully expanded)
+// ───────────────────────────────────────────────
 
 const charityorganizations = [
   {
@@ -48,31 +48,10 @@ const charityorganizations = [
       { _id: "ca_2", country: "UAE", countryCode: "AE" },
     ],
     documents: {
-      registrationCertificate: {
-        name: "Registration Certificate",
-        url: "uploads\\verification_documents\\regcert.pdf",
-        expiryDate: null,
-        verified: "verified",
-      },
-      taxExemptionCertificate: {
-        name: "Tax Exemption Certificate",
-        url: "uploads\\verification_documents\\taxexempt.pdf",
-        expiryDate: null,
-        verified: "verified",
-      },
-      annualReport: {
-        name: "Annual Report",
-        url: "uploads\\verification_documents\\annualreport.pdf",
-        expiryDate: null,
-        verified: "verified",
-        year: 2026,
-      },
-      governmentApproval: {
-        name: "Government Approval",
-        url: "uploads\\verification_documents\\govt.pdf",
-        expiryDate: null,
-        verified: "verified",
-      },
+      registrationCertificate: { name: "Registration Certificate", url: "uploads\\verification_documents\\regcert.pdf", expiryDate: null, verified: "verified" },
+      taxExemptionCertificate: { name: "Tax Exemption Certificate", url: "uploads\\verification_documents\\taxexempt.pdf", expiryDate: null, verified: "verified" },
+      annualReport: { name: "Annual Report", url: "uploads\\verification_documents\\annualreport.pdf", expiryDate: null, verified: "verified", year: 2026 },
+      governmentApproval: { name: "Government Approval", url: "uploads\\verification_documents\\govt.pdf", expiryDate: null, verified: "verified" },
     },
     paymentCustomerId: "cus_dummy_001",
     walletUid: "wallet_dummy_001",
@@ -87,7 +66,7 @@ const charityorganizations = [
     registrationNumber: "REG-PAK-002",
     email: "brightfutures@yopmail.com",
     phone: "+923004445556",
-    website: "https://www.aap.org/en/practice-management/bright-futures/?srsltid=AfmBOormaQ-tknOJO897svYcuF5G1WYMpFFUah_hYnmXP-KVnTniUNJl",
+    website: "https://www.aap.org/en/practice-management/bright-futures/",
     logo: "/uploads/logos/brightfutures.png",
     partOfGiver: true,
     verificationStatus: "Approved",
@@ -106,31 +85,10 @@ const charityorganizations = [
     },
     CountryAvailability: [{ _id: "ca_3", country: "Pakistan", countryCode: "PK" }],
     documents: {
-      registrationCertificate: {
-        name: "Registration Certificate",
-        url: "uploads\\verification_documents\\regcert2.pdf",
-        expiryDate: null,
-        verified: "verified",
-      },
-      taxExemptionCertificate: {
-        name: "Tax Exemption Certificate",
-        url: "uploads\\verification_documents\\taxexempt2.pdf",
-        expiryDate: null,
-        verified: "verified",
-      },
-      annualReport: {
-        name: "Annual Report",
-        url: "uploads\\verification_documents\\annualreport2.pdf",
-        expiryDate: null,
-        verified: "verified",
-        year: 2026,
-      },
-      governmentApproval: {
-        name: "Government Approval",
-        url: "uploads\\verification_documents\\govt2.pdf",
-        expiryDate: null,
-        verified: "verified",
-      },
+      registrationCertificate: { name: "Registration Certificate", url: "uploads\\verification_documents\\regcert2.pdf", expiryDate: null, verified: "verified" },
+      taxExemptionCertificate: { name: "Tax Exemption Certificate", url: "uploads\\verification_documents\\taxexempt2.pdf", expiryDate: null, verified: "verified" },
+      annualReport: { name: "Annual Report", url: "uploads\\verification_documents\\annualreport2.pdf", expiryDate: null, verified: "verified", year: 2026 },
+      governmentApproval: { name: "Government Approval", url: "uploads\\verification_documents\\govt2.pdf", expiryDate: null, verified: "verified" },
     },
     paymentCustomerId: "cus_dummy_002",
     walletUid: "wallet_dummy_002",
@@ -148,7 +106,12 @@ const charityrankings = [
     country: "Pakistan",
     donationAmount: 250000,
     impactLife: 1200,
-    donors: ["don_1", "don_2", "don_3", "don_4"],
+    donors: [
+      { donorId: "don_1", totalAmount: 100000, impactLife: 500 },
+      { donorId: "don_2", totalAmount: 50000, impactLife: 250 },
+      { donorId: "don_3", totalAmount: 50000, impactLife: 250 },
+      { donorId: "don_4", totalAmount: 50000, impactLife: 250 },
+    ],
     createdAt: "2026-01-20T10:00:00.000Z",
     updatedAt: "2026-02-01T10:00:00.000Z",
     __v: 0,
@@ -160,7 +123,10 @@ const charityrankings = [
     country: "Pakistan",
     donationAmount: 180000,
     impactLife: 800,
-    donors: ["don_5", "don_6"],
+    donors: [
+      { donorId: "don_5", totalAmount: 100000, impactLife: 400 },
+      { donorId: "don_6", totalAmount: 80000, impactLife: 400 },
+    ],
     createdAt: "2026-01-21T10:00:00.000Z",
     updatedAt: "2026-02-01T10:00:00.000Z",
     __v: 0,
@@ -256,9 +222,10 @@ const charityblogs = [
   },
 ];
 
-/**
- * Helpers
- */
+// ───────────────────────────────────────────────
+// Helpers
+// ───────────────────────────────────────────────
+
 function byIdOrg(orgId) {
   return charityorganizations.find((c) => c._id === orgId);
 }
@@ -282,14 +249,31 @@ function stableEnvelope({ tool, query, data, warnings = [] }) {
   };
 }
 
-/**
- * ----------------------------
- * "Tools" implemented over dummy DB
- * Names based on your tools.md :contentReference[oaicite:6]{index=6}
- * ----------------------------
- */
+function paginate(array, page = 1, limit = 10) {
+  const start = (page - 1) * limit;
+  const end = start + limit;
+  return {
+    items: array.slice(start, end),
+    pagination: {
+      total: array.length,
+      page: Number(page),
+      limit: Number(limit),
+      totalPages: Math.ceil(array.length / limit),
+      hasNext: end < array.length,
+      hasPrev: start > 0,
+    },
+  };
+}
 
-// charity_donor_count(List[org.name], List[ranking.charityId], List[ranking.donors])
+function getCharityIdFromToken(token) {
+  if (token !== AUTH_TOKEN) return null;
+  return ORG_1; // dummy: always returns ORG_1 (change to ORG_2 to test other charity)
+}
+
+// ───────────────────────────────────────────────
+// Tool Functions (original)
+// ───────────────────────────────────────────────
+
 function charity_donor_count() {
   return charityrankings.map((r) => ({
     charityName: orgName(r.charityId),
@@ -297,7 +281,6 @@ function charity_donor_count() {
   }));
 }
 
-// charity_impactlife(List[org.name], List[ranking.charityId])
 function charity_impactlife() {
   return charityrankings.map((r) => ({
     charityName: orgName(r.charityId),
@@ -305,7 +288,6 @@ function charity_impactlife() {
   }));
 }
 
-// charity_donor_amount(List[org.name], List[ranking.charityId])
 function charity_donor_amount() {
   return charityrankings.map((r) => ({
     charityName: orgName(r.charityId),
@@ -313,7 +295,6 @@ function charity_donor_amount() {
   }));
 }
 
-// charity_total_donation(List[products.charity], List[products.name], List[products.totalDonated])
 function charity_total_donation() {
   const out = {};
   for (const p of charityproducts) {
@@ -321,14 +302,12 @@ function charity_total_donation() {
     if (!out[name]) out[name] = {};
     out[name][p.name] = p.totalDonated ?? 0;
   }
-  // Return as list for agent-friendliness
   return Object.entries(out).map(([charityName, products]) => ({
     charityName,
-    products, // { productName: totalDonated }
+    products,
   }));
 }
 
-// charity_items_category(List[products.charity], List[products.category])
 function charity_items_category() {
   const out = {};
   for (const p of charityproducts) {
@@ -342,7 +321,6 @@ function charity_items_category() {
   }));
 }
 
-// charity_product_price_description(charityproducts)
 function charity_product_price_description() {
   const out = {};
   for (const p of charityproducts) {
@@ -356,11 +334,10 @@ function charity_product_price_description() {
   }
   return Object.entries(out).map(([charityName, products]) => ({
     charityName,
-    products, // list of { productName, pricePerUnit, description }
+    products,
   }));
 }
 
-// charity_blogs(charityblogs)
 function charity_blogs() {
   const out = {};
   for (const b of charityblogs) {
@@ -368,7 +345,7 @@ function charity_blogs() {
     if (!out[name]) out[name] = [];
     out[name].push({
       title: b.title,
-      description: b.description, // HTML string (as in your samples)
+      description: b.description,
       file: b.file,
       hashtags: b.hashtags ?? [],
     });
@@ -379,7 +356,6 @@ function charity_blogs() {
   }));
 }
 
-// charity_address(charityorganizations)
 function charity_address() {
   return charityorganizations.map((c) => ({
     charityName: c.name,
@@ -394,7 +370,6 @@ function charity_address() {
   }));
 }
 
-// charity_country_availability(charityorganizations)
 function charity_country_availability() {
   return charityorganizations.map((c) => ({
     charityName: c.name,
@@ -405,7 +380,6 @@ function charity_country_availability() {
   }));
 }
 
-// charity_contact_info(charityorganizations)  (note the typo in your tools.md, we support both)
 function charity_contact_info() {
   return charityorganizations.map((c) => ({
     charityName: c.name,
@@ -417,16 +391,14 @@ function charity_contact_info() {
   }));
 }
 
-/**
- * Router mapping:
- * - Accepts q=tool_name (and a few aliases)
- * - Returns stable JSON envelope
- */
+// ───────────────────────────────────────────────
+// Tool Query Handler (original)
+// ───────────────────────────────────────────────
+
 function handleToolQuery(rawQ) {
   const q = String(rawQ || "").trim();
   const norm = q.toLowerCase();
 
-  // Allow a couple of practical aliases so the agent can be sloppy
   const toolMap = [
     { keys: ["charity_donor_count", "donor_count", "donors_count"], fn: charity_donor_count },
     { keys: ["charity_impactlife", "impactlife", "impact_life"], fn: charity_impactlife },
@@ -437,7 +409,7 @@ function handleToolQuery(rawQ) {
     { keys: ["charity_blogs", "blogs"], fn: charity_blogs },
     { keys: ["charity_address", "address"], fn: charity_address },
     { keys: ["charity_country_availability", "country_availability"], fn: charity_country_availability },
-    { keys: ["charity_contact_info", "charity_contact_info", "contact_info"], fn: charity_contact_info },
+    { keys: ["charity_contact_info", "contact_info"], fn: charity_contact_info },
   ];
 
   for (const entry of toolMap) {
@@ -450,8 +422,7 @@ function handleToolQuery(rawQ) {
     }
   }
 
-  // Generic fallback “stats” (useful for queries like "total charities")
-  // Keeps agent from failing hard.
+  // Fallback
   const fallbackData = {
     totals: {
       charityorganizations: charityorganizations.length,
@@ -478,20 +449,391 @@ function handleToolQuery(rawQ) {
   };
 }
 
+// ───────────────────────────────────────────────
+// Routes
+// ───────────────────────────────────────────────
+
+// Original tool endpoint
 /**
- * Single GET endpoint (your required single pathway)
- * http://localhost:3000/api/stats?q=charity_donor_count
+ * Legacy / tool-based stats endpoint (used by agent / internal tools)
+ * @route   GET /api/stats
+ * @access  Public
+ * @query   {string} q              The tool name / alias to execute
+ *                                  Examples:
+ *                                  - charity_donor_count
+ *                                  - charity_impactlife
+ *                                  - charity_total_donation
+ *                                  - charity_blogs
+ *                                  - charity_address
+ *                                  - etc.
+ * @returns {200}                   Always returns 200 even on error (tool-friendly)
+ *          Success case:
+ *          {
+ *            "ok": true,
+ *            "tool": string,
+ *            "query": string,
+ *            "data": array | object,
+ *            "meta": { dummy: true, warnings: [], timestamp: string }
+ *          }
+ *
+ *          Error / unknown tool case:
+ *          {
+ *            "ok": false,
+ *            "tool": "unknown_tool",
+ *            "query": string,
+ *            "error": string,
+ *            "data": { totals: {...}, charities: [...] },
+ *            "meta": { dummy: true, timestamp: string }
+ *          }
+ *
+ * @example
+ *   GET /api/stats?q=charity_donor_count
+ *   → returns list of { charityName, donorCount }
  */
 app.get("/api/stats", (req, res) => {
   const q = req.query.q || "";
   const payload = handleToolQuery(q);
-
-  // Always return JSON, always 200 (tool callers often prefer a JSON error to exceptions)
   res.setHeader("Content-Type", "application/json");
   res.status(200).json(payload);
 });
 
+
+// 1. Search Charity (public)
+/**
+ * Search approved charities by name or email
+ * @route   GET /api/v1/charity_organization/search
+ * @access  Public
+ * @query   {string} search          Required. Search term (charity name or email)
+ * @returns {200}                    Success response
+ *          {
+ *            "success": true,
+ *            "message": "Charity search completed successfully",
+ *            "data": {
+ *              "searchQuery": string,
+ *              "totalResults": number,
+ *              "charities": [
+ *                { "_id": string, "name": string, "email": string, "logo": string|null, "address": object, "verificationStatus": string }
+ *              ]
+ *            }
+ *          }
+ * @returns {400}                    Missing search query
+ *          { "success": false, "message": "Search query is required" }
+ */
+app.get("/api/v1/charity_organization/search", (req, res) => {
+  const search = (req.query.search || "").trim().toLowerCase();
+  if (!search) {
+    return res.status(400).json({ success: false, message: "Search query is required" });
+  }
+
+  const filtered = charityorganizations.filter(
+    (c) =>
+      c.verificationStatus === "Approved" &&
+      !c.isDeleted &&
+      !c.isSuspended &&
+      (c.name.toLowerCase().includes(search) || c.email.toLowerCase().includes(search))
+  );
+
+  const charities = filtered.map((c) => ({
+    _id: c._id,
+    name: c.name,
+    email: c.email,
+    logo: c.logo,
+    address: c.address,
+    verificationStatus: c.verificationStatus,
+  }));
+
+  res.json({
+    success: true,
+    message: "Charity search completed successfully",
+    data: { searchQuery: search, totalResults: charities.length, charities },
+  });
+});
+
+
+// 2. Get Charity Profile By ID (public)
+/**
+ * Get detailed profile of a single charity
+ * @route   GET /api/v1/charity_organization/get-charity-profile/:charityId
+ * @access  Public
+ * @param   {string} charityId       MongoDB-style ID of the charity (path param)
+ * @returns {200}                    Success
+ *          {
+ *            "success": true,
+ *            "message": "Charity profile fetched successfully",
+ *            "charity": {
+ *              "_id": string,
+ *              "name": string,
+ *              "email": string,
+ *              "phone": string,
+ *              "logo": string|null,
+ *              "address": object,
+ *              "registrationNumber": string,
+ *              "verificationStatus": string,
+ *              "description": string,
+ *              "website": string|null,
+ *              "createdAt": string (ISO),
+ *              "updatedAt": string (ISO)
+ *            }
+ *          }
+ * @returns {404}                    Charity not found or not approved
+ *          { "success": false, "message": "Charity not found or not approved" }
+ */
+app.get("/api/v1/charity_organization/get-charity-profile/:charityId", (req, res) => {
+  const charity = byIdOrg(req.params.charityId);
+  if (!charity || charity.verificationStatus !== "Approved" || charity.isDeleted || charity.isSuspended) {
+    return res.status(404).json({ success: false, message: "Charity not found or not approved" });
+  }
+
+  res.json({
+    success: true,
+    message: "Charity profile fetched successfully",
+    charity: {
+      _id: charity._id,
+      name: charity.name,
+      email: charity.email,
+      phone: charity.phone,
+      logo: charity.logo,
+      address: charity.address,
+      registrationNumber: charity.registrationNumber,
+      verificationStatus: charity.verificationStatus,
+      description: charity.description,
+      website: charity.website,
+      createdAt: charity.createdAt,
+      updatedAt: charity.updatedAt,
+    },
+  });
+});
+
+// 3. Get Charity Products (authenticated)
+/**
+ * Get paginated list of products belonging to the authenticated charity
+ * @route   GET /api/v1/products/get-charity-products
+ * @access  Private (charity organization)
+ * @header  {string} x-auth-token    Authentication token
+ * @query   {number}  [page=1]
+ * @query   {number}  [limit=10]
+ * @query   {string}  [isActive=true|false]
+ * @query   {string}  [isDeleted=true|false]
+ * @query   {string}  [status=approved|pending|rejected]
+ * @query   {string}  [productId]         Filter by parent product ID
+ * @query   {number}  [minPrice]
+ * @query   {number}  [maxPrice]
+ * @query   {string}  [startDate]         ISO date
+ * @query   {string}  [endDate]           ISO date
+ * @query   {string}  [category]          comma-separated category IDs
+ * @query   {string}  [search]
+ * @query   {string}  [sort]              e.g. -createdAt, price, name
+ * @returns {200}                         Success
+ *          {
+ *            "success": true,
+ *            "message": "Charity products fetched successfully",
+ *            "data": {
+ *              "products": [
+ *                {
+ *                  "_id": string,
+ *                  "name": string,
+ *                  "description": string,
+ *                  "pricePerUnit": number,
+ *                  "isActive": boolean,
+ *                  "status": string,
+ *                  "charity": { "_id": string, "name": string, "logo": string|null },
+ *                  "parent": { ... } | null,
+ *                  "createdAt": string,
+ *                  "updatedAt": string
+ *                }
+ *              ],
+ *              "pagination": { total, page, limit, totalPages, hasNext, hasPrev }
+ *            }
+ *          }
+ * @returns {401}                         Unauthorized
+ *          { "success": false, "message": "Unauthorized" }
+ */
+app.get("/api/v1/products/get-charity-products", (req, res) => {
+  const token = req.headers["x-auth-token"];
+  const charityId = getCharityIdFromToken(token);
+  if (!charityId) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+  let products = charityproducts.filter((p) => p.charity === charityId);
+
+  // Filters (matching Postman)
+  if (req.query.isActive !== undefined) products = products.filter((p) => p.isActive === (req.query.isActive === "true"));
+  if (req.query.isDeleted !== undefined) products = products.filter((p) => p.isDeleted === (req.query.isDeleted === "true"));
+  if (req.query.status) products = products.filter((p) => p.status === req.query.status);
+  if (req.query.productId) products = products.filter((p) => p.parent === req.query.productId);
+  if (req.query.minPrice) products = products.filter((p) => p.pricePerUnit >= Number(req.query.minPrice));
+  if (req.query.maxPrice) products = products.filter((p) => p.pricePerUnit <= Number(req.query.maxPrice));
+  if (req.query.startDate) products = products.filter((p) => new Date(p.createdAt) >= new Date(req.query.startDate));
+  if (req.query.endDate) products = products.filter((p) => new Date(p.createdAt) <= new Date(req.query.endDate));
+  if (req.query.category) {
+    const cats = req.query.category.split(",");
+    products = products.filter((p) => cats.includes(p.category));
+  }
+  if (req.query.search) {
+    const s = req.query.search.toLowerCase();
+    products = products.filter((p) => p.name.toLowerCase().includes(s) || p.description.toLowerCase().includes(s));
+  }
+
+  // Sorting
+  let sortField = req.query.sort || "createdAt";
+  let sortDir = 1;
+  if (sortField.startsWith("-")) {
+    sortDir = -1;
+    sortField = sortField.slice(1);
+  }
+  products.sort((a, b) => sortDir * (a[sortField] > b[sortField] ? 1 : a[sortField] < b[sortField] ? -1 : 0));
+
+  const page = Number(req.query.page) || 1;
+  const limit = Number(req.query.limit) || 10;
+  const { items, pagination } = paginate(products, page, limit);
+
+  const enriched = items.map((p) => ({
+    _id: p._id,
+    name: p.name,
+    description: p.description,
+    pricePerUnit: p.pricePerUnit,
+    isActive: p.isActive,
+    status: p.status,
+    charity: { _id: charityId, name: orgName(charityId), logo: byIdOrg(charityId)?.logo },
+    parent: p.parent ? { _id: p.parent, name: "Parent Product", category: { _id: p.category, name: "Category Name", color: "#FF5733" }, partner: { _id: p.partner, name: "Partner Name", verificationStatus: "Approved" } } : null,
+    createdAt: p.createdAt,
+    updatedAt: p.updatedAt,
+  }));
+
+  res.json({
+    success: true,
+    message: "Charity products fetched successfully",
+    data: { products: enriched, pagination },
+  });
+});
+
+// 4. Get Charity Blogs (authenticated)
+/**
+ * Get paginated list of blogs belonging to the authenticated charity
+ * @route   GET /api/v1/charity_organization/blogs
+ * @access  Private (charity organization)
+ * @header  {string} x-auth-token
+ * @query   {number}  [page=1]
+ * @query   {number}  [limit=10]          max 100
+ * @query   {string}  [search]            title, description or hashtags
+ * @query   {string}  [sortBy=createdAt]  createdAt|updatedAt|title|status
+ * @query   {string}  [order=desc]        asc|desc
+ * @returns {200}
+ *          {
+ *            "success": true,
+ *            "message": "Blogs fetched successfully",
+ *            "blogs": [
+ *              {
+ *                "_id": string,
+ *                "charity": string,
+ *                "title": string,
+ *                "description": string,
+ *                "hashtags": string[],
+ *                "file": string|null,
+ *                "status": string,
+ *                "isDeleted": boolean,
+ *                "createdAt": string,
+ *                "updatedAt": string
+ *              }
+ *            ],
+ *            "pagination": { ... + sortBy, order, search }
+ *          }
+ * @returns {401}                         Unauthorized
+ */
+app.get("/api/v1/charity_organization/blogs", (req, res) => {
+  const token = req.headers["x-auth-token"];
+  const charityId = getCharityIdFromToken(token);
+  if (!charityId) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+  let blogs = charityblogs.filter((b) => b.charity === charityId && !b.isDeleted);
+
+  if (req.query.search) {
+    const s = req.query.search.toLowerCase();
+    blogs = blogs.filter(
+      (b) =>
+        b.title.toLowerCase().includes(s) ||
+        b.description.toLowerCase().includes(s) ||
+        (b.hashtags || []).some((tag) => tag.toLowerCase().includes(s))
+    );
+  }
+
+  const sortBy = req.query.sortBy || "createdAt";
+  const order = req.query.order === "asc" ? 1 : -1;
+  const sortFn = (a, b) => {
+    const valA = sortBy === "title" ? a[sortBy].toLowerCase() : a[sortBy];
+    const valB = sortBy === "title" ? b[sortBy].toLowerCase() : b[sortBy];
+    return order * (valA > valB ? 1 : valA < valB ? -1 : 0);
+  };
+  blogs.sort(sortFn);
+
+  const page = Number(req.query.page) || 1;
+  const limit = Math.min(Number(req.query.limit) || 10, 100);
+  const { items, pagination } = paginate(blogs, page, limit);
+
+  res.json({
+    success: true,
+    message: "Blogs fetched successfully",
+    blogs: items,
+    pagination: { ...pagination, sortBy, order: order === 1 ? "asc" : "desc", search: req.query.search || "" },
+  });
+});
+
+// 5. Get Charity Ranking (authenticated)
+/**
+ * Get ranking and impact statistics for the authenticated charity
+ * @route   GET /api/v1/charity_organization/charity-ranking
+ * @access  Private (charity organization)
+ * @header  {string} x-auth-token
+ * @returns {200}
+ *          {
+ *            "success": true,
+ *            "message": "Charity ranking retrieved successfully",
+ *            "data": {
+ *              "ranking": {
+ *                "_id": string,
+ *                "charityId": string,
+ *                "userId": string,
+ *                "country": string,
+ *                "donationAmount": number,
+ *                "impactLife": number,
+ *                "donors": [{ "donorId": string, "totalAmount": number, "impactLife": number }, ...],
+ *                "createdAt": string,
+ *                "updatedAt": string
+ *              },
+ *              "rank": number
+ *            }
+ *          }
+ * @returns {401}                         Unauthorized
+ * @returns {404}                         No ranking data found
+ */
+app.get("/api/v1/charity_organization/charity-ranking", (req, res) => {
+  const token = req.headers["x-auth-token"];
+  const charityId = getCharityIdFromToken(token);
+  if (!charityId) return res.status(401).json({ success: false, message: "Unauthorized" });
+
+  const ranking = charityrankings.find((r) => r.charityId === charityId);
+  if (!ranking) {
+    return res.status(404).json({ success: false, message: "Ranking data not found for this charity" });
+  }
+
+  const allRanked = [...charityrankings].sort((a, b) => b.donationAmount - a.donationAmount);
+  const rank = allRanked.findIndex((r) => r.charityId === charityId) + 1;
+
+  res.json({
+    success: true,
+    message: "Charity ranking retrieved successfully",
+    data: { ranking, rank },
+  });
+});
+
+// ───────────────────────────────────────────────
+// Start Server
+// ───────────────────────────────────────────────
+
 app.listen(PORT, () => {
-  console.log(`Node API running on http://localhost:${PORT}`);
-  console.log(`Try: http://localhost:${PORT}/api/stats?q=charity_donor_count`);
+  console.log(`✅ Node API running on http://localhost:${PORT}`);
+  console.log(`   Tool endpoint:   http://localhost:${PORT}/api/stats?q=charity_donor_count`);
+  console.log(`   Search:          http://localhost:${PORT}/api/v1/charity_organization/search?search=helping`);
+  console.log(`   Profile:         http://localhost:${PORT}/api/v1/charity_organization/get-charity-profile/${ORG_1}`);
+  console.log(`   Products (auth): http://localhost:${PORT}/api/v1/products/get-charity-products`);
+  console.log(`                    Header → x-auth-token: ${AUTH_TOKEN}`);
 });
