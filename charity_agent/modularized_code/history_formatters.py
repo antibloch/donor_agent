@@ -83,14 +83,30 @@ def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) ->
             return {"tool": m.name, "error": raw[:800], "tool_message": raw}
     return None
 
+
 def _format_tool_calls_block(tool_calls: list) -> str:
+    """Normalized formatting for ALL tools.
+    - get_charity_stats keeps its original args (already contains "tool_name": "charity_xxx")
+    - Every other tool now ALWAYS shows "tool_name": "<tool_name>" in the displayed args
+      so the history (planner / gate / responder) is consistent.
+    """
     out = []
     for tc in tool_calls or []:
-        tid = tc.get("id") or tc.get("tool") or tc.get("tool_call_id") or ""
+        tid = tc.get("id") or tc.get("tool_call_id") or ""
         name = tc.get("name") or ""
-        args = tc.get("args") or {}
+
+        # Copy args so we never mutate the original tool call object
+        args = dict(tc.get("args") or {})
+
+        # === THE FIX YOU ASKED FOR ===
+        # For every tool EXCEPT get_charity_stats, guarantee "tool_name" key exists
+        if name and name != "get_charity_stats" and "tool_name" not in args:
+            args["tool_name"] = name
+        # ============================
+
         out.append(f"TOOL_CALL[{name} id={tid}] args={_compact_json(args, max_chars=600)}")
     return "\n".join(out)
+
 
 def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
     current_round = get_current_round_messages(messages)
@@ -120,6 +136,7 @@ def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
             lines.append(_summarize_tool_output(m.name, m.content))
     return "\n".join(lines) if lines else "(empty)"
 
+
 def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 1200) -> str:
     current_round = get_current_round_messages(messages)
     last_by_tool: Dict[str, str] = {}
@@ -135,6 +152,7 @@ def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 
             c = c[:max_chars] + " ...[truncated]"
         blocks.append(f"- {tool_name}: {c}")
     return "\n".join(blocks)
+
 
 def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_user: bool = True) -> str:
     msgs = list(messages) if messages else []
@@ -182,6 +200,7 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
                 continue
             lines.append(_summarize_tool_output(m.name, m.content))
     return "\n".join(lines) if lines else "(no prior history)"
+
 
 def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
     latest_tools_by_name = get_latest_tool_per_name(messages)
