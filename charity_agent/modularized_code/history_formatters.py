@@ -86,7 +86,7 @@ def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) ->
 def _format_tool_calls_block(tool_calls: list) -> str:
     out = []
     for tc in tool_calls or []:
-        tid = tc.get("id") or tc.get("tool_call_id") or ""
+        tid = tc.get("id") or tc.get("tool") or tc.get("tool_call_id") or ""
         name = tc.get("name") or ""
         args = tc.get("args") or {}
         out.append(f"TOOL_CALL[{name} id={tid}] args={_compact_json(args, max_chars=600)}")
