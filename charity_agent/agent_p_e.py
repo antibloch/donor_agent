@@ -327,25 +327,46 @@ def _format_tool_calls_block(tool_calls: list) -> str:
         out.append(f"TOOL_CALL[{name} id={tid}] args={_compact_json(args, max_chars=600)}")
     return "\n".join(out)
 
+
 def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
-    """Gate sees ONLY current round history (and we hide synthetic tool-call AI messages)."""
+    """Gate sees ONLY current round history with clean TOOL_CALL -> TOOL flow (success + failure)."""
     current_round = get_current_round_messages(messages)
+    best_tool_by_call_id = get_best_tool_message_by_call_id(current_round)
+
     lines = []
+    seen_call_ids: set[str] = set()
+
     for m in current_round:
         if isinstance(m, HumanMessage):
             lines.append(f"USER: {m.content}")
+
         elif isinstance(m, AIMessage):
-            if getattr(m, "tool_calls", None) and not (m.content or "").strip():
-                continue
             if (m.content or "").strip().startswith("System Note:"):
                 continue
-            lines.append(f"ASSISTANT: {m.content}")
+
+            # Show tool call body + its matching tool output
+            if getattr(m, "tool_calls", None):
+                lines.append(_format_tool_calls_block(m.tool_calls))
+
+                for tc in m.tool_calls or []:
+                    tcid = tc.get("id") or tc.get("tool_call_id")
+                    if tcid and tcid in best_tool_by_call_id:
+                        tm = best_tool_by_call_id[tcid]
+                        seen_call_ids.add(tcid)
+                        lines.append(_summarize_tool_output(tm.name, tm.content))
+
+            if (m.content or "").strip():
+                lines.append(f"ASSISTANT: {m.content}")
+
         elif isinstance(m, ToolMessage):
-            content = (m.content or "").strip()
-            if len(content) > 1200:
-                content = content[:1200] + " ...[truncated]"
-            lines.append(f"TOOL[{m.name}]: {content}")
+            tcid = getattr(m, "tool_call_id", None)
+            if tcid and tcid in seen_call_ids:
+                continue
+            # Show tool output (including errors - important for gate)
+            lines.append(_summarize_tool_output(m.name, m.content))
+
     return "\n".join(lines) if lines else "(empty)"
+
 
 def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 1200) -> str:
     current_round = get_current_round_messages(messages)
