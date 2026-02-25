@@ -414,3 +414,31 @@ async def setup_tools():
     })
     mcp_tools = await client.get_tools()
     return [*local_tools, *mcp_tools]
+
+
+
+
+def build_tool_context(tools_by_name: dict):
+    blocks = []
+    for tool in tools_by_name.values():
+        name = tool.name
+        description = (getattr(tool, "description", "") or "No description.").strip()
+        args_schema = getattr(tool, "args_schema", None)
+        if args_schema and hasattr(args_schema, "model_fields"):
+            fields = args_schema.model_fields
+            arg_lines = []
+            for k, v in fields.items():
+                req = getattr(v, "is_required", lambda: False)()
+                arg_lines.append(f"- {k} ({'required' if req else 'optional'})")
+            args_text = "\n".join(arg_lines) if arg_lines else "No parameters"
+        else:
+            args_text = "- input (required string). For Python_REPL, this must be python code."
+        blocks.append(f"""
+{name}
+Description:
+{description}
+
+Arguments:
+{args_text}
+""")
+    return "\n\n".join(blocks)
