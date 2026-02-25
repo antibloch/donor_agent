@@ -26,7 +26,7 @@ const charityorganizations = [
     registrationNumber: "REG-PAK-001",
     email: "helpinghands@yopmail.com",
     phone: "+923001112223",
-    website: "https://gaapp.org/organizations/pakistan-helping-hands-foundation",
+    website: "https://helpinghandfound.org/pakistan/",
     logo: "/uploads/logos/helpinghands.png",
     partOfGiver: true,
     verificationStatus: "Approved",
