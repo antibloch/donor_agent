@@ -365,15 +365,6 @@ def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 
 
 # REVISED: Planner history now includes tool call bodies + best tool results per call_id (like responder)
 def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_user: bool = True) -> str:
-    """
-    Planner sees:
-    - USER + ASSISTANT content (excluding System Note)
-    - TOOL_CALL bodies (AIMessage.tool_calls)
-    - TOOL outputs, but:
-        * tool outputs are filtered to avoid showing stale failures
-        * per tool_call_id, we prefer latest ok=True ToolMessage (else latest any)
-        * per tool name, we also prefer ok=True (get_latest_tool_per_name)
-    """
     msgs = list(messages) if messages else []
     if drop_last_user:
         for i in range(len(msgs) - 1, -1, -1):
@@ -385,6 +376,8 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
     best_tool_by_call_id = get_best_tool_message_by_call_id(msgs)
 
     lines = []
+    seen_call_ids: set[str] = set()
+
     for m in msgs:
         if isinstance(m, HumanMessage):
             lines.append(f"USER: {m.content}")
@@ -393,35 +386,38 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
             if (m.content or "").strip().startswith("System Note:"):
                 continue
 
-            # Include tool call bodies
             if getattr(m, "tool_calls", None):
-                lines.append(_format_tool_calls_block(m.tool_calls))
-
-                # Right after tool call body, also include matching tool results (if already present)
+                visible_calls = []
                 for tc in m.tool_calls or []:
                     tcid = tc.get("id") or tc.get("tool_call_id")
                     if tcid and tcid in best_tool_by_call_id:
                         tm = best_tool_by_call_id[tcid]
-                        # also respect per-tool-name "latest ok preferred" to avoid re-showing old failures
-                        if tm is latest_tools_by_name.get(tm.name) or (tm.name not in latest_tools_by_name):
-                            lines.append(_summarize_tool_output(tm.name, tm.content))
+                        payload = _safe_json_loads((tm.content or "").strip())
+                        if isinstance(payload, dict) and payload.get("ok") is True:
+                            visible_calls.append(tc)
+                    else:
+                        visible_calls.append(tc)
 
-            # Include normal assistant text if any
+                if visible_calls:
+                    lines.append(_format_tool_calls_block(visible_calls))
+
+                    # Same KEY FIX as responder
+                    for tc in visible_calls:
+                        tcid = tc.get("id") or tc.get("tool_call_id")
+                        if tcid and tcid in best_tool_by_call_id:
+                            tm = best_tool_by_call_id[tcid]
+                            lines.append(_summarize_tool_output(tm.name, tm.content))
+                            seen_call_ids.add(tcid)
+
             if (m.content or "").strip():
                 lines.append(f"ASSISTANT: {m.content}")
 
         elif isinstance(m, ToolMessage):
             tcid = getattr(m, "tool_call_id", None)
-            
-            # <<< THIS IS THE FIX >>>
-            # Skip every ToolMessage that was already summarized right after its tool_call block
-            if tcid and tcid in best_tool_by_call_id:
+            if tcid and tcid in seen_call_ids:
                 continue
-
-            # Fallback for any legacy ToolMessage without call_id pairing
             if m is not latest_tools_by_name.get(m.name):
                 continue
-
             lines.append(_summarize_tool_output(m.name, m.content))
 
         else:
@@ -445,38 +441,47 @@ def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
                 continue
 
             if getattr(m, "tool_calls", None):
-                lines.append(_format_tool_calls_block(m.tool_calls))
-
+                # Only show tool-call bodies that actually succeeded
+                visible_calls = []
                 for tc in m.tool_calls or []:
                     tcid = tc.get("id") or tc.get("tool_call_id")
-                    if not tcid:
-                        continue
-                    tm = best_tool_by_call_id.get(tcid)
-                    if not tm:
-                        continue
+                    if tcid and tcid in best_tool_by_call_id:
+                        tm = best_tool_by_call_id[tcid]
+                        payload = _safe_json_loads((tm.content or "").strip())
+                        if isinstance(payload, dict) and payload.get("ok") is True:
+                            visible_calls.append(tc)
+                    else:
+                        visible_calls.append(tc)  # no result yet (rare)
 
-                    # mark as emitted so we don't emit again in ToolMessage pass
-                    seen_call_ids.add(tcid)
+                if visible_calls:
+                    lines.append(_format_tool_calls_block(visible_calls))
 
-                    # optionally still apply "latest ok per tool name" filter:
-                    # keep only if it's the chosen best for that tool name
-                    if tm is not latest_tools_by_name.get(tm.name):
-                        continue
-
-                    lines.append(_summarize_tool_output(tm.name, tm.content))
+                    # KEY FIX: Always show the exact output paired to this call_id.
+                    # Do NOT apply "latest per name" filter here — that breaks multi-round.
+                    for tc in visible_calls:
+                        tcid = tc.get("id") or tc.get("tool_call_id")
+                        if not tcid:
+                            continue
+                        seen_call_ids.add(tcid)
+                        tm = best_tool_by_call_id.get(tcid)
+                        if tm:
+                            lines.append(_summarize_tool_output(tm.name, tm.content))
 
             if (m.content or "").strip():
                 lines.append(f"ASSISTANT: {m.content}")
 
         elif isinstance(m, ToolMessage):
             tcid = getattr(m, "tool_call_id", None)
-
-            # If already emitted via pairing, skip
             if tcid and tcid in seen_call_ids:
                 continue
 
-            # Prior behavior: keep only latest ok=True per tool name
+            # Only for unpaired/legacy ToolMessages do we apply latest-ok filter
             if m is not latest_tools_by_name.get(m.name):
+                continue
+
+            # Never show failed outputs
+            payload = _safe_json_loads((m.content or "").strip())
+            if isinstance(payload, dict) and payload.get("ok") is False:
                 continue
 
             lines.append(_summarize_tool_output(m.name, m.content))
