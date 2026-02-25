@@ -411,13 +411,14 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
                 lines.append(f"ASSISTANT: {m.content}")
 
         elif isinstance(m, ToolMessage):
-            # ToolMessages are already inserted right after tool calls above (by call_id pairing).
-            # Here, only include tool messages that have no corresponding call_id pairing.
             tcid = getattr(m, "tool_call_id", None)
-            if tcid and tcid in best_tool_by_call_id and best_tool_by_call_id[tcid] is not m:
+            
+            # <<< THIS IS THE FIX >>>
+            # Skip every ToolMessage that was already summarized right after its tool_call block
+            if tcid and tcid in best_tool_by_call_id:
                 continue
 
-            # Prefer latest ok=True per tool name
+            # Fallback for any legacy ToolMessage without call_id pairing
             if m is not latest_tools_by_name.get(m.name):
                 continue
 
