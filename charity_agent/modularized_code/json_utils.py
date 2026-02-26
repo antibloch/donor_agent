@@ -4,6 +4,30 @@ from typing import Dict, Any
 
 TRUNCATION_TOOL_LIMIT = 2000
 
+# Keys/patterns that should never leak into LLM history
+SENSITIVE_KEY_PATTERNS = {
+    "auth-token", "auth_token", "authorization", "token",
+    "api_key", "apikey", "secret", "password", "credential",
+    "private_key", "access_token", "refresh_token", "x-api-key", "bearer"
+}
+
+def _sanitize_sensitive_data(obj: Any) -> Any:
+    """Recursively redact sensitive keys while preserving structure."""
+    if isinstance(obj, dict):
+        sanitized = {}
+        for k, v in obj.items():
+            key_lower = str(k).lower().replace("-", "_").replace(" ", "_")
+            if any(pattern in key_lower for pattern in SENSITIVE_KEY_PATTERNS):
+                sanitized[k] = "[REDACTED]"
+            else:
+                sanitized[k] = _sanitize_sensitive_data(v)
+        return sanitized
+    elif isinstance(obj, (list, tuple)):
+        return [_sanitize_sensitive_data(item) for item in obj]
+    else:
+        return obj
+    
+
 def _extract_first_json_object(text: str) -> str:
     if not text:
         raise ValueError("Empty LLM output")
@@ -67,6 +91,7 @@ def _compact_json(obj: Any, max_chars: int = 900) -> str:
         return s[:max_chars] + " ...[truncated]"
     return s
 
+
 def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
     payload = _safe_json_loads(tool_content) if isinstance(tool_content, str) else None
     if not payload:
@@ -76,7 +101,10 @@ def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
         err = payload.get("error") or payload.get("result") or payload
         return f"TOOL[{tool_name}] ERROR -> {_compact_json(err, max_chars=TRUNCATION_TOOL_LIMIT)}"
 
-    result = payload.get("result", payload)
+    result = payload.get("result", payload) if isinstance(payload, dict) else payload
+    # === REDACT HERE TOO (in case backend echoes tokens) ===
+    result = _sanitize_sensitive_data(result)
+    # =======================================================
 
     if tool_name == "get_charity_stats" and isinstance(result, dict):
         data = result.get("data")

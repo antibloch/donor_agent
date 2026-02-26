@@ -1,7 +1,7 @@
 import json
 from typing import List, Dict, Sequence, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
-from json_utils import _safe_json_loads, _compact_json, _summarize_tool_output, TRUNCATION_TOOL_LIMIT
+from json_utils import _safe_json_loads, _compact_json, _summarize_tool_output, TRUNCATION_TOOL_LIMIT, SENSITIVE_KEY_PATTERNS, _sanitize_sensitive_data
 
 def format_msg(m: BaseMessage) -> str:
     role = m.__class__.__name__
@@ -86,20 +86,17 @@ def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) ->
 
 def _format_tool_calls_block(tool_calls: list) -> str:
     """Normalized formatting for ALL tools.
-    - get_charity_stats keeps its original args (already contains "tool_name": "charity_xxx")
-    - Every other tool now ALWAYS shows "tool_name": "<tool_name>" in the displayed args
-      so the history (planner / gate / responder) is consistent.
+    - Redacts sensitive keys from args before they reach the LLM.
     """
     out = []
     for tc in tool_calls or []:
         tid = tc.get("id") or tc.get("tool_call_id") or ""
         name = tc.get("name") or ""
 
-        # Copy args so we never mutate the original tool call object
-        args = dict(tc.get("args") or {})
+        # Copy + sanitize
+        args = _sanitize_sensitive_data(dict(tc.get("args") or {}))
 
-        # === THE FIX YOU ASKED FOR ===
-        # For every tool EXCEPT get_charity_stats, guarantee "tool_name" key exists
+        # === THE FIX YOU ASKED FOR (still works after sanitization) ===
         if name and name != "get_charity_stats" and "tool_name" not in args:
             args["tool_name"] = name
         # ============================
@@ -145,11 +142,23 @@ def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 
             last_by_tool[m.name] = m.content or ""
     if not last_by_tool:
         return "(none)"
+
     blocks = []
     for tool_name, content in last_by_tool.items():
         c = content.strip()
-        if len(c) > max_chars:
-            c = c[:max_chars] + " ...[truncated]"
+        # Sanitize before showing in gate prompt
+        try:
+            payload = _safe_json_loads(c)
+            if payload is not None:
+                sanitized = _sanitize_sensitive_data(payload)
+                c = _compact_json(sanitized, max_chars=max_chars)
+            else:
+                if len(c) > max_chars:
+                    c = c[:max_chars] + " ...[truncated]"
+        except Exception:
+            if len(c) > max_chars:
+                c = c[:max_chars] + " ...[truncated]"
+
         blocks.append(f"- {tool_name}: {c}")
     return "\n".join(blocks)
 
