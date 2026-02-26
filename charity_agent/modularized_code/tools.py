@@ -14,6 +14,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 # --------------------------
 
 DEFAULT_BASE_URL = "http://localhost:3000"
+DEFAULT_AUTH_TOKEN = "charity-demo-token-2026"
 
 
 def _ok(result: Any, **meta) -> str:
@@ -167,10 +168,15 @@ def build_get_charity_profile_tool(base_url: str = DEFAULT_BASE_URL) -> Structur
 
 
 # --------------------------
-# 4) Get charity products → NOW PUBLIC (no auth header)
+# 4) Get charity products (auth)
+# GET /api/v1/products/get-charity-products
+# headers: x-auth-token
 # --------------------------
 
-def build_get_charity_products_tool(base_url: str = DEFAULT_BASE_URL) -> StructuredTool:
+def build_get_charity_products_tool(
+    base_url: str = DEFAULT_BASE_URL,
+    default_token: str = DEFAULT_AUTH_TOKEN,
+) -> StructuredTool:
     def get_charity_products(
         page: int = 1,
         limit: int = 10,
@@ -185,7 +191,12 @@ def build_get_charity_products_tool(base_url: str = DEFAULT_BASE_URL) -> Structu
         category: Optional[str] = None,
         search: Optional[str] = None,
         sort: Optional[str] = None,
+        auth_token: Optional[str] = None,
     ) -> str:
+        token = (auth_token or default_token or "").strip()
+        if not token:
+            return _fail("auth_token is required for this endpoint (x-auth-token header).")
+
         params: Dict[str, Any] = {"page": page, "limit": limit}
         if isActive is not None:
             params["isActive"] = str(bool(isActive)).lower()
@@ -211,7 +222,11 @@ def build_get_charity_products_tool(base_url: str = DEFAULT_BASE_URL) -> Structu
             params["sort"] = sort
 
         try:
-            out = _get(f"{base_url}/api/v1/products/get-charity-products", params=params)  # NO header
+            out = _get(
+                f"{base_url}/api/v1/products/get-charity-products",
+                params=params,
+                headers={"x-auth-token": token},
+            )
             if out["status"] >= 400:
                 return _fail(f"HTTP {out['status']}: {out['json']}", endpoint="/api/v1/products/get-charity-products")
             return _ok(out["json"], endpoint="/api/v1/products/get-charity-products", http_status=out["status"])
@@ -232,39 +247,58 @@ def build_get_charity_products_tool(base_url: str = DEFAULT_BASE_URL) -> Structu
         category: Optional[str] = Field(None, description="comma-separated category IDs")
         search: Optional[str] = None
         sort: Optional[str] = Field(None, description="e.g. -createdAt, price, name")
+        auth_token: Optional[str] = Field(None, description="x-auth-token header; defaults to CHARITY_AUTH_TOKEN env var if set")
 
     return StructuredTool.from_function(
         func=get_charity_products,
         name="get_charity_products",
         description=(
-            "Get paginated products for the demo charity (PUBLIC – no auth required).\n"
+            "Get paginated products belonging to the AUTHENTICATED charity.\n"
             "Endpoint: GET /api/v1/products/get-charity-products\n"
-            "Auth: None (server hardcodes demo charity org_001)\n\n"
+            "Auth: Required header x-auth-token.\n\n"
+            "CRITICAL: Always include page and limit in every call "
+            "(defaults: page=1, limit=10). This prevents huge responses and is required "
+            "for reliable pagination.\n\n"
             "Args (JSON):\n"
-            '- {"page":1, "limit":10, "isActive":true/false, "status":"approved", "search":"Food", "sort":"-createdAt", ...}\n'
-            "All parameters are optional.\n\n"
+            '- {"auth_token":"<string>", "page":1, "limit":10, "isActive":true/false, "isDeleted":true/false,\n'
+            '   "status":"approved|pending|rejected", "productId":"<string>", "minPrice":number, "maxPrice":number,\n'
+            '   "startDate":"<ISO date>", "endDate":"<ISO date>", "category":"cat_1,cat_2", "search":"<string>",\n'
+            '   "sort":"-createdAt|price|name"}\n'
+            "auth_token is required; page & limit should always be present; others optional.\n\n"
             "Response envelope (tool wrapper):\n"
             "- ok=true  -> { ok: true, result: <server_json>, meta?: {...} }\n"
             "- ok=false -> { ok: false, error: <string>, meta?: {...} }\n\n"
             "Server JSON (success):\n"
-            "{ success:true, message:string, data:{ products:[...], pagination:{...} } }"
-        ),
+            "{ success:true, message:string, data:{ products:[{ _id,name,description,pricePerUnit,isActive,status,"
+            "charity:{_id,name,logo}, parent|null, createdAt, updatedAt }], pagination:{ total,page,limit,totalPages,"
+            "hasNext,hasPrev } } }\n"
+            "Server JSON (unauthorized): HTTP 401 { success:false, message:'Unauthorized' }."
+            ),
         args_schema=ProductsInput,
     )
 
 
 # --------------------------
-# 5) Get charity blogs → NOW PUBLIC (no auth header)
+# 5) Get charity blogs (auth)
+# GET /api/v1/charity_organization/blogs
 # --------------------------
 
-def build_get_charity_blogs_tool(base_url: str = DEFAULT_BASE_URL) -> StructuredTool:
+def build_get_charity_blogs_tool(
+    base_url: str = DEFAULT_BASE_URL,
+    default_token: str = DEFAULT_AUTH_TOKEN,
+) -> StructuredTool:
     def get_charity_blogs(
         page: int = 1,
         limit: int = 10,
         search: Optional[str] = None,
         sortBy: Optional[str] = None,
         order: Optional[str] = None,
+        auth_token: Optional[str] = None,
     ) -> str:
+        token = (auth_token or default_token or "").strip()
+        if not token:
+            return _fail("auth_token is required for this endpoint (x-auth-token header).")
+
         params: Dict[str, Any] = {"page": page, "limit": limit}
         if search:
             params["search"] = search
@@ -274,7 +308,11 @@ def build_get_charity_blogs_tool(base_url: str = DEFAULT_BASE_URL) -> Structured
             params["order"] = order
 
         try:
-            out = _get(f"{base_url}/api/v1/charity_organization/blogs", params=params)  # NO header
+            out = _get(
+                f"{base_url}/api/v1/charity_organization/blogs",
+                params=params,
+                headers={"x-auth-token": token},
+            )
             if out["status"] >= 400:
                 return _fail(f"HTTP {out['status']}: {out['json']}", endpoint="/api/v1/charity_organization/blogs")
             return _ok(out["json"], endpoint="/api/v1/charity_organization/blogs", http_status=out["status"])
@@ -287,35 +325,51 @@ def build_get_charity_blogs_tool(base_url: str = DEFAULT_BASE_URL) -> Structured
         search: Optional[str] = Field(None, description="Search title/description/hashtags")
         sortBy: Optional[str] = Field(None, description="createdAt|updatedAt|title|status")
         order: Optional[str] = Field(None, description="asc|desc")
+        auth_token: Optional[str] = Field(None, description="x-auth-token header; defaults to CHARITY_AUTH_TOKEN env var if set")
 
     return StructuredTool.from_function(
         func=get_charity_blogs,
         name="get_charity_blogs",
         description=(
-            "Get paginated blogs for the demo charity (PUBLIC – no auth required).\n"
+            "Get paginated blogs belonging to the AUTHENTICATED charity.\n"
             "Endpoint: GET /api/v1/charity_organization/blogs\n"
-            "Auth: None\n\n"
+            "Auth: Required header x-auth-token.\n\n"
+            "CRITICAL: Always include page and limit in every call "
+            "(defaults: page=1, limit=10). This is required for reliable pagination.\n\n"
             "Args (JSON):\n"
-            '- {"page":1, "limit":10, "search":"winter", "sortBy":"createdAt", "order":"desc"}\n'
-            "All parameters are optional.\n\n"
+            '- {"auth_token":"<string>", "page":1, "limit":10, "search":"<string>", '
+            '"sortBy":"createdAt|updatedAt|title|status", "order":"asc|desc"}\n'
+            "auth_token is required; page & limit should always be present; others optional.\n\n"
             "Response envelope (tool wrapper):\n"
             "- ok=true  -> { ok: true, result: <server_json>, meta?: {...} }\n"
             "- ok=false -> { ok: false, error: <string>, meta?: {...} }\n\n"
             "Server JSON (success):\n"
-            "{ success:true, message:string, blogs:[...], pagination:{...} }"
-        ),
+            "{ success:true, message:string, blogs:[{ _id,charity,title,description,hashtags,file,status,isDeleted,createdAt,updatedAt }],\n"
+            "  pagination:{ total,page,limit,totalPages,hasNext,hasPrev,sortBy,order,search } }\n"
+            "Server JSON (unauthorized): HTTP 401 { success:false, message:'Unauthorized' }."
+            ),
         args_schema=BlogsInput,
     )
 
 
 # --------------------------
-# 6) Get charity ranking → NOW PUBLIC (no auth header)
+# 6) Get charity ranking (auth)
+# GET /api/v1/charity_organization/charity-ranking
 # --------------------------
 
-def build_get_charity_ranking_tool(base_url: str = DEFAULT_BASE_URL) -> StructuredTool:
-    def get_charity_ranking() -> str:
+def build_get_charity_ranking_tool(
+    base_url: str = DEFAULT_BASE_URL,
+    default_token: str = DEFAULT_AUTH_TOKEN,
+) -> StructuredTool:
+    def get_charity_ranking(auth_token: Optional[str] = None) -> str:
+        token = (auth_token or default_token or "").strip()
+        if not token:
+            return _fail("auth_token is required for this endpoint (x-auth-token header).")
         try:
-            out = _get(f"{base_url}/api/v1/charity_organization/charity-ranking")  # NO header
+            out = _get(
+                f"{base_url}/api/v1/charity_organization/charity-ranking",
+                headers={"x-auth-token": token},
+            )
             if out["status"] >= 400:
                 return _fail(f"HTTP {out['status']}: {out['json']}", endpoint="/api/v1/charity_organization/charity-ranking")
             return _ok(out["json"], endpoint="/api/v1/charity_organization/charity-ranking", http_status=out["status"])
@@ -323,25 +377,28 @@ def build_get_charity_ranking_tool(base_url: str = DEFAULT_BASE_URL) -> Structur
             return _fail(str(e), endpoint="/api/v1/charity_organization/charity-ranking")
 
     class RankingInput(BaseModel):
-        # No parameters needed anymore
-        pass
+        auth_token: Optional[str] = Field(None, description="x-auth-token header; defaults to CHARITY_AUTH_TOKEN env var if set")
 
     return StructuredTool.from_function(
         func=get_charity_ranking,
         name="get_charity_ranking",
         description=(
-            "Get ranking + impact stats for the demo charity (PUBLIC – no auth required).\n"
-            "Endpoint: GET /api/v1/charity_organization/charity-ranking\n"
-            "Auth: None\n\n"
-            "Args (JSON): No parameters required\n\n"
-            "Response envelope (tool wrapper):\n"
-            "- ok=true  -> { ok: true, result: <server_json>, meta?: {...} }\n"
-            "- ok=false -> { ok: false, error: <string>, meta?: {...} }\n\n"
-            "Server JSON (success):\n"
-            "{ success:true, message:string, data:{ ranking:{...}, rank:number } }"
-        ),
+                "Get ranking + impact stats for the AUTHENTICATED charity.\n"
+                "Endpoint: GET /api/v1/charity_organization/charity-ranking\n"
+                "Auth: Required header x-auth-token.\n\n"
+                "Args (JSON):\n"
+                '- {"auth_token":"<string>"} (required)\n\n'
+                "Response envelope (tool wrapper):\n"
+                "- ok=true  -> { ok: true, result: <server_json>, meta?: {...} }\n"
+                "- ok=false -> { ok: false, error: <string>, meta?: {...} }\n\n"
+                "Server JSON (success):\n"
+                "{ success:true, message:string, data:{ ranking:{ _id,charityId,userId,country,donationAmount,impactLife,donors:[...],createdAt,updatedAt }, rank:number } }\n"
+                "Server JSON (unauthorized): HTTP 401 { success:false, message:'Unauthorized' }.\n"
+                "Server JSON (no ranking): HTTP 404 { success:false, message:'Ranking data not found for this charity' }."
+                ),
         args_schema=RankingInput,
     )
+
 
 # --------------------------
 # Tool setup
@@ -363,6 +420,8 @@ async def setup_tools():
     })
     mcp_tools = await client.get_tools()
     return [*local_tools, *mcp_tools]
+
+
 
 
 def build_tool_context(tools_by_name: dict):
