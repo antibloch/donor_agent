@@ -54,7 +54,7 @@ C) MANDATORY PYTHON TRIGGER:
 - Python_REPL must NEVER have empty args.
 
 D) Python_REPL argument format:
-- {{ "input": "<python code that prints ONLY the final numeric result>" }}
+- {{ "input": "<python code that performs analysis, whose final line of code is ONLY print statement that prints the final numeric result>" }}
 
 E) TOOL REUSE RULE:
 - If the exact needed data already exists in chat history ToolMessage outputs, do NOT call tools again.
