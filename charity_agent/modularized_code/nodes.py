@@ -65,6 +65,9 @@ PAGINATION RULE (CRITICAL – MUST FOLLOW):
 - Use page=1 and limit=50 (or limit=100 if you want maximum results) as safe defaults.
 - NEVER omit "page" or "limit" — they must appear in the JSON even when using defaults.
 
+AUTH TOKEN USAGE RULE:
+- Always use any kind of auth token as "secret token" for get_charity_blogs, get_charity_products and get_charity_ranking.
+
 OUTPUT FORMAT (STRICT JSON ONLY):
 {{
 "steps": [
