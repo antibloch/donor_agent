@@ -12,15 +12,14 @@ SENSITIVE_KEY_PATTERNS = {
 }
 
 def _sanitize_sensitive_data(obj: Any) -> Any:
-    """Recursively redact sensitive keys while preserving structure."""
+    """Recursively REMOVE sensitive keys entirely (do not keep "[REDACTED]")."""
     if isinstance(obj, dict):
         sanitized = {}
         for k, v in obj.items():
             key_lower = str(k).lower().replace("-", "_").replace(" ", "_")
             if any(pattern in key_lower for pattern in SENSITIVE_KEY_PATTERNS):
-                sanitized[k] = "[REDACTED]"
-            else:
-                sanitized[k] = _sanitize_sensitive_data(v)
+                continue  # ← KEY CHANGE: drop the whole key-value pair
+            sanitized[k] = _sanitize_sensitive_data(v)
         return sanitized
     elif isinstance(obj, (list, tuple)):
         return [_sanitize_sensitive_data(item) for item in obj]
