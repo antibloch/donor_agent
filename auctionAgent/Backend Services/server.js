@@ -415,6 +415,20 @@ app.post("/auction/bid", (req, res) => {
       });
     }
 
+    // 6b. Self-bid check — user is already the highest bidder
+    const existingBids = Object.values(db.auctionbids).filter(
+      (b) => b.auction === auction_id,
+    );
+    const currentLeader = existingBids.find((b) => b.status === "Leading");
+
+    if (currentLeader && currentLeader.profile === user_id) {
+      return res.json({
+        success: false,
+        message: `You are already the highest bidder on this auction with a bid of $${currentLeader.amount}. Wait for someone to outbid you.`,
+        currentBid: currentLeader.amount,
+      });
+    }
+
     // 7. Minimum bid / increment rule
     const bids = Object.values(db.auctionbids).filter(
       (b) => b.auction === auction_id,

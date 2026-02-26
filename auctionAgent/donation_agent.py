@@ -270,6 +270,16 @@ responder_model = ChatGroq(
 # 5) Planner Node
 # ----------------------------
 def planner_node(state: AgentState):
+    # Check for injected plan FIRST — before skip check
+    existing_plan = state.get("plan")
+    if existing_plan and existing_plan.get("steps"):
+        print(f"\n  [Planner] Using injected plan: {[s['tool'] for s in existing_plan['steps']]}\n")
+        return {"plan": existing_plan}
+
+    # Then skip check
+    if state.get("skip_planner"):
+        return {"plan": {"steps": [], "missing_args": []}}
+
     chat_history = "\n".join(
         [f"{msg.type}: {msg.content}" for msg in state["messages"]]
     )
@@ -293,6 +303,10 @@ STRICT RULES:
 9. Do NOT schedule get_auction_details, get_auction_items, or get_wallet_balance unless specifically asked.
 10. If no tool clearly matches the request, return empty steps and empty missing_args.
 11. Never schedule more than 2 tools at once.
+12. If the most recent tool result shows a successful place_bid, do NOT schedule 
+    place_bid again unless the user explicitly asks to place a NEW bid with a different amount.
+13. Words like "cancel", "back", "thanks", "thank you", "okay", "yes", "no" are 
+    conversational — return empty steps and empty missing_args for these.
 
 AVAILABLE TOOLS:
 {tool_context}
@@ -444,33 +458,40 @@ def executor_node(state: AgentState):
         print(f"  [Executor] Result: {json.dumps(parsed, default=str)[:300]}")
 
         # Build user-friendly message for get_active_auctions
+        # if tool_name == "get_active_auctions":
+        #     active_auctions_cache.clear()
+        #     auctions_list = parsed.get("auctions", [])
+        #     for i, auction in enumerate(auctions_list):
+        #         active_auctions_cache[str(i + 1)] = auction
+
+        #     if auctions_list:
+        #         lines = []
+        #         for i, a in enumerate(auctions_list):
+        #             current = f"${a['currentHighestBid']}" if a.get("currentHighestBid") else "No bids yet"
+        #             lines.append(
+        #                 f"{i+1}. {a['title']}\n"
+        #                 f"   Min Bid: ${a['minBidAmount']} | "
+        #                 f"Current Highest: {current} | "
+        #                 f"Ends: {a['endTimeStamp'][:10]}"
+        #             )
+        #         messages.append(
+        #             AIMessage(
+        #                 content=(
+        #                     f"Here are the active auctions:\n\n"
+        #                     + "\n".join(lines)
+        #                     + "\n\nType a number to view details and place a bid."
+        #                 )
+        #             )
+        #         )
+        #     else:
+        #         messages.append(AIMessage(content="There are no active auctions at the moment."))
+
         if tool_name == "get_active_auctions":
             active_auctions_cache.clear()
             auctions_list = parsed.get("auctions", [])
             for i, auction in enumerate(auctions_list):
-                active_auctions_cache[str(i + 1)] = auction
-
-            if auctions_list:
-                lines = []
-                for i, a in enumerate(auctions_list):
-                    current = f"${a['currentHighestBid']}" if a.get("currentHighestBid") else "No bids yet"
-                    lines.append(
-                        f"{i+1}. {a['title']}\n"
-                        f"   Min Bid: ${a['minBidAmount']} | "
-                        f"Current Highest: {current} | "
-                        f"Ends: {a['endTimeStamp'][:10]}"
-                    )
-                messages.append(
-                    AIMessage(
-                        content=(
-                            f"Here are the active auctions:\n\n"
-                            + "\n".join(lines)
-                            + "\n\nType a number to view details and place a bid."
-                        )
-                    )
-                )
-            else:
-                messages.append(AIMessage(content="There are no active auctions at the moment."))
+                active_auctions_cache[str(i + 1)] = auction # Responder handles display — do NOT append AIMessage here
+    
 
         # Append raw tool result for LLM context
         messages.append(
@@ -489,6 +510,67 @@ def executor_node(state: AgentState):
     return {"messages": messages}
 
 
+#helper functions for responder node
+def get_next_steps(selected_auction=None, just_bid=False):
+    """Returns contextual next step options based on current state."""
+    if just_bid:
+        return (
+            "\n\nWhat would you like to do next?\n"
+            "- Type a number to view another auction (show auctions first)\n"
+            "- Type 'my bids' to see your bid history\n"
+            "- Type 'balance' to check your wallet\n"
+            "- Type 'auctions' to browse active auctions"
+        )
+    if selected_auction:
+        title = selected_auction.get("title", "this auction")
+        return (
+            f"\n\nYou are viewing: {title}\n"
+            "- Type a bid amount to place a bid\n"
+            "- Type 'cancel' to go back to auctions"
+        )
+    return (
+        "\n\nWhat would you like to do?\n"
+        "- Type 'auctions' to see active auctions\n"
+        "- Type 'balance' to check your wallet\n"
+        "- Type 'my bids' to see your bid history\n"
+        "- Type 'finalize' to close ended auctions"
+    )
+def get_bid_error_guidance(selected_auction=None):
+    """Shown after a failed bid attempt."""
+    if selected_auction:
+        return (
+            "\n\n─────────────────────────\n"
+            "  • Type a different amount to retry\n"
+            "  • Type 'cancel' to go back to auctions"
+        )
+    return (
+        "\n\n─────────────────────────\n"
+        "  • Try again with a valid amount\n"
+        "  • Type 'auctions' to browse and select an auction first"
+    )
+
+
+def get_auction_list_footer():
+    """Always shown after the auction list."""
+    return (
+        "\n\nType a number (1, 2, 3) to view details and place a bid."
+        "\nOr type 'balance' to check your wallet first."
+    )
+
+
+def get_capabilities():
+    """Full capabilities list shown on help or greeting."""
+    return (
+        "\n\n─────────────────────────\n"
+        "Here is what I can help you with:\n"
+        "  • Type 'auctions' — see all active auctions\n"
+        "  • Type 'balance' — check your wallet balance\n"
+        "  • Type 'my bids' — view your bidding history\n"
+        "  • Type 'finalize' — close auctions that have ended\n"
+        "  • Type a number after viewing auctions to select one and bid"
+    )
+
+
 # ----------------------------
 # 8) Responder Node
 # ----------------------------
@@ -501,7 +583,6 @@ def responder(state: AgentState):
 
     messages_to_send = []
 
-    # Helper: get the most recent result for a specific tool this turn
     def get_latest_tool_result(tool_name):
         for msg in reversed(state["messages"]):
             if isinstance(msg, ToolMessage) and msg.name == tool_name:
@@ -511,9 +592,7 @@ def responder(state: AgentState):
                     return None
         return None
 
-    # Helper: check if a tool was called in the most recent executor turn
     def tool_was_just_called(tool_name):
-        # Walk backwards — stop if we hit a HumanMessage (means it was a prior turn)
         for msg in reversed(state["messages"]):
             if isinstance(msg, HumanMessage):
                 break
@@ -521,8 +600,33 @@ def responder(state: AgentState):
                 return True
         return False
 
+    
     # -------------------------------------------------------
-    # CASE 1: place_bid was just executed — show result
+    # CASE 0: get_active_auctions just called — show list once
+    # -------------------------------------------------------
+    if tool_was_just_called("get_active_auctions"):
+        auctions_list = list(active_auctions_cache.values())
+        if not auctions_list:
+            messages_to_send.append(
+                AIMessage(content="There are no active auctions at the moment." + get_next_steps())
+            )
+        else:
+            lines = []
+            for i, a in enumerate(auctions_list):
+                current = f"${a['currentHighestBid']}" if a.get("currentHighestBid") else "No bids yet"
+                lines.append(
+                    f"{i+1}. {a['title']}\n"
+                    f"   Min Bid: ${a['minBidAmount']} | Current Highest: {current} | Ends: {a['endTimeStamp'][:10]}"
+                )
+            messages_to_send.append(
+                AIMessage(
+                    content="Here are the active auctions:\n\n" + "\n".join(lines) + get_auction_list_footer()
+                )
+            )
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
+
+    # -------------------------------------------------------
+    # CASE 1: place_bid just executed — show result
     # -------------------------------------------------------
     if tool_was_just_called("place_bid"):
         result = get_latest_tool_result("place_bid")
@@ -534,69 +638,59 @@ def responder(state: AgentState):
                         content=(
                             f"Your bid of ${result.get('amount')} on "
                             f"'{result.get('auctionTitle')}' was placed successfully!\n\n"
+                            f"Bid Reference:     {result.get('bidId')}\n"
                             f"Locked Balance:    ${result.get('newLockedBalance')}\n"
                             f"Available Balance: ${result.get('availableBalance')}\n"
                             f"Next Minimum Bid:  ${result.get('nextMinimumBid')}\n\n"
                             f"You are currently the highest bidder.\n"
                             f"If someone outbids you, your ${result.get('amount')} will be "
                             f"automatically unlocked and returned to your available balance."
-                            f"Your bid of ${result.get('amount')} on "
-                            f"'{result.get('auctionTitle')}' was placed successfully!\n\n"
-                            f"Bid Reference:     {result.get('bidId')}\n"   # add this line
-                            f"Locked Balance:    ${result.get('newLockedBalance')}\n"
-                            f"Available Balance: ${result.get('availableBalance')}\n"
-                            f"Next Minimum Bid:  ${result.get('nextMinimumBid')}\n\n"
+                            + get_next_steps(just_bid=True)
                         )
                     )
                 )
             else:
+                error_msg = result.get("message", result.get("error", "Unknown error"))
                 messages_to_send.append(
                     AIMessage(
                         content=(
-                            f"Could not place bid: "
-                            f"{result.get('message', result.get('error', 'Unknown error'))}\n\n"
-                            f"Please try a different amount, or type 'cancel' to go back."
+                            f"Could not place bid: {error_msg}"
+                            + get_bid_error_guidance(state.get("selected_auction"))
                         )
                     )
                 )
-        return {"messages": messages_to_send}
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
     # -------------------------------------------------------
-    # CASE 2: get_wallet_balance was just called — show balance
+    # CASE 2: get_wallet_balance just called — show balance
     # -------------------------------------------------------
     if tool_was_just_called("get_wallet_balance"):
         result = get_latest_tool_result("get_wallet_balance")
         if result and result.get("success"):
-            # If user is mid-bid, remind them of the context too
-            auction_reminder = ""
-            if state.get("selected_auction"):
-                a = state["selected_auction"]
-                auction_reminder = (
-                    f"\n\nYou are currently viewing '{a.get('title')}'. "
-                    f"Type a bid amount to proceed or 'cancel' to go back."
-                )
             messages_to_send.append(
                 AIMessage(
                     content=(
                         f"Your current wallet:\n\n"
-                        f"Total Balance:     ${result.get('balance')}\n"
-                        f"Locked in Bids:    ${result.get('lockedBalance')}\n"
+                        f"Total Balance:      ${result.get('balance')}\n"
+                        f"Locked in Bids:     ${result.get('lockedBalance')}\n"
                         f"Available to Spend: ${result.get('availableBalance')}"
-                        f"{auction_reminder}"
+                        + get_next_steps(selected_auction=state.get("selected_auction"))
                     )
                 )
             )
-        return {"messages": messages_to_send}
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
     # -------------------------------------------------------
-    # CASE 3: get_my_bid_history was just called
+    # CASE 3: get_my_bid_history just called
     # -------------------------------------------------------
     if tool_was_just_called("get_my_bid_history"):
         result = get_latest_tool_result("get_my_bid_history")
         if result and result.get("success"):
             bids = result.get("bids", [])
             if not bids:
-                messages_to_send.append(AIMessage(content="You have no bid history yet."))
+                messages_to_send.append(
+                    AIMessage(content="You have no bid history yet." + get_next_steps())
+                )
             else:
                 lines = []
                 for b in bids:
@@ -608,14 +702,36 @@ def responder(state: AgentState):
                     )
                 messages_to_send.append(
                     AIMessage(
-                        content=f"Your bid history ({result.get('totalBids')} total):\n\n"
-                        + "\n".join(lines)
+                        content=(
+                            f"Your bid history ({result.get('totalBids')} total):\n\n"
+                            + "\n".join(lines)
+                            + get_next_steps()
+                        )
                     )
                 )
-        return {"messages": messages_to_send}
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
+    
+    # After Case 3, add:
+    if tool_was_just_called("finalize_ended_auctions"):
+        result = get_latest_tool_result("finalize_ended_auctions")
+        if result and result.get("success"):
+            messages_to_send.append(
+                AIMessage(
+                    content=(
+                        "All ended auctions have been finalized successfully.\n"
+                        "Winners have been notified and locked funds released."
+                        + get_next_steps()
+                    )
+                )
+            )
+        else:
+            messages_to_send.append(
+                AIMessage(content="Could not finalize auctions. Please try again." + get_next_steps())
+            )
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
     # -------------------------------------------------------
-    # CASE 4: get_auction_bids was just called
+    # CASE 4: get_auction_bids just called
     # -------------------------------------------------------
     if tool_was_just_called("get_auction_bids"):
         result = get_latest_tool_result("get_auction_bids")
@@ -629,18 +745,22 @@ def responder(state: AgentState):
                     f"This auction has {total} bid(s).\n"
                     f"Current highest bid: ${highest['amount']} (Status: {highest['status']})"
                 )
-            messages_to_send.append(AIMessage(content=msg))
-        return {"messages": messages_to_send}
+            messages_to_send.append(
+                AIMessage(content=msg + get_next_steps(selected_auction=state.get("selected_auction")))
+            )
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
     # -------------------------------------------------------
-    # CASE 5: get_auction_items was just called
+    # CASE 5: get_auction_items just called
     # -------------------------------------------------------
     if tool_was_just_called("get_auction_items"):
         result = get_latest_tool_result("get_auction_items")
         if result and result.get("success"):
             items = result.get("items", [])
             if not items:
-                messages_to_send.append(AIMessage(content="No items found for this auction."))
+                messages_to_send.append(
+                    AIMessage(content="No items found for this auction." + get_next_steps())
+                )
             else:
                 lines = [
                     f"- {item.get('name')} ({item.get('condition')}): "
@@ -649,13 +769,17 @@ def responder(state: AgentState):
                 ]
                 messages_to_send.append(
                     AIMessage(
-                        content=f"Items in this auction:\n\n" + "\n".join(lines)
+                        content=(
+                            "Items in this auction:\n\n"
+                            + "\n".join(lines)
+                            + get_next_steps(selected_auction=state.get("selected_auction"))
+                        )
                     )
                 )
-        return {"messages": messages_to_send}
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
     # -------------------------------------------------------
-    # CASE 6: get_auction_details was just called (not from number selection)
+    # CASE 6: get_auction_details just called (planner path, not number selection)
     # -------------------------------------------------------
     if tool_was_just_called("get_auction_details") and not tool_was_just_called("place_bid"):
         result = get_latest_tool_result("get_auction_details")
@@ -687,12 +811,12 @@ def responder(state: AgentState):
                 f"Type the amount you want to bid (minimum ${next_min}), or type 'cancel' to go back."
             )
             messages_to_send.append(AIMessage(content=text))
-        return {"messages": messages_to_send}
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
     # -------------------------------------------------------
-    # CASE 7: User picked auction by number
+    # CASE 7: User picked auction by number from cache
     # -------------------------------------------------------
-    if user_last_msg.isdigit() and user_last_msg in active_auctions_cache:
+    if user_last_msg.isdigit() and len(user_last_msg) == 1 and user_last_msg in active_auctions_cache:
         auction = active_auctions_cache[user_last_msg]
         details_result = get_auction_details.invoke({"auction_id": auction["_id"]})
         details = details_result if isinstance(details_result, dict) else json.loads(details_result)
@@ -724,41 +848,88 @@ def responder(state: AgentState):
             f"Type the amount you want to bid (minimum ${next_min}), or type 'cancel' to go back."
         )
         messages_to_send.append(AIMessage(content=text))
-        return {"messages": messages_to_send}
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
-    # Invalid number
-    if user_last_msg.isdigit() and active_auctions_cache and user_last_msg not in active_auctions_cache:
+    # Invalid number typed (single digit not in cache)
+    if user_last_msg.isdigit() and len(user_last_msg) == 1 and active_auctions_cache and user_last_msg not in active_auctions_cache:
         messages_to_send.append(
             AIMessage(
-                content=f"Invalid selection. Please choose a number between 1 and {len(active_auctions_cache)}."
+                content=(
+                    f"Invalid selection. Please choose a number between 1 and {len(active_auctions_cache)}."
+                    + get_auction_list_footer()
+                )
             )
         )
-        return {"messages": messages_to_send}
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
     # -------------------------------------------------------
-    # CASE 8: User is in bid placement flow (typed an amount)
+    # CASE 8: User is in bid placement flow
     # -------------------------------------------------------
-    if state.get("selected_auction"):
+    if state.get("selected_auction") and not tool_was_just_called("place_bid"):
         auction = state["selected_auction"]
 
+        # Cancel — fetch fresh list and show it
         if user_last_msg.lower() in ["cancel", "back", "no"]:
-            state["selected_auction"] = None
-            messages_to_send.append(
-                AIMessage(content="Bid cancelled. You can view active auctions again.")
-            )
-            return {"messages": messages_to_send}
+            auctions_result = get_active_auctions.invoke({})
+            auctions_list = auctions_result.get("auctions", [])
+            active_auctions_cache.clear()
+            for i, a in enumerate(auctions_list):
+                active_auctions_cache[str(i + 1)] = a
 
+            if auctions_list:
+                lines = []
+                for i, a in enumerate(auctions_list):
+                    current = f"${a['currentHighestBid']}" if a.get("currentHighestBid") else "No bids yet"
+                    lines.append(
+                        f"{i+1}. {a['title']}\n"
+                        f"   Min Bid: ${a['minBidAmount']} | Current Highest: {current} | Ends: {a['endTimeStamp'][:10]}"
+                    )
+                content = (
+                    "Bid cancelled. Here are the active auctions:\n\n"
+                    + "\n".join(lines)
+                    + get_auction_list_footer()
+                )
+            else:
+                content = "Bid cancelled. There are no active auctions at the moment." + get_next_steps()
+
+            messages_to_send.append(AIMessage(content=content))
+            return {"messages": messages_to_send, "selected_auction": None}
+
+        # Balance check inside bid flow
+        balance_phrases = ["balance", "money", "wallet", "how much", "funds"]
+        if any(p in user_last_msg.lower() for p in balance_phrases):
+            wallet_result = get_wallet_balance.invoke({})
+            if wallet_result.get("success"):
+                messages_to_send.append(
+                    AIMessage(
+                        content=(
+                            f"Your current wallet:\n\n"
+                            f"Total Balance:      ${wallet_result.get('balance')}\n"
+                            f"Locked in Bids:     ${wallet_result.get('lockedBalance')}\n"
+                            f"Available to Spend: ${wallet_result.get('availableBalance')}\n\n"
+                            f"─────────────────────────\n"
+                            f"You are viewing: {auction.get('title', 'the selected auction')}\n"
+                            f"  • Type a bid amount to place a bid\n"
+                            f"  • Type 'cancel' to go back"
+                        )
+                    )
+                )
+            return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
+
+        # Try parsing as bid amount
         try:
             bid_amount = float(user_last_msg)
         except ValueError:
             messages_to_send.append(
                 AIMessage(
-                    content="Please enter a valid numeric bid amount, or type 'cancel' to go back."
+                    content=(
+                        "Please enter a valid numeric bid amount, or type 'cancel' to go back."
+                    )
                 )
             )
-            return {"messages": messages_to_send}
+            return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
-        # Make the real API call
+        # Place the bid
         print(f"  [Responder] Placing bid: {auction['_id']} amount={bid_amount}")
         bid_result = place_bid.invoke({"auction_id": auction["_id"], "amount": bid_amount})
         bid_result = bid_result if isinstance(bid_result, dict) else json.loads(bid_result)
@@ -771,12 +942,14 @@ def responder(state: AgentState):
                     content=(
                         f"Your bid of ${bid_amount} on '{bid_result.get('auctionTitle')}' "
                         f"was placed successfully!\n\n"
+                        f"Bid Reference:     {bid_result.get('bidId')}\n"
                         f"Locked Balance:    ${bid_result.get('newLockedBalance')}\n"
                         f"Available Balance: ${bid_result.get('availableBalance')}\n"
                         f"Next Minimum Bid:  ${bid_result.get('nextMinimumBid')}\n\n"
                         f"You are currently the highest bidder.\n"
                         f"If someone outbids you, your ${bid_amount} will be "
                         f"automatically unlocked and returned to your available balance."
+                        + get_next_steps(just_bid=True)
                     )
                 )
             )
@@ -785,41 +958,101 @@ def responder(state: AgentState):
                 AIMessage(
                     content=(
                         f"Could not place bid: "
-                        f"{bid_result.get('message', bid_result.get('error', 'Unknown error'))}\n\n"
-                        f"Please try a different amount, or type 'cancel' to go back."
+                        f"{bid_result.get('message', bid_result.get('error', 'Unknown error'))}"
+                        + get_bid_error_guidance(state.get("selected_auction"))
                     )
                 )
             )
-        return {"messages": messages_to_send}
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
     # -------------------------------------------------------
-    # CASE 9: Default — LLM handles general conversation
+    # CASE 9: Deterministic fallback — pattern matching first, LLM last resort
     # -------------------------------------------------------
-    message_summary = state["messages"]
+
+    # Acknowledgements
+    if user_last_msg.lower() in ALWAYS_SKIP:
+        messages_to_send.append(
+            AIMessage(content="Glad to help!" + get_next_steps())
+        )
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
+
+    # Personal info
+    personal_patterns = ["my name", "i am ", "i'm ", "call me", "name is"]
+    if any(p in user_last_msg.lower() for p in personal_patterns):
+        messages_to_send.append(
+            AIMessage(
+                content=(
+                    "I'm here specifically to assist with charity auctions "
+                    "and don't store personal information."
+                    + get_capabilities()
+                )
+            )
+        )
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
+
+    # Off-topic
+    off_topic_patterns = [
+        "weather", "sports", "news", "politics", "code", "programming",
+        "recipe", "movie", "music", "game", "crypto", "stock",
+        "who are you", "what are you", "tell me about yourself"
+    ]
+    if any(p in user_last_msg.lower() for p in off_topic_patterns):
+        messages_to_send.append(
+            AIMessage(
+                content=(
+                    "I can only assist with charity auction related actions."
+                    + get_capabilities()
+                )
+            )
+        )
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
+    
+    #greetings pattern handling
+    greeting_patterns = ["hi", "hello", "hey", "good morning", "good evening", "salam", "assalam"]
+    if any(p in user_last_msg.lower() for p in greeting_patterns):
+        messages_to_send.append(
+            AIMessage(
+                content=(
+                    "Welcome to the charity auction platform. "
+                    "I'm here to help you browse and bid on active auctions."
+                    + get_capabilities()
+                )
+            )
+        )
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
+
+    # Capabilities / help
+    capability_patterns = [
+        "what can you", "what do you", "how do i", "how to",
+        "help", "options", "menu", "what are my options"
+    ]
+    if any(p in user_last_msg.lower() for p in capability_patterns):
+        messages_to_send.append(
+            AIMessage(content="Here is everything I can help you with:" + get_capabilities())
+        )
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
+
+    # Empty or very short
+    if len(user_last_msg.strip()) <= 2:
+        messages_to_send.append(
+            AIMessage(content="How can I assist you?" + get_next_steps())
+        )
+        return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
+
+    # True unknown — LLM, strictly 1 sentence, next steps appended
     system_prompt = """
-You are a specialized Auction Assistant for a charitable organization.
-
-You ONLY assist with:
-- Viewing active auctions
-- Viewing auction details and items
-- Checking bid history
-- Checking wallet balance
-- Placing bids
-
-If the user asks about anything outside this scope, politely decline.
-Do NOT use emojis. Keep responses short and factual.
-Do NOT invent auction data, bid amounts, or any numbers.
-If you do not know something, say so and suggest the user asks to view auctions.
+You are a charity auction assistant. Respond in ONE sentence maximum.
+If the request is not about auctions, respond with exactly: "I can only help with auction related actions."
+Never mention specific auction names, prices, or bid amounts.
+Never invent any data.
 """
     final_prompt = [
-        HumanMessage(
-            content=f"{system_prompt}\n\nConversation History:\n{message_summary}"
-        )
+        HumanMessage(content=f"{system_prompt}\n\nUser said: {user_last_msg}")
     ]
     summary = responder_model.invoke(final_prompt)
+    summary.content = summary.content.strip() + get_next_steps()
     messages_to_send.append(summary)
-    return {"messages": messages_to_send}
-
+    return {"messages": messages_to_send, "selected_auction": state.get("selected_auction")}
 
 # ----------------------------
 # 9) Routing
@@ -844,6 +1077,55 @@ def build_graph():
 
     return workflow.compile()
 
+# ----------------------------
+# 10) Main
+# ----------------------------
+# ----------------------------
+# Keyword & Pattern Constants (outside main, add above it)
+# ----------------------------
+KEYWORD_TO_TOOL = {
+    "auctions": "get_active_auctions",
+    "auction": "get_active_auctions",
+    "view": "get_active_auctions",
+    "browse": "get_active_auctions",
+    "list": "get_active_auctions",
+    "active auctions": "get_active_auctions",
+    "show auctions": "get_active_auctions",
+    "view auctions": "get_active_auctions",
+    "see auctions": "get_active_auctions",
+    "show active auctions": "get_active_auctions",
+
+    "balance": "get_wallet_balance",
+    "my balance": "get_wallet_balance",
+    "wallet": "get_wallet_balance",
+    "check balance": "get_wallet_balance",
+    "check my balance": "get_wallet_balance",
+    "my wallet": "get_wallet_balance",
+    "how much money do i have": "get_wallet_balance",
+    "how much do i have": "get_wallet_balance",
+    "whats my balance": "get_wallet_balance",
+    "what is my balance": "get_wallet_balance",
+
+    "my bids": "get_my_bid_history",
+    "bid history": "get_my_bid_history",
+    "history": "get_my_bid_history",
+    "my bid history": "get_my_bid_history",
+    "show my bids": "get_my_bid_history",
+    "view my bids": "get_my_bid_history",
+    "my bidding history": "get_my_bid_history",
+
+    "finalize": "finalize_ended_auctions",
+    "close auctions": "finalize_ended_auctions",
+    "finalize auctions": "finalize_ended_auctions",
+    "end auctions": "finalize_ended_auctions",
+}
+
+ALWAYS_SKIP = {
+    "cancel", "back", "no", "yes", "ok", "okay",
+    "thank you", "thanks", "thankyou", "bye", "goodbye",
+    "got it", "noted", "understood", "great", "perfect",
+    "awesome", "cool", "nice", "good", "alright"
+}
 
 # ----------------------------
 # 10) Main
@@ -851,6 +1133,7 @@ def build_graph():
 def main():
     graph = build_graph()
     chat_memory = []
+    session = {"selected_auction": None}
 
     print("\n==================================================")
     print("  CHARITY AUCTION AGENT")
@@ -869,13 +1152,42 @@ def main():
             break
 
         user_input_stripped = user_input.strip()
+        user_lower = user_input_stripped.lower()
+
+        # Strip punctuation for matching
+        user_clean = re.sub(r'[^\w\s]', '', user_lower).strip()
+        forced_tool = KEYWORD_TO_TOOL.get(user_clean) or KEYWORD_TO_TOOL.get(user_lower)
+
+        if not forced_tool:
+            for keyword, tool_name in KEYWORD_TO_TOOL.items():
+                if user_clean == keyword or user_lower == keyword:
+                    forced_tool = tool_name
+                    break
 
         in_bid_flow = any(
             isinstance(msg, AIMessage) and "Type the amount you want to bid" in msg.content
             for msg in reversed(chat_memory[-6:])
         )
 
-        skip = user_input_stripped.isdigit() or in_bid_flow
+        skip = (
+            user_input_stripped.isdigit()
+            or in_bid_flow
+            or user_lower in ALWAYS_SKIP
+            or forced_tool is not None
+        )
+
+        if forced_tool:
+            injected_plan = {
+                "steps": [{"tool": forced_tool, "args": {}}],
+                "missing_args": []
+            }
+        else:
+            injected_plan = None
+
+        # Trim context window
+        MAX_MEMORY = 20
+        if len(chat_memory) > MAX_MEMORY:
+            chat_memory = chat_memory[-MAX_MEMORY:]
 
         chat_memory.append(HumanMessage(content=user_input_stripped))
         print("\n(thinking...)\n")
@@ -884,8 +1196,8 @@ def main():
             for step in graph.stream(
                 {
                     "messages": chat_memory,
-                    "plan": None,
-                    "selected_auction": None,
+                    "plan": injected_plan,
+                    "selected_auction": session["selected_auction"],
                     "skip_planner": skip,
                 },
                 stream_mode="updates",
@@ -893,6 +1205,10 @@ def main():
                 for node_name, node_output in step.items():
                     if not node_output:
                         continue
+
+                    if node_name == "responder" and node_output:
+                        if "selected_auction" in node_output:
+                            session["selected_auction"] = node_output.get("selected_auction")
 
                     if node_name == "planner" and "plan" in node_output:
                         plan = node_output["plan"]
