@@ -59,6 +59,12 @@ D) Python_REPL argument format:
 E) TOOL REUSE RULE:
 - If the exact needed data already exists in chat history ToolMessage outputs, do NOT call tools again.
 
+PAGINATION RULE (CRITICAL – MUST FOLLOW):
+- The following tools support pagination: get_charity_blogs and get_charity_products
+- ALWAYS include BOTH "page" and "limit" explicitly in the "args" object for these tools.
+- Use page=1 and limit=50 (or limit=100 if you want maximum results) as safe defaults.
+- NEVER omit "page" or "limit" — they must appear in the JSON even when using defaults.
+
 OUTPUT FORMAT (STRICT JSON ONLY):
 {{
 "steps": [
