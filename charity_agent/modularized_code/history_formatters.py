@@ -54,7 +54,7 @@ def _compact_err(payload: dict) -> str:
         s = json.dumps(payload, ensure_ascii=False, default=str)
     except Exception:
         s = str(payload)
-    return s[:800] + (" ...[truncated]" if len(s) > 800 else "")
+    return s[:TRUNCATION_TOOL_LIMIT] + (" ...[truncated]" if len(s) > TRUNCATION_TOOL_LIMIT else "")
 
 def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) -> Dict[str, Any] | None:
     current_round = get_current_round_messages(messages)
