@@ -90,7 +90,7 @@
       "isBlocked": false,
       "cardType": "VISA",
       "currency": "USD",
-      "limit": 10000,
+      "limit": 12000,
       "createdAt": "2026-01-02T13:11:20Z",
       "updatedAt": "2026-01-02T13:11:20Z",
       "__v": 0
