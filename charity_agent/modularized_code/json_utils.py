@@ -2,6 +2,8 @@ import json
 import re
 from typing import Dict, Any
 
+TRUNCATION_TOOL_LIMIT = 2000
+
 def _extract_first_json_object(text: str) -> str:
     if not text:
         raise ValueError("Empty LLM output")
@@ -72,7 +74,7 @@ def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
 
     if isinstance(payload, dict) and payload.get("ok") is False:
         err = payload.get("error") or payload.get("result") or payload
-        return f"TOOL[{tool_name}] ERROR -> {_compact_json(err, max_chars=700)}"
+        return f"TOOL[{tool_name}] ERROR -> {_compact_json(err, max_chars=TRUNCATION_TOOL_LIMIT)}"
 
     result = payload.get("result", payload)
 
@@ -90,6 +92,6 @@ def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
                 return "TOOL[get_charity_stats:charity_donor_count] -> " + "; ".join(pairs)
 
     if tool_name in ("Python_REPL", "python_repl", "PythonREPLTool"):
-        return f"TOOL[Python_REPL] -> {_compact_json(result, max_chars=300)}"
+        return f"TOOL[Python_REPL] -> {_compact_json(result, max_chars=TRUNCATION_TOOL_LIMIT)}"
 
-    return f"TOOL[{tool_name}] -> {_compact_json(result, max_chars=700)}"
+    return f"TOOL[{tool_name}] -> {_compact_json(result, max_chars=TRUNCATION_TOOL_LIMIT)}"

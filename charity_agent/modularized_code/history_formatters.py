@@ -1,7 +1,7 @@
 import json
 from typing import List, Dict, Sequence, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
-from json_utils import _safe_json_loads, _compact_json, _summarize_tool_output
+from json_utils import _safe_json_loads, _compact_json, _summarize_tool_output, TRUNCATION_TOOL_LIMIT
 
 def format_msg(m: BaseMessage) -> str:
     role = m.__class__.__name__
@@ -104,7 +104,7 @@ def _format_tool_calls_block(tool_calls: list) -> str:
             args["tool_name"] = name
         # ============================
 
-        out.append(f"TOOL_CALL[{name} id={tid}] args={_compact_json(args, max_chars=600)}")
+        out.append(f"TOOL_CALL[{name} id={tid}] args={_compact_json(args, max_chars=TRUNCATION_TOOL_LIMIT)}")
     return "\n".join(out)
 
 
@@ -137,7 +137,7 @@ def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
     return "\n".join(lines) if lines else "(empty)"
 
 
-def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 1200) -> str:
+def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = TRUNCATION_TOOL_LIMIT) -> str:
     current_round = get_current_round_messages(messages)
     last_by_tool: Dict[str, str] = {}
     for m in current_round:
