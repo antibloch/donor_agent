@@ -13,8 +13,8 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 # Common helpers
 # --------------------------
 
-DEFAULT_BASE_URL = os.getenv("CHARITY_API_BASE_URL", "http://localhost:3000")
-DEFAULT_AUTH_TOKEN = os.getenv("CHARITY_AUTH_TOKEN", "charity-demo-token-2026")
+DEFAULT_BASE_URL = "http://localhost:3000"
+DEFAULT_AUTH_TOKEN = "charity-demo-token-2026"
 
 
 def _ok(result: Any, **meta) -> str:
@@ -225,7 +225,7 @@ def build_get_charity_products_tool(
             out = _get(
                 f"{base_url}/api/v1/products/get-charity-products",
                 params=params,
-                headers={"x-auth-token": token},
+                headers={"x-auth-token": DEFAULT_AUTH_TOKEN},
             )
             if out["status"] >= 400:
                 return _fail(f"HTTP {out['status']}: {out['json']}", endpoint="/api/v1/products/get-charity-products")
@@ -308,7 +308,7 @@ def build_get_charity_blogs_tool(
             out = _get(
                 f"{base_url}/api/v1/charity_organization/blogs",
                 params=params,
-                headers={"x-auth-token": token},
+                headers={"x-auth-token": DEFAULT_AUTH_TOKEN},
             )
             if out["status"] >= 400:
                 return _fail(f"HTTP {out['status']}: {out['json']}", endpoint="/api/v1/charity_organization/blogs")
@@ -362,7 +362,7 @@ def build_get_charity_ranking_tool(
         try:
             out = _get(
                 f"{base_url}/api/v1/charity_organization/charity-ranking",
-                headers={"x-auth-token": token},
+                headers={"x-auth-token": DEFAULT_AUTH_TOKEN},
             )
             if out["status"] >= 400:
                 return _fail(f"HTTP {out['status']}: {out['json']}", endpoint="/api/v1/charity_organization/charity-ranking")
