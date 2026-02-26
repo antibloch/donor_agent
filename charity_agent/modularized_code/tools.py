@@ -193,7 +193,7 @@ def build_get_charity_products_tool(
         sort: Optional[str] = None,
         auth_token: Optional[str] = None,
     ) -> str:
-        token = (auth_token or default_token or "").strip()
+        token = default_token
         if not token:
             return _fail("auth_token is required for this endpoint (x-auth-token header).")
 
@@ -295,7 +295,7 @@ def build_get_charity_blogs_tool(
         order: Optional[str] = None,
         auth_token: Optional[str] = None,
     ) -> str:
-        token = (auth_token or default_token or "").strip()
+        token = default_token
         if not token:
             return _fail("auth_token is required for this endpoint (x-auth-token header).")
 
@@ -362,7 +362,7 @@ def build_get_charity_ranking_tool(
     default_token: str = DEFAULT_AUTH_TOKEN,
 ) -> StructuredTool:
     def get_charity_ranking(auth_token: Optional[str] = None) -> str:
-        token = (auth_token or default_token or "").strip()
+        token = default_token
         if not token:
             return _fail("auth_token is required for this endpoint (x-auth-token header).")
         try:
