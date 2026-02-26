@@ -1,15 +1,12 @@
 const express = require("express");
-
 const app = express();
 const PORT = 3000;
 
 // ───────────────────────────────────────────────
-//  Constants
+// Constants
 // ───────────────────────────────────────────────
-
 // Authentication token (matches Postman: x-auth-token)
 const AUTH_TOKEN = "charity-demo-token-2026";
-
 // Dummy DB IDs
 const ORG_1 = "org_001";
 const ORG_2 = "org_002";
@@ -17,7 +14,6 @@ const ORG_2 = "org_002";
 // ───────────────────────────────────────────────
 // Dummy Database Collections (fully expanded)
 // ───────────────────────────────────────────────
-
 const charityorganizations = [
   {
     _id: ORG_1,
@@ -97,7 +93,6 @@ const charityorganizations = [
     __v: 0,
   },
 ];
-
 const charityrankings = [
   {
     _id: "rank_1",
@@ -132,7 +127,6 @@ const charityrankings = [
     __v: 0,
   },
 ];
-
 const charityproducts = [
   {
     _id: "prod_1",
@@ -192,7 +186,6 @@ const charityproducts = [
     __v: 0,
   },
 ];
-
 const charityblogs = [
   {
     _id: "blog_1",
@@ -225,16 +218,13 @@ const charityblogs = [
 // ───────────────────────────────────────────────
 // Helpers
 // ───────────────────────────────────────────────
-
 function byIdOrg(orgId) {
   return charityorganizations.find((c) => c._id === orgId);
 }
-
 function orgName(orgId) {
   const org = byIdOrg(orgId);
   return org ? org.name : `UNKNOWN(${orgId})`;
 }
-
 function stableEnvelope({ tool, query, data, warnings = [] }) {
   return {
     ok: true,
@@ -248,7 +238,6 @@ function stableEnvelope({ tool, query, data, warnings = [] }) {
     },
   };
 }
-
 function paginate(array, page = 1, limit = 10) {
   const start = (page - 1) * limit;
   const end = start + limit;
@@ -264,37 +253,32 @@ function paginate(array, page = 1, limit = 10) {
     },
   };
 }
-
 function getCharityIdFromToken(token) {
   if (token !== AUTH_TOKEN) return null;
-  return ORG_1; // dummy: always returns ORG_1 (change to ORG_2 to test other charity)
+  return ORG_1; // dummy: always returns ORG_1
 }
 
 // ───────────────────────────────────────────────
 // Tool Functions (original)
 // ───────────────────────────────────────────────
-
 function charity_donor_count() {
   return charityrankings.map((r) => ({
     charityName: orgName(r.charityId),
     donorCount: Array.isArray(r.donors) ? r.donors.length : 0,
   }));
 }
-
 function charity_impactlife() {
   return charityrankings.map((r) => ({
     charityName: orgName(r.charityId),
     impactLife: r.impactLife ?? 0,
   }));
 }
-
 function charity_donor_amount() {
   return charityrankings.map((r) => ({
     charityName: orgName(r.charityId),
     donationAmount: r.donationAmount ?? 0,
   }));
 }
-
 function charity_total_donation() {
   const out = {};
   for (const p of charityproducts) {
@@ -307,7 +291,6 @@ function charity_total_donation() {
     products,
   }));
 }
-
 function charity_items_category() {
   const out = {};
   for (const p of charityproducts) {
@@ -320,7 +303,6 @@ function charity_items_category() {
     productCategories: Array.from(categoriesSet),
   }));
 }
-
 function charity_product_price_description() {
   const out = {};
   for (const p of charityproducts) {
@@ -337,7 +319,6 @@ function charity_product_price_description() {
     products,
   }));
 }
-
 function charity_blogs() {
   const out = {};
   for (const b of charityblogs) {
@@ -355,7 +336,6 @@ function charity_blogs() {
     blogs,
   }));
 }
-
 function charity_address() {
   return charityorganizations.map((c) => ({
     charityName: c.name,
@@ -369,7 +349,6 @@ function charity_address() {
     },
   }));
 }
-
 function charity_country_availability() {
   return charityorganizations.map((c) => ({
     charityName: c.name,
@@ -379,7 +358,6 @@ function charity_country_availability() {
     })),
   }));
 }
-
 function charity_contact_info() {
   return charityorganizations.map((c) => ({
     charityName: c.name,
@@ -394,11 +372,9 @@ function charity_contact_info() {
 // ───────────────────────────────────────────────
 // Tool Query Handler (original)
 // ───────────────────────────────────────────────
-
 function handleToolQuery(rawQ) {
   const q = String(rawQ || "").trim();
   const norm = q.toLowerCase();
-
   const toolMap = [
     { keys: ["charity_donor_count", "donor_count", "donors_count"], fn: charity_donor_count },
     { keys: ["charity_impactlife", "impactlife", "impact_life"], fn: charity_impactlife },
@@ -411,7 +387,6 @@ function handleToolQuery(rawQ) {
     { keys: ["charity_country_availability", "country_availability"], fn: charity_country_availability },
     { keys: ["charity_contact_info", "contact_info"], fn: charity_contact_info },
   ];
-
   for (const entry of toolMap) {
     if (entry.keys.some((k) => norm === k)) {
       return stableEnvelope({
@@ -421,7 +396,6 @@ function handleToolQuery(rawQ) {
       });
     }
   }
-
   // Fallback
   const fallbackData = {
     totals: {
@@ -438,7 +412,6 @@ function handleToolQuery(rawQ) {
       countryCode: c.address?.countryCode ?? null,
     })),
   };
-
   return {
     ok: false,
     tool: "unknown_tool",
@@ -453,43 +426,7 @@ function handleToolQuery(rawQ) {
 // Routes
 // ───────────────────────────────────────────────
 
-// Original tool endpoint
-/**
- * Legacy / tool-based stats endpoint (used by agent / internal tools)
- * @route   GET /api/stats
- * @access  Public
- * @query   {string} q              The tool name / alias to execute
- *                                  Examples:
- *                                  - charity_donor_count
- *                                  - charity_impactlife
- *                                  - charity_total_donation
- *                                  - charity_blogs
- *                                  - charity_address
- *                                  - etc.
- * @returns {200}                   Always returns 200 even on error (tool-friendly)
- *          Success case:
- *          {
- *            "ok": true,
- *            "tool": string,
- *            "query": string,
- *            "data": array | object,
- *            "meta": { dummy: true, warnings: [], timestamp: string }
- *          }
- *
- *          Error / unknown tool case:
- *          {
- *            "ok": false,
- *            "tool": "unknown_tool",
- *            "query": string,
- *            "error": string,
- *            "data": { totals: {...}, charities: [...] },
- *            "meta": { dummy: true, timestamp: string }
- *          }
- *
- * @example
- *   GET /api/stats?q=charity_donor_count
- *   → returns list of { charityName, donorCount }
- */
+// Original tool endpoint (still public)
 app.get("/api/stats", (req, res) => {
   const q = req.query.q || "";
   const payload = handleToolQuery(q);
@@ -497,34 +434,12 @@ app.get("/api/stats", (req, res) => {
   res.status(200).json(payload);
 });
 
-
-// 1. Search Charity (public)
-/**
- * Search approved charities by name or email
- * @route   GET /api/v1/charity_organization/search
- * @access  Public
- * @query   {string} search          Required. Search term (charity name or email)
- * @returns {200}                    Success response
- *          {
- *            "success": true,
- *            "message": "Charity search completed successfully",
- *            "data": {
- *              "searchQuery": string,
- *              "totalResults": number,
- *              "charities": [
- *                { "_id": string, "name": string, "email": string, "logo": string|null, "address": object, "verificationStatus": string }
- *              ]
- *            }
- *          }
- * @returns {400}                    Missing search query
- *          { "success": false, "message": "Search query is required" }
- */
+// 1. Search Charity (public) – unchanged
 app.get("/api/v1/charity_organization/search", (req, res) => {
   const search = (req.query.search || "").trim().toLowerCase();
   if (!search) {
     return res.status(400).json({ success: false, message: "Search query is required" });
   }
-
   const filtered = charityorganizations.filter(
     (c) =>
       c.verificationStatus === "Approved" &&
@@ -532,7 +447,6 @@ app.get("/api/v1/charity_organization/search", (req, res) => {
       !c.isSuspended &&
       (c.name.toLowerCase().includes(search) || c.email.toLowerCase().includes(search))
   );
-
   const charities = filtered.map((c) => ({
     _id: c._id,
     name: c.name,
@@ -541,7 +455,6 @@ app.get("/api/v1/charity_organization/search", (req, res) => {
     address: c.address,
     verificationStatus: c.verificationStatus,
   }));
-
   res.json({
     success: true,
     message: "Charity search completed successfully",
@@ -549,41 +462,12 @@ app.get("/api/v1/charity_organization/search", (req, res) => {
   });
 });
 
-
-// 2. Get Charity Profile By ID (public)
-/**
- * Get detailed profile of a single charity
- * @route   GET /api/v1/charity_organization/get-charity-profile/:charityId
- * @access  Public
- * @param   {string} charityId       MongoDB-style ID of the charity (path param)
- * @returns {200}                    Success
- *          {
- *            "success": true,
- *            "message": "Charity profile fetched successfully",
- *            "charity": {
- *              "_id": string,
- *              "name": string,
- *              "email": string,
- *              "phone": string,
- *              "logo": string|null,
- *              "address": object,
- *              "registrationNumber": string,
- *              "verificationStatus": string,
- *              "description": string,
- *              "website": string|null,
- *              "createdAt": string (ISO),
- *              "updatedAt": string (ISO)
- *            }
- *          }
- * @returns {404}                    Charity not found or not approved
- *          { "success": false, "message": "Charity not found or not approved" }
- */
+// 2. Get Charity Profile By ID (public) – unchanged
 app.get("/api/v1/charity_organization/get-charity-profile/:charityId", (req, res) => {
   const charity = byIdOrg(req.params.charityId);
   if (!charity || charity.verificationStatus !== "Approved" || charity.isDeleted || charity.isSuspended) {
     return res.status(404).json({ success: false, message: "Charity not found or not approved" });
   }
-
   res.json({
     success: true,
     message: "Charity profile fetched successfully",
@@ -604,54 +488,11 @@ app.get("/api/v1/charity_organization/get-charity-profile/:charityId", (req, res
   });
 });
 
-// 3. Get Charity Products (authenticated)
-/**
- * Get paginated list of products belonging to the authenticated charity
- * @route   GET /api/v1/products/get-charity-products
- * @access  Private (charity organization)
- * @header  {string} x-auth-token    Authentication token
- * @query   {number}  [page=1]
- * @query   {number}  [limit=10]
- * @query   {string}  [isActive=true|false]
- * @query   {string}  [isDeleted=true|false]
- * @query   {string}  [status=approved|pending|rejected]
- * @query   {string}  [productId]         Filter by parent product ID
- * @query   {number}  [minPrice]
- * @query   {number}  [maxPrice]
- * @query   {string}  [startDate]         ISO date
- * @query   {string}  [endDate]           ISO date
- * @query   {string}  [category]          comma-separated category IDs
- * @query   {string}  [search]
- * @query   {string}  [sort]              e.g. -createdAt, price, name
- * @returns {200}                         Success
- *          {
- *            "success": true,
- *            "message": "Charity products fetched successfully",
- *            "data": {
- *              "products": [
- *                {
- *                  "_id": string,
- *                  "name": string,
- *                  "description": string,
- *                  "pricePerUnit": number,
- *                  "isActive": boolean,
- *                  "status": string,
- *                  "charity": { "_id": string, "name": string, "logo": string|null },
- *                  "parent": { ... } | null,
- *                  "createdAt": string,
- *                  "updatedAt": string
- *                }
- *              ],
- *              "pagination": { total, page, limit, totalPages, hasNext, hasPrev }
- *            }
- *          }
- * @returns {401}                         Unauthorized
- *          { "success": false, "message": "Unauthorized" }
- */
+// 3. Get Charity Products → NOW PUBLIC (x-auth-token header is OPTIONAL)
 app.get("/api/v1/products/get-charity-products", (req, res) => {
-  const token = req.headers["x-auth-token"];
-  const charityId = getCharityIdFromToken(token);
-  if (!charityId) return res.status(401).json({ success: false, message: "Unauthorized" });
+  // Hardcoded auth-token fallback – makes endpoint public
+  const token = req.headers["x-auth-token"] || AUTH_TOKEN;
+  const charityId = getCharityIdFromToken(token); // always returns ORG_1 in demo
 
   let products = charityproducts.filter((p) => p.charity === charityId);
 
@@ -706,43 +547,11 @@ app.get("/api/v1/products/get-charity-products", (req, res) => {
   });
 });
 
-// 4. Get Charity Blogs (authenticated)
-/**
- * Get paginated list of blogs belonging to the authenticated charity
- * @route   GET /api/v1/charity_organization/blogs
- * @access  Private (charity organization)
- * @header  {string} x-auth-token
- * @query   {number}  [page=1]
- * @query   {number}  [limit=10]          max 100
- * @query   {string}  [search]            title, description or hashtags
- * @query   {string}  [sortBy=createdAt]  createdAt|updatedAt|title|status
- * @query   {string}  [order=desc]        asc|desc
- * @returns {200}
- *          {
- *            "success": true,
- *            "message": "Blogs fetched successfully",
- *            "blogs": [
- *              {
- *                "_id": string,
- *                "charity": string,
- *                "title": string,
- *                "description": string,
- *                "hashtags": string[],
- *                "file": string|null,
- *                "status": string,
- *                "isDeleted": boolean,
- *                "createdAt": string,
- *                "updatedAt": string
- *              }
- *            ],
- *            "pagination": { ... + sortBy, order, search }
- *          }
- * @returns {401}                         Unauthorized
- */
+// 4. Get Charity Blogs → NOW PUBLIC (x-auth-token header is OPTIONAL)
 app.get("/api/v1/charity_organization/blogs", (req, res) => {
-  const token = req.headers["x-auth-token"];
+  // Hardcoded auth-token fallback – makes endpoint public
+  const token = req.headers["x-auth-token"] || AUTH_TOKEN;
   const charityId = getCharityIdFromToken(token);
-  if (!charityId) return res.status(401).json({ success: false, message: "Unauthorized" });
 
   let blogs = charityblogs.filter((b) => b.charity === charityId && !b.isDeleted);
 
@@ -777,38 +586,11 @@ app.get("/api/v1/charity_organization/blogs", (req, res) => {
   });
 });
 
-// 5. Get Charity Ranking (authenticated)
-/**
- * Get ranking and impact statistics for the authenticated charity
- * @route   GET /api/v1/charity_organization/charity-ranking
- * @access  Private (charity organization)
- * @header  {string} x-auth-token
- * @returns {200}
- *          {
- *            "success": true,
- *            "message": "Charity ranking retrieved successfully",
- *            "data": {
- *              "ranking": {
- *                "_id": string,
- *                "charityId": string,
- *                "userId": string,
- *                "country": string,
- *                "donationAmount": number,
- *                "impactLife": number,
- *                "donors": [{ "donorId": string, "totalAmount": number, "impactLife": number }, ...],
- *                "createdAt": string,
- *                "updatedAt": string
- *              },
- *              "rank": number
- *            }
- *          }
- * @returns {401}                         Unauthorized
- * @returns {404}                         No ranking data found
- */
+// 5. Get Charity Ranking → NOW PUBLIC (x-auth-token header is OPTIONAL)
 app.get("/api/v1/charity_organization/charity-ranking", (req, res) => {
-  const token = req.headers["x-auth-token"];
+  // Hardcoded auth-token fallback – makes endpoint public
+  const token = req.headers["x-auth-token"] || AUTH_TOKEN;
   const charityId = getCharityIdFromToken(token);
-  if (!charityId) return res.status(401).json({ success: false, message: "Unauthorized" });
 
   const ranking = charityrankings.find((r) => r.charityId === charityId);
   if (!ranking) {
@@ -828,12 +610,14 @@ app.get("/api/v1/charity_organization/charity-ranking", (req, res) => {
 // ───────────────────────────────────────────────
 // Start Server
 // ───────────────────────────────────────────────
-
 app.listen(PORT, () => {
   console.log(`✅ Node API running on http://localhost:${PORT}`);
-  console.log(`   Tool endpoint:   http://localhost:${PORT}/api/stats?q=charity_donor_count`);
-  console.log(`   Search:          http://localhost:${PORT}/api/v1/charity_organization/search?search=helping`);
-  console.log(`   Profile:         http://localhost:${PORT}/api/v1/charity_organization/get-charity-profile/${ORG_1}`);
-  console.log(`   Products (auth): http://localhost:${PORT}/api/v1/products/get-charity-products`);
-  console.log(`                    Header → x-auth-token: ${AUTH_TOKEN}`);
+  console.log(`   → All endpoints are now PUBLIC (x-auth-token header is OPTIONAL)`);
+  console.log(`   → Demo token "${AUTH_TOKEN}" is automatically used if no header is sent`);
+  console.log(`   → Hardcoded charity: ${orgName(ORG_1)} (${ORG_1})`);
+  console.log(`\nTest links:`);
+  console.log(`   http://localhost:${PORT}/api/stats?q=charity_donor_count`);
+  console.log(`   http://localhost:${PORT}/api/v1/products/get-charity-products`);
+  console.log(`   http://localhost:${PORT}/api/v1/charity_organization/blogs`);
+  console.log(`   http://localhost:${PORT}/api/v1/charity_organization/charity-ranking`);
 });
