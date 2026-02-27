@@ -9,17 +9,25 @@ from langchain_experimental.tools import PythonREPLTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
+#-------------------------------------------------------------------------------------------------
+CHARITY_BASE_URL = "http://localhost:3030"
+AUCTION_BASE_URL = "http://localhost:3000"
+DEFAULT_AUTH_TOKEN = "charity-demo-token-2026"
+MOCK_USER_ID = "usr_mujtaba"
+# --------------------------
+BASE_URL = "https://giverr-api.verior.co"
+DONATION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhOTVkMTIwZGI2MWFmYWYwM2UiLCJyb2xlIjoiRG9ub3IiLCJwcm9maWxlVHlwZSI6IkRvbm9yIiwiaWF0IjoxNzcxNDg1NzYyLCJleHAiOjQ5MjcyNDU3NjJ9.9bTr--7-iHIemenKrFRYL3uTDx9auCY98GvYa0NnaOg"
+headers = {
+    "Authorization": f"Bearer {DONATION_TOKEN}"
+}
+
+#-----------------------------------------------------------------------------------------------
+
+
+
 # --------------------------
 # Common helpers
 # --------------------------
-
-CHARITY_URL = "http://localhost:3030"
-AUCTION_URL = "http://localhost:3000"
-DEFAULT_AUTH_TOKEN = "charity-demo-token-2026"
-MOCK_USER_ID = "usr_mujtaba"
-AUCTION_BASE_URL = "http://localhost:3000"
-
-
 def _ok(result: Any, **meta) -> str:
     payload = {"ok": True, "result": result}
     if meta:
@@ -49,7 +57,7 @@ def _get(url: str, *, params: Optional[dict] = None, headers: Optional[dict] = N
 # 1) Legacy stats tool (/api/stats?q=...)
 # --------------------------
 
-def build_node_stats_tool(base_url: str = CHARITY_URL) -> StructuredTool:
+def build_node_stats_tool(base_url: str = CHARITY_BASE_URL) -> StructuredTool:
     CANONICAL_TOOLS = [
         "charity_donor_count", "charity_impactlife", "charity_donor_amount",
         "charity_total_donation", "charity_items_category",
@@ -86,12 +94,6 @@ def build_node_stats_tool(base_url: str = CHARITY_URL) -> StructuredTool:
 
 
 
-# --------------------------
-BASE_URL = "https://giverr-api.verior.co"
-DONATION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhOTVkMTIwZGI2MWFmYWYwM2UiLCJyb2xlIjoiRG9ub3IiLCJwcm9maWxlVHlwZSI6IkRvbm9yIiwiaWF0IjoxNzcxNDg1NzYyLCJleHAiOjQ5MjcyNDU3NjJ9.9bTr--7-iHIemenKrFRYL3uTDx9auCY98GvYa0NnaOg"
-headers = {
-    "Authorization": f"Bearer {DONATION_TOKEN}"
-}
 
 @tool
 def check_wallet_balance():
