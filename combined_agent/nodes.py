@@ -16,7 +16,7 @@ from history_formatters import (
 )
 from tools import build_tool_context
 
-DEBUG_MESSAGES = 1
+DEBUG_MESSAGES = 0
 
 
 def make_planner_node(tools_by_name: dict):
