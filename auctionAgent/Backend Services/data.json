@@ -4,7 +4,7 @@
       "_id": "wlt_mujtaba",
       "user": "usr_mujtaba",
       "balance": 5000,
-      "lockedBalance": 801.4,
+      "lockedBalance": 0,
       "isDeleted": false,
       "transactionsHistory": [
         {
@@ -13,13 +13,6 @@
           "amount": 5000,
           "currency": "USD",
           "timestamp": "2026-01-05T10:00:00Z"
-        },
-        {
-          "transactionId": "tx_002",
-          "type": "DEBIT",
-          "amount": 500,
-          "currency": "USD",
-          "timestamp": "2026-01-10T12:30:00Z"
         }
       ],
       "isActive": true,
@@ -30,7 +23,7 @@
       "_id": "wlt_wasil",
       "user": "usr_wasil",
       "balance": 8000,
-      "lockedBalance": 267,
+      "lockedBalance": 0,
       "isDeleted": false,
       "transactionsHistory": [
         {
@@ -191,7 +184,7 @@
       "reservePrice": 100,
       "startTimeStamp": "2026-01-01T10:00:00Z",
       "endTimeStamp": "2026-02-01T10:00:00Z",
-      "status": "Closed",
+      "status": "Active",
       "createdAt": "2025-12-28T10:00:00Z",
       "updatedAt": "2026-02-01T10:00:00Z",
       "__v": 1
@@ -249,110 +242,22 @@
       "description": "<p>Rice 5kg, lentils 2kg, flour 5kg, cooking oil 2L, mixed spices.</p>",
       "category": "cat_food",
       "condition": "New",
-      "status": "Closed",
+      "status": "Active",
       "createdAt": "2025-12-28T10:05:00Z",
       "updatedAt": "2026-02-01T10:00:00Z",
       "__v": 1
     }
   },
   "auctionbids": {
-    "bid_hamper_mujtaba_outbid": {
-      "_id": "bid_hamper_mujtaba_outbid",
-      "profile": "usr_mujtaba",
-      "profileModel": "DonorProfile",
-      "auction": "auc_active_fixed",
-      "amount": 50,
-      "status": "Outbid",
-      "createdAt": "2026-02-05T11:00:00Z",
-      "updatedAt": "2026-02-05T12:00:00Z",
-      "__v": 0
-    },
-    "bid_hamper_mujtaba_leading": {
-      "_id": "bid_hamper_mujtaba_leading",
-      "profile": "usr_mujtaba",
-      "profileModel": "DonorProfile",
-      "auction": "auc_active_fixed",
-      "amount": 60,
-      "status": "Outbid",
-      "createdAt": "2026-02-05T12:00:00Z",
-      "updatedAt": "2026-02-24T21:26:27.981Z",
-      "__v": 0
-    },
-    "bid_juice_mujtaba_outbid": {
-      "_id": "bid_juice_mujtaba_outbid",
-      "profile": "usr_mujtaba",
-      "profileModel": "DonorProfile",
-      "auction": "auc_active_pct",
-      "amount": 30,
-      "status": "Outbid",
-      "createdAt": "2026-02-12T09:00:00Z",
-      "updatedAt": "2026-02-12T10:00:00Z",
-      "__v": 0
-    },
-    "bid_juice_wasil_leading": {
-      "_id": "bid_juice_wasil_leading",
-      "profile": "usr_wasil",
-      "profileModel": "DonorProfile",
-      "auction": "auc_active_pct",
-      "amount": 33,
-      "status": "Outbid",
-      "createdAt": "2026-02-12T10:00:00Z",
-      "updatedAt": "2026-02-24T21:55:08.201Z",
-      "__v": 0
-    },
-    "bid_ration_mujtaba_won": {
-      "_id": "bid_ration_mujtaba_won",
-      "profile": "usr_mujtaba",
-      "profileModel": "DonorProfile",
-      "auction": "auc_ended_winner",
-      "amount": 120,
-      "status": "Won",
-      "createdAt": "2026-01-20T14:00:00Z",
-      "updatedAt": "2026-02-01T10:00:00Z",
-      "__v": 1
-    },
-    "bid_ration_wasil_lost": {
-      "_id": "bid_ration_wasil_lost",
+    "bid_ration_wasil_leading": {
+      "_id": "bid_ration_wasil_leading",
       "profile": "usr_wasil",
       "profileModel": "DonorProfile",
       "auction": "auc_ended_winner",
       "amount": 100,
-      "status": "Lost",
+      "status": "Leading",
       "createdAt": "2026-01-18T11:00:00Z",
-      "updatedAt": "2026-02-01T10:00:00Z",
-      "__v": 1
-    },
-    "cc889a4e11634573a83fdac4": {
-      "_id": "cc889a4e11634573a83fdac4",
-      "profile": "usr_mujtaba",
-      "profileModel": "DonorProfile",
-      "auction": "auc_active_fixed",
-      "amount": 200,
-      "status": "Leading",
-      "createdAt": "2026-02-24T21:26:27.982Z",
-      "updatedAt": "2026-02-24T21:26:27.982Z",
-      "__v": 0
-    },
-    "ad43294c14d1487e8b353efd": {
-      "_id": "ad43294c14d1487e8b353efd",
-      "profile": "usr_mujtaba",
-      "profileModel": "DonorProfile",
-      "auction": "auc_active_nobids",
-      "amount": 25,
-      "status": "Leading",
-      "createdAt": "2026-02-24T21:35:41.611Z",
-      "updatedAt": "2026-02-24T21:35:41.611Z",
-      "__v": 0
-    },
-    "97a4ca1a0e9746f0a6bb57bf": {
-      "_id": "97a4ca1a0e9746f0a6bb57bf",
-      "profile": "usr_mujtaba",
-      "profileModel": "DonorProfile",
-      "auction": "auc_active_pct",
-      "amount": 36.4,
-      "status": "Leading",
-      "createdAt": "2026-02-24T21:55:08.201Z",
-      "updatedAt": "2026-02-24T21:55:08.201Z",
+      "updatedAt": "2026-01-18T11:00:00Z",
       "__v": 0
     }
   },
@@ -399,6 +304,17 @@
       "status": "Active",
       "createdAt": "2026-02-10T09:00:00Z",
       "updatedAt": "2026-02-10T09:00:00Z",
+      "__v": 0
+    },
+    "cfg_wasil_ration": {
+      "_id": "cfg_wasil_ration",
+      "profile": "usr_wasil",
+      "profileModel": "DonorProfile",
+      "auction": "auc_ended_winner",
+      "limit": 500,
+      "status": "Active",
+      "createdAt": "2026-01-10T09:00:00Z",
+      "updatedAt": "2026-01-10T09:00:00Z",
       "__v": 0
     }
   },

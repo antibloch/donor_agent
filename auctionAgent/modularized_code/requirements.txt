@@ -5,12 +5,16 @@
 # typing-extensions
 # langchain-groq
 
+langchain
+langchain-openai
 langchain-core
-langchain-groq
+langchain-experimental
 langgraph
+langchain-mcp-adapters
 langfuse
-requests
+rich
 python-dotenv
-uuid
-
+requests
+pydantic
+langchain-groq
 
