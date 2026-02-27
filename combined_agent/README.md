@@ -1,5 +1,17 @@
-node server_charity.js
+# Addition Setup
 
-node server_auction.js
+```
+pip install -U mcp langchain-mcp-adapters
+npm install cors
+```
 
-python main_agent.py
+
+# Run
+
+```
+node server_charity.js  # Terminal 1
+
+node server_auction.js  # Terminal 2
+
+python main_agent.py  # Terminal 3
+```
