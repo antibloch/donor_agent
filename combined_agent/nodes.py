@@ -1,4 +1,5 @@
 import json
+import os
 from uuid import uuid4
 from typing import Dict, List, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
@@ -16,7 +17,7 @@ from history_formatters import (
 )
 from tools.tool_setup import build_tool_context
 
-DEBUG_MESSAGES = 0
+DEBUG_MESSAGES = os.getenv("DEBUG_MESSAGES")
 
 
 def make_planner_node(tools_by_name: dict):

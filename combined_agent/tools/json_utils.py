@@ -1,8 +1,9 @@
 import json
 import re
 from typing import Dict, Any
+import os
 
-TRUNCATION_TOOL_LIMIT = 12000
+TRUNCATION_TOOL_LIMIT = os.getenv("TRUNCATION_TOOL_LIMIT")
 
 # Keys/patterns that should never leak into LLM history
 SENSITIVE_KEY_PATTERNS = {
