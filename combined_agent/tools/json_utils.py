@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TRUNCATION_TOOL_LIMIT = os.getenv("TRUNCATION_TOOL_LIMIT")
+TRUNCATION_TOOL_LIMIT = int(os.getenv("TRUNCATION_TOOL_LIMIT"))
 
 # Keys/patterns that should never leak into LLM history
 SENSITIVE_KEY_PATTERNS = {

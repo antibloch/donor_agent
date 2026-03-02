@@ -20,7 +20,7 @@ from tools.tool_setup import build_tool_context
 
 
 load_dotenv()
-DEBUG_MESSAGES = os.getenv("DEBUG_MESSAGES")
+DEBUG_MESSAGES = int(os.getenv("DEBUG_MESSAGES"))
 
 
 def make_planner_node(tools_by_name: dict):
