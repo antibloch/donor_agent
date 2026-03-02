@@ -151,6 +151,8 @@ def make_validator_node(tools_by_name: dict):
 
 def make_executor_node(tools_by_name: dict):
     async def _invoke_tool(tool, raw_args: dict):
+        tool_name = getattr(tool, "name", "")
+
         # Prefer async if the tool supports it
         if hasattr(tool, "ainvoke"):
             # Some tools have ainvoke but it's not a coroutine function → still try
@@ -166,6 +168,9 @@ def make_executor_node(tools_by_name: dict):
 
         if len(raw_args) == 1:
             return tool.invoke(next(iter(raw_args.values())))
+        
+        if tool_name in ("Python_REPL", "python_repl", "PythonREPLTool"):
+            return await tool.ainvoke(str(raw_args.get("input", "") or ""))
 
         # fallback for tools that expect a string
         return tool.invoke(json.dumps(raw_args, ensure_ascii=False))
