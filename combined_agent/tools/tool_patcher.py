@@ -1,25 +1,43 @@
-HINTS = {
-    "Python_REPL": (
-        "Only printed output is returned.\n"
-        "ALWAYS end your code with print(...) of the final result.\n"
-        "Prefer minimal Python; avoid heavy libraries unless necessary.\n"
-        "If computing statistics, print a compact JSON-like dict."
-    ),
-    "get_charity_stats": (
-        "Input must be EXACTLY one valid tool name string.\n"
-        "The response is JSON. The actual results are in the 'data' field.\n"
-        "Do not guess tool names — use only listed valid names."
-    ),
-    "fetch_url": (
-        "Use this when you already have a specific URL and need the page content.\n"
-        "Prefer this over web search when the task says 'read this URL' or 'extract details from this page'."
-    ),
-    "fetch_urls": (
-        "Fetch multiple URLs in one call when you need to read several pages quickly."
-    ),
+import json
+
+METADATA = {
+    "Python_REPL": {
+        "domain": "utility",
+        "type": "compute",
+        "when_to_use": "When arithmetic, transformation, parsing, or quick one-off computations are needed.",
+        "do_not_use": "Do not use for external web/page fetches or tool discovery.",
+        "supports_pagination": False,
+        "requires_auth": False,
+        "example_usage": "tool_name=Python_REPL",
+    },
+    "get_charity_stats": {
+        "domain": "charity",
+        "type": "stats",
+        "when_to_use": "When user asks for donor counts, impact metrics, rankings, blogs, products, addresses, or any numeric summary per charity",
+        "do_not_use": "Never use for wallet, bids, payments, or auctions -- those belong to transaction/auction tools",
+        "supports_pagination": False,
+        "requires_auth": False,
+        "example_usage": "tool_name=charity_donor_count",
+    },
+    "fetch_url": {
+        "domain": "web",
+        "type": "action",
+        "when_to_use": "When a specific URL is already known and you need page content.",
+        "do_not_use": "Do not use when you need discovery/search over unknown URLs.",
+        "supports_pagination": False,
+        "requires_auth": False,
+        "example_usage": "tool_name=fetch_url",
+    },
+    "fetch_urls": {
+        "domain": "web",
+        "type": "paginate",
+        "when_to_use": "When multiple known URLs should be fetched in one operation.",
+        "do_not_use": "Do not use for keyword search/discovery over the open web.",
+        "supports_pagination": True,
+        "requires_auth": False,
+        "example_usage": "tool_name=fetch_urls",
+    },
 }
-
-
 
 
 
@@ -27,11 +45,11 @@ HINTS = {
 
 def patch_tool_descriptions(tools: list) -> list:
     """
-    Docstring for patch_tool_descriptions with additional hints for better performance
-    
-    :param tools: Description
+    Patch tool descriptions with structured metadata for routing/classification.
+
+    :param tools: List of tool objects.
     :type tools: list
-    :return: Description
+    :return: Updated tool list.
     :rtype: list
     """
     patched_tools = []
@@ -40,14 +58,11 @@ def patch_tool_descriptions(tools: list) -> list:
         name = getattr(tool, "name", tool.__class__.__name__)
         original_desc = (getattr(tool, "description", "") or "").strip()
 
-        hint = HINTS.get(name)
+        metadata = METADATA.get(name)
 
-        if hint:
-            new_desc = (
-                original_desc
-                + "\n\nUSAGE HINTS:\n"
-                + hint
-            )
+        if metadata:
+            metadata_block = json.dumps({"metadata": metadata}, ensure_ascii=True, indent=2)
+            new_desc = f"{original_desc}\n\n{metadata_block}" if original_desc else metadata_block
 
             try:
                 tool.description = new_desc
