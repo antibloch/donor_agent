@@ -80,10 +80,19 @@ G) AUCTION KEYWORD SHORTCUTS:
 - "my bids" / "bid history" / "my bid history" → get_my_bid_history
 - "finalize" / "close auctions" / "finalize auctions" → finalize_ended_auctions
 
-
+H) DONATION CATEGORY FILTER RULES:
+- If user wants to browse, filter, or find charities by category or cause:
+  Step 1: ALWAYS call get_donation_categories first to get available categories and their _ids.
+  Step 2: Match the user's requested category to the closest _id from the results.
+  Step 3: Call get_charities_by_category with that exact _id.
+- If user already named a specific category AND category _ids already exist in chat history → skip Step 1, go straight to get_charities_by_category.
+- NEVER call get_charities_by_category with a guessed _id — only use _ids returned by get_donation_categories.
+- If user says "show categories" / "what categories" / "donation categories" → call only get_donation_categories, do NOT call get_charities_by_category.
+- If user message contains "category_id: <value>" → extract that value exactly and call get_charities_by_category with it directly. Do NOT call get_donation_categories again.
 
 
 OUTPUT FORMAT (STRICT JSON ONLY):
+CRITICAL: Output ONLY the raw JSON object. No explanation, no reasoning, no text before or after the JSON.
 {{
 "steps": [
     {{"tool": "tool_name", "args": {{"arg_name": "value"}}}}
@@ -251,6 +260,81 @@ def make_responder_node():
     model = make_model(temperature=0.0)
 
     def responder(state: dict) -> Dict:
+        messages = state.get("messages", [])
+        # helper — only tools called since the last human message
+        def tools_called_this_turn(msgs):
+            called = []
+            for m in reversed(msgs):
+                if isinstance(m, HumanMessage):
+                    break
+                if isinstance(m, ToolMessage):
+                    called.append(m.name)
+            return called
+
+        this_turn = tools_called_this_turn(messages)
+
+        # ── CASE: get_charities_by_category (check FIRST) ──────────
+        if "get_charities_by_category" in this_turn:
+            for msg in reversed(messages):
+                if isinstance(msg, HumanMessage):
+                    break
+                if isinstance(msg, ToolMessage) and msg.name == "get_charities_by_category":
+                    from json_utils import _safe_json_loads
+                    payload = _safe_json_loads(msg.content or "")
+                    result = payload.get("result", {}) if isinstance(payload, dict) else {}
+                    if isinstance(result, dict) and "result" in result:
+                        result = result.get("result", {})
+                    charities = result.get("charities", []) if isinstance(result, dict) else []
+                    if charities:
+                        lines = []
+                        for c in charities:
+                            lines.append(
+                                f"• {c.get('name')}\n"
+                                f"  {c.get('description')}\n"
+                                f"  📧 {c.get('email')}  📞 {c.get('phone')}\n"
+                                f"  🌐 {c.get('website')}"
+                            )
+                        content = (
+                            f"Found {len(charities)} "
+                            f"charit{'y' if len(charities) == 1 else 'ies'} working in this cause:\n\n"
+                            + "\n\n".join(lines)
+                            + "\n\nWould you like to donate to any of these, or explore another category?"
+                        )
+                    else:
+                        content = (
+                            "No charities are currently active in that category.\n\n"
+                            "Type 'show categories' to browse other causes."
+                        )
+                    return {"messages": [AIMessage(content=content)], "final_answer": content}
+
+        # ── CASE: get_donation_categories (check SECOND) ───────────
+        if "get_donation_categories" in this_turn:
+            for msg in reversed(messages):
+                if isinstance(msg, HumanMessage):
+                    break
+                if isinstance(msg, ToolMessage) and msg.name == "get_donation_categories":
+                    from json_utils import _safe_json_loads
+                    payload = _safe_json_loads(msg.content or "")
+                    result = payload.get("result", {}) if isinstance(payload, dict) else {}
+                    if isinstance(result, dict) and "result" in result:
+                        result = result.get("result", {})
+                    categories = result.get("categories", []) if isinstance(result, dict) else []
+                    if categories:
+                        lines = [
+                            f"{i+1}. {c.get('icon', '')} {c.get('name')} — {c.get('description')}"
+                            for i, c in enumerate(categories)
+                        ]
+                        content = (
+                            "Here are the available donation categories:\n\n"
+                            + "\n".join(lines)
+                            + "\n\nWhich category would you like to explore? "
+                            "Type the name or number and I'll show you the charities working in that cause."
+                        )
+                    else:
+                        content = "No donation categories are available at the moment."
+                    return {"messages": [AIMessage(content=content)], "final_answer": content}
+        
+        # ── LLM FALLBACK (charity stats, Python REPL, general) ─────
         system_prompt = """
 You are a Charity & Data Assistant that produces FINAL, USER-FACING answers.
 
@@ -263,7 +347,6 @@ OUTPUT RULES (STRICT):
 
 Now write the final answer based strictly on the Conversation History below.
 """
-
         transcript = format_history_for_responder(state.get("messages", []))
         final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{transcript}")]
 
@@ -273,7 +356,7 @@ Now write the final answer based strictly on the Conversation History below.
             rich_print("="*80)
             for i, m in enumerate(final_prompt):
                 rich_print(f"\n--- final_prompt[{i}] ---")
-                rich_print(format_msg(m))   # ← now exact match to original
+                rich_print(format_msg(m))
             rich_print("="*80)
 
         summary = model.invoke(final_prompt)

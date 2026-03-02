@@ -18,7 +18,7 @@ from langgraph.graph import StateGraph, END
 
 from tools import setup_tools, build_tool_context
 from llm import make_model
-from json_utils import _parse_plan
+from json_utils import _parse_plan, _safe_json_loads
 from history_formatters import format_history_for_responder
 from nodes import (
     make_planner_node,
@@ -71,6 +71,9 @@ async def build_graph():
 async def main():
     graph = await build_graph()
 
+    # session cache for category selection by number or name
+    session = {"categories_cache": {}}
+
     chat_memory: List[BaseMessage] = []
     console = Console()
 
@@ -90,7 +93,16 @@ async def main():
             rich_print("\nGoodbye!")
             break
 
-        user_msg = HumanMessage(content=user_input)
+        # resolve number or name to category_id if cache is populated
+        user_input_stripped = user_input.strip()
+        resolved = session["categories_cache"].get(user_input_stripped.lower())
+        if resolved:
+            user_msg = HumanMessage(
+                content=f"Show charities for category_id: {resolved}"
+            )
+        else:
+            user_msg = HumanMessage(content=user_input)
+
         chat_memory.append(user_msg)
 
         rich_print("\n(Agent is thinking...)\n")
@@ -107,6 +119,17 @@ async def main():
                         new_messages = node_output["messages"]
                         for msg in new_messages:
                             chat_memory.append(msg)
+
+                            # capture category list into session cache
+                            if isinstance(msg, ToolMessage) and msg.name == "get_donation_categories":
+                                payload = _safe_json_loads(msg.content or "")
+                                result = (payload or {}).get("result", {}) if isinstance(payload, dict) else {}
+                                cats = result.get("categories", [])
+                                session["categories_cache"] = {
+                                    str(i + 1): c["_id"] for i, c in enumerate(cats)
+                                }
+                                for c in cats:
+                                    session["categories_cache"][c["name"].lower()] = c["_id"]
 
                             if isinstance(msg, ToolMessage):
                                 rich_print(f" ➤ [Tool Executed] {msg.name}")

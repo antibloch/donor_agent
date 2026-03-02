@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("fs");
 const { v4: uuidv4 } = require("uuid");
+const { setDefaultResultOrder } = require("dns");
 
 const app = express();
 app.use(cors());
@@ -615,6 +616,32 @@ function finalizeEndedAuctions() {
   saveData(db);
   console.log("Finalization complete.");
 }
+
+// GET /donation-categories
+app.get("/donation-categories", (req, res) => {
+  const db = getDb();
+  const categories = Object.values(db.donationcategories || {});
+  res.json({ success: true, count: categories.length, categories });
+});
+
+// GET /charities/by-category/:categoryId
+app.get("/charities/by-category/:categoryId", (req, res) => {
+  const db = getDb();
+  const { categoryId } = req.params;
+  const allCharities = Object.values(db.charities || {});
+  const matched = allCharities.filter(
+    (c) => Array.isArray(c.categories) && c.categories.includes(categoryId),
+  );
+  res.json({
+    success: true,
+    count: matched.length,
+    charities: matched,
+    message:
+      matched.length === 0
+        ? "No charities found for this category."
+        : undefined,
+  });
+});
 
 /* ============================================================
    START SERVER

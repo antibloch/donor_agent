@@ -575,6 +575,63 @@ def build_finalize_ended_auctions_tool() -> StructuredTool:
         args_schema=FinalizeInput,
     )
 
+
+def build_get_donation_categories_tool() -> StructuredTool:
+    def get_donation_categories() -> str:
+        try:
+            out = _get(f"{AUCTION_BASE_URL}/donation-categories")
+            if out["status"] >= 400:
+                return _fail(f"HTTP {out['status']}: {out['json']}")
+            return _ok(out["json"])
+        except requests.RequestException as e:
+            return _fail(str(e))
+
+    class DonationCategoriesInput(BaseModel):
+        pass
+
+    return StructuredTool.from_function(
+        func=get_donation_categories,
+        name="get_donation_categories",
+        description=(
+            "Fetch all available donation categories (e.g. Emergency Funds, "
+            "Water Projects, Gaza Relief, Food Aid, Education, Healthcare).\n"
+            "Call this FIRST when user wants to browse or filter charities by cause/category.\n"
+            "Returns: list of categories with _id, name, description, icon."
+        ),
+        args_schema=DonationCategoriesInput,
+    )
+
+
+def build_get_charities_by_category_tool() -> StructuredTool:
+    def get_charities_by_category(category_id: str) -> str:
+        cid = (category_id or "").strip()
+        if not cid:
+            return _fail("category_id is required.")
+        try:
+            out = _get(f"{AUCTION_BASE_URL}/charities/by-category/{cid}")
+            if out["status"] >= 400:
+                return _fail(f"HTTP {out['status']}: {out['json']}")
+            return _ok(out["json"])
+        except requests.RequestException as e:
+            return _fail(str(e))
+
+    class CharitiesByCategoryInput(BaseModel):
+        category_id: str = Field(
+            ...,
+            description="Exact _id of the donation category (e.g. cat_emergency, cat_water, cat_gaza)."
+        )
+
+    return StructuredTool.from_function(
+        func=get_charities_by_category,
+        name="get_charities_by_category",
+        description=(
+            "Fetch all charities actively working in a specific donation category.\n"
+            "Requires exact category _id from get_donation_categories.\n"
+            "Returns: list of charities with name, description, website, phone, email."
+        ),
+        args_schema=CharitiesByCategoryInput,
+    )
+
 # --------------------------
 # Tool setup
 # --------------------------
@@ -597,6 +654,8 @@ def setup_tools():
         build_get_my_bid_history_tool(),
         build_place_bid_tool(),
         build_finalize_ended_auctions_tool(),
+        build_get_donation_categories_tool(),      
+        build_get_charities_by_category_tool(),
     ]
     return local_tools
 
