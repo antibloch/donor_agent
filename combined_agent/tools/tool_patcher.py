@@ -9,6 +9,10 @@ METADATA = {
         "supports_pagination": False,
         "requires_auth": False,
         "example_usage": "tool_name=Python_REPL",
+        "hint": (
+                    "- Python_REPL must NEVER have empty args.\n"
+                    "- Python_REPL argument format: {{ \"input\": \"<python code that performs analysis, whose final line of code is ONLY print statement that prints the final numeric result>\" }}"
+                )
     },
     "get_charity_stats": {
         "domain": "charity",
@@ -18,6 +22,7 @@ METADATA = {
         "supports_pagination": False,
         "requires_auth": False,
         "example_usage": "tool_name=charity_donor_count",
+        "hint": "none"
     },
     "fetch_url": {
         "domain": "web",
@@ -27,6 +32,7 @@ METADATA = {
         "supports_pagination": False,
         "requires_auth": False,
         "example_usage": "tool_name=fetch_url",
+        "hint": "none"
     },
     "fetch_urls": {
         "domain": "web",
@@ -36,6 +42,7 @@ METADATA = {
         "supports_pagination": True,
         "requires_auth": False,
         "example_usage": "tool_name=fetch_urls",
+        "hint": "none"
     },
 }
 
