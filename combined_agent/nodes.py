@@ -4,6 +4,7 @@ from uuid import uuid4
 from typing import Dict, List, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from rich import print as rich_print
+from dotenv import load_dotenv
 
 from llm import make_model
 from tools.json_utils import _parse_plan, _compact_json          
@@ -17,6 +18,8 @@ from history_formatters import (
 )
 from tools.tool_setup import build_tool_context
 
+
+load_dotenv()
 DEBUG_MESSAGES = os.getenv("DEBUG_MESSAGES")
 
 

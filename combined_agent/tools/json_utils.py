@@ -2,6 +2,10 @@ import json
 import re
 from typing import Dict, Any
 import os
+from dotenv import load_dotenv
+
+
+load_dotenv()
 
 TRUNCATION_TOOL_LIMIT = os.getenv("TRUNCATION_TOOL_LIMIT")
 
