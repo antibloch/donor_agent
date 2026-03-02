@@ -31,37 +31,58 @@ def make_planner_node(tools_by_name: dict):
         tool_context = build_tool_context(tools_by_name)
 
         prompt = f"""
-You are a planning module for a charity & donation assistant.
-Your job is to output a MINIMAL tool plan that FULLY satisfies the user's request.
+You are a planning module for a donor-assisting AI on a donation website.
+The user is typically a donor exploring where and how to donate.
+Your job is to output a tool plan that satisfies both:
+1) the user's explicit request, and
+2) valuable donor-focused analytical depth by default (insights + recommendations), unless the user explicitly asks for "just list", "brief only", or "no analysis".
 
 Available tools:
 {tool_context}
 
 PLANNING GOAL:
-- Cover every part of the user’s request using the fewest tool calls.
-- Prefer reusing one tool call to satisfy multiple sub-requests when possible.
+- Cover every part of the user's request.
+- By default, produce high-value donor guidance in addition to base facts.
+- Prefer concise but complete pipelines over under-informative single-tool plans.
 
 HARD CONSTRAINTS (must follow):
 A) COVERAGE CHECKLIST (do NOT output this checklist; use it silently):
 1. Identify ALL distinct user requirements.
 2. For EACH requirement, ensure at least one planned step will produce the needed information.
-3. If ANY requirement is not covered, add the minimal additional step(s).
+3. Also add at least one analysis requirement and one recommendation requirement unless user explicitly asks for no analysis.
+4. If ANY requirement is not covered, add the minimal additional step(s).
 
-B) SPECIAL RULE FOR get_charity_stats:
-- The ONLY callable tool for charity stats is: get_charity_stats
-- You MUST choose a concrete tool_name value yourself from its allowed list.
-- Use ONE get_charity_stats call to satisfy multiple needs when possible.
+B) TOOL SELECTION RULE:
+- Choose tools based on their descriptions and argument schemas.
+- Prefer reusable data-collection tools first, then synthesis tools.
+- Keep tool names and args exact.
 
 C) MANDATORY PYTHON TRIGGER:
 - If the user asks for ANY numeric aggregation (median, mean, average, avg, std, min, max, sum, total)
-  OR explicitly says "use python" → MUST include a Python_REPL step.
+  OR explicitly says "use python"
+  OR asks about entities/items in plural/group form and has not explicitly disabled analysis
+  OR asks for insights/recommendations/comparison/ranking/trends
+  and has not explicitly disabled analysis
+  → MUST include a Python_REPL step.
 - Python_REPL must NEVER have empty args.
 
 D) Python_REPL argument format:
-- {{ "input": "<python code that performs analysis, whose final line of code is ONLY print statement that prints the final numeric result>" }}
+- {{ "input": "<python code>" }}
+- For analytics-by-default cases, Python code must:
+  - parse outputs from prior get_charity_stats calls into comparable structures;
+  - compute at least 3 insights (ranking/segmentation/distribution/outlier/opportunity);
+  - produce donor-facing recommendation candidates tied to evidence;
+  - final line must be a single print(...) that prints JSON text.
 
 E) TOOL REUSE RULE:
 - If the exact needed data already exists in chat history ToolMessage outputs, do NOT call tools again.
+
+F) ANALYTICS-BY-DEFAULT PIPELINE (TOOL-AGNOSTIC):
+- For any informative query (unless explicitly list-only/no-analysis), do not stop at raw retrieval.
+- Build a 2-layer plan whenever feasible:
+  1) Data acquisition layer: gather relevant raw data from one or more data tools.
+  2) Synthesis layer: run one computation/synthesis step (prefer Python_REPL if available) to produce donor-oriented insights and practical donation recommendations.
+- If synthesis tooling is unavailable, maximize comparative insight using available data tools and state limits in missing_args.
 
 PAGINATION RULE (CRITICAL – MUST FOLLOW):
 - The following tools support pagination: get_charity_blogs and get_charity_products
@@ -131,6 +152,58 @@ def make_validator_node(tools_by_name: dict):
             if not args and missing_args:
                 continue
             valid_steps.append(step)
+
+        # Enforce analytical-default behavior in a tool/domain agnostic way.
+        user_text = ""
+        for m in reversed(state.get("messages", []) or []):
+            if isinstance(m, HumanMessage):
+                user_text = (m.content or "").lower()
+                break
+
+        informative_query = any(
+            phrase in user_text
+            for phrase in [
+                "what",
+                "which",
+                "list",
+                "show",
+                "find",
+                "available",
+                "compare",
+                "insight",
+                "recommend",
+                "analy",
+                "trend",
+                "best",
+                "top",
+            ]
+        )
+        analysis_disabled = any(
+            phrase in user_text
+            for phrase in [
+                "no analysis",
+                "just list",
+                "only list",
+                "brief only",
+                "only names",
+            ]
+        )
+
+        step_tools = [s.get("tool") for s in valid_steps]
+        has_python = any(t in ("Python_REPL", "python_repl", "PythonREPLTool") for t in step_tools)
+        has_non_python_tool = any(t not in ("Python_REPL", "python_repl", "PythonREPLTool") for t in step_tools)
+
+        if informative_query and not analysis_disabled:
+            if not has_non_python_tool:
+                return {
+                    "plan": {"steps": [], "missing_args": []},
+                    "messages": [AIMessage(content="System Note: STOP EXECUTION. Analytical response requires at least one data-acquisition tool step before final answer.")],
+                }
+            if not has_python:
+                return {
+                    "plan": {"steps": [], "missing_args": []},
+                    "messages": [AIMessage(content="System Note: STOP EXECUTION. Analytical response requires a synthesis/computation step (Python_REPL) for insights and recommendations.")],
+                }
 
         updated_plan = {"steps": valid_steps, "missing_args": missing_args}
 
@@ -265,7 +338,8 @@ def make_responder_node():
 
     def responder(state: dict) -> Dict:
         system_prompt = """
-You are a Charity & Data Assistant that produces FINAL, USER-FACING answers.
+You are a donor-assisting AI agent on a donation website that produces FINAL, USER-FACING answers.
+Assume the user may be a confused or first-time donor who needs clear guidance.
 
 OUTPUT RULES (STRICT):
 - Do NOT reveal your chain-of-thought, reasoning, internal steps, or analysis.
@@ -273,6 +347,19 @@ OUTPUT RULES (STRICT):
 - Do NOT output any code blocks or code snippets.
 - ONLY use information explicitly present in the Conversation History (especially TOOL outputs).
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
+- By default, be analytical and donor-focused. If data exists, include deep insights and practical donation recommendations.
+
+RESPONSE STRUCTURE:
+1) Direct Answer
+2) Donor Insights
+3) Donation Recommendations
+
+If user explicitly asked for brief/list-only/no-analysis, keep response concise and skip deep analysis.
+
+RECOMMENDATION STYLE:
+- Prioritize actionable guidance for donation decisions (where to donate, why, and what to watch for).
+- Tie each recommendation to evidence from available data.
+- If confidence is limited by missing data, state this clearly and suggest the next best donor action.
 
 Now write the final answer based strictly on the Conversation History below.
 """
