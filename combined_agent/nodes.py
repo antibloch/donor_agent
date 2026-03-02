@@ -5,7 +5,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMe
 from rich import print as rich_print
 
 from llm import make_model
-from json_utils import _parse_plan, _compact_json          
+from tools.json_utils import _parse_plan, _compact_json          
 from history_formatters import (
     format_history_for_planner,
     format_history_for_gate,
@@ -14,7 +14,7 @@ from history_formatters import (
     detect_latest_tool_error,
     format_msg,          
 )
-from tools import build_tool_context
+from tools.tool_setup import build_tool_context
 
 DEBUG_MESSAGES = 0
 
