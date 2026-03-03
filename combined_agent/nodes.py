@@ -127,58 +127,6 @@ def make_validator_node(tools_by_name: dict):
                 continue
             valid_steps.append(step)
 
-        # Enforce analytical-default behavior in a tool/domain agnostic way.
-        user_text = ""
-        for m in reversed(state.get("messages", []) or []):
-            if isinstance(m, HumanMessage):
-                user_text = (m.content or "").lower()
-                break
-
-        informative_query = any(
-            phrase in user_text
-            for phrase in [
-                "what",
-                "which",
-                "list",
-                "show",
-                "find",
-                "available",
-                "compare",
-                "insight",
-                "recommend",
-                "analy",
-                "trend",
-                "best",
-                "top",
-            ]
-        )
-        analysis_disabled = any(
-            phrase in user_text
-            for phrase in [
-                "no analysis",
-                "just list",
-                "only list",
-                "brief only",
-                "only names",
-            ]
-        )
-
-        step_tools = [s.get("tool") for s in valid_steps]
-        has_python = any(t in ("Python_REPL", "python_repl", "PythonREPLTool") for t in step_tools)
-        has_non_python_tool = any(t not in ("Python_REPL", "python_repl", "PythonREPLTool") for t in step_tools)
-
-        if informative_query and not analysis_disabled:
-            if not has_non_python_tool:
-                return {
-                    "plan": {"steps": [], "missing_args": []},
-                    "messages": [AIMessage(content="System Note: STOP EXECUTION. Analytical response requires at least one data-acquisition tool step before final answer.")],
-                }
-            if not has_python:
-                return {
-                    "plan": {"steps": [], "missing_args": []},
-                    "messages": [AIMessage(content="System Note: STOP EXECUTION. Analytical response requires a synthesis/computation step (Python_REPL) for insights and recommendations.")],
-                }
-
         updated_plan = {"steps": valid_steps, "missing_args": missing_args}
 
         if missing_args and not valid_steps:
