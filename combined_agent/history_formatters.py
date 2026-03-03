@@ -1,17 +1,60 @@
 import json
+import re
 from typing import List, Dict, Sequence, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
-from tools.json_utils import _safe_json_loads, _compact_json, _summarize_tool_output, TRUNCATION_TOOL_LIMIT, SENSITIVE_KEY_PATTERNS, _sanitize_sensitive_data
+from json_utils import (
+    _safe_json_loads, 
+    _compact_json, 
+    _summarize_tool_output, 
+    TRUNCATION_TOOL_LIMIT, 
+    SENSITIVE_KEY_PATTERNS, 
+    _sanitize_sensitive_data
+)
+
+def _redact_passwords(text: str) -> str:
+    """
+    Scrub passwords from plain text content 
+    to prevent the LLM from reusing them in subsequent turns.
+    """
+    if not text:
+        return ""
+    # Matches patterns like "password is XYZ", "password: XYZ", "as XYZ"
+    patterns = [
+        r"(?i)(password\s*[:=]\s*)(\S+)",
+        r"(?i)(password\s+is\s+)(\S+)",
+        r"(?i)(password\s+as\s+)(\S+)"
+    ]
+    redacted = text
+    for p in patterns:
+        redacted = re.sub(p, r"\1[REDACTED]", redacted)
+    
+    # Simple check for single-word responses that are likely passwords
+    words = text.strip().split()
+    if len(words) == 1 and len(words[0]) > 3:
+        # Avoid redacting common small words, but redact long single-word inputs in history
+        if not words[0].lower() in ["yes", "no", "okay", "sure", "cancel"]:
+            return "[REDACTED]"
+    
+    return redacted
 
 def format_msg(m: BaseMessage) -> str:
     role = m.__class__.__name__
     content = (getattr(m, "content", "") or "").strip()
+    
+    # Apply redaction to raw content
+    content = _redact_passwords(content)
+
     if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
-        content += "\n\n[tool_calls]\n" + json.dumps(getattr(m, "tool_calls"), indent=2, ensure_ascii=False)
+        sanitized_calls = []
+        for tc in getattr(m, "tool_calls"):
+            new_tc = dict(tc)
+            new_tc["args"] = _sanitize_sensitive_data(dict(tc.get("args") or {}))
+            sanitized_calls.append(new_tc)
+        content += "\n\n[tool_calls]\n" + json.dumps(sanitized_calls, indent=2, ensure_ascii=False)
+    
     if getattr(m, "name", None):
         content = f"[tool={m.name}]\n{content}"
     return f"{role}:\n{content}\n"
-
 
 def get_current_round_messages(messages: Sequence[BaseMessage]) -> List[BaseMessage]:
     msgs = list(messages or [])
@@ -83,36 +126,28 @@ def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) ->
             return {"tool": m.name, "error": raw[:800], "tool_message": raw}
     return None
 
-
 def _format_tool_calls_block(tool_calls: list) -> str:
-    """Normalized formatting for ALL tools.
-    - Redacts sensitive keys from args before they reach the LLM.
-    """
     out = []
     for tc in tool_calls or []:
         tid = tc.get("id") or tc.get("tool_call_id") or ""
         name = tc.get("name") or ""
-
-        # Copy + sanitize
         args = _sanitize_sensitive_data(dict(tc.get("args") or {}))
 
-        # === THE FIX YOU ASKED FOR (still works after sanitization) ===
         if name and name != "get_charity_stats" and "tool_name" not in args:
             args["tool_name"] = name
-        # ============================
 
         out.append(f"TOOL_CALL[{name} id={tid}] args={_compact_json(args, max_chars=TRUNCATION_TOOL_LIMIT)}")
     return "\n".join(out)
 
-
 def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
+    """Provides history for the repair node (Gate)."""
     current_round = get_current_round_messages(messages)
     best_tool_by_call_id = get_best_tool_message_by_call_id(current_round)
     lines = []
     seen_call_ids: set[str] = set()
     for m in current_round:
         if isinstance(m, HumanMessage):
-            lines.append(f"USER: {m.content}")
+            lines.append(f"USER: {_redact_passwords(m.content)}")
         elif isinstance(m, AIMessage):
             if (m.content or "").strip().startswith("System Note:"):
                 continue
@@ -125,14 +160,13 @@ def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
                         seen_call_ids.add(tcid)
                         lines.append(_summarize_tool_output(tm.name, tm.content))
             if (m.content or "").strip():
-                lines.append(f"ASSISTANT: {m.content}")
+                lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
         elif isinstance(m, ToolMessage):
             tcid = getattr(m, "tool_call_id", None)
             if tcid and tcid in seen_call_ids:
                 continue
             lines.append(_summarize_tool_output(m.name, m.content))
     return "\n".join(lines) if lines else "(empty)"
-
 
 def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = TRUNCATION_TOOL_LIMIT) -> str:
     current_round = get_current_round_messages(messages)
@@ -146,7 +180,6 @@ def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 
     blocks = []
     for tool_name, content in last_by_tool.items():
         c = content.strip()
-        # Sanitize before showing in gate prompt
         try:
             payload = _safe_json_loads(c)
             if payload is not None:
@@ -162,7 +195,6 @@ def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 
         blocks.append(f"- {tool_name}: {c}")
     return "\n".join(blocks)
 
-
 def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_user: bool = True) -> str:
     msgs = list(messages) if messages else []
     if drop_last_user:
@@ -170,13 +202,15 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
             if isinstance(msgs[i], HumanMessage):
                 msgs = msgs[:i]
                 break
+    
     latest_tools_by_name = get_latest_tool_per_name(msgs)
     best_tool_by_call_id = get_best_tool_message_by_call_id(msgs)
     lines = []
     seen_call_ids: set[str] = set()
+    
     for m in msgs:
         if isinstance(m, HumanMessage):
-            lines.append(f"USER: {m.content}")
+            lines.append(f"USER: {_redact_passwords(m.content)}")
         elif isinstance(m, AIMessage):
             if (m.content or "").strip().startswith("System Note:"):
                 continue
@@ -200,7 +234,7 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
                             lines.append(_summarize_tool_output(tm.name, tm.content))
                             seen_call_ids.add(tcid)
             if (m.content or "").strip():
-                lines.append(f"ASSISTANT: {m.content}")
+                lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
         elif isinstance(m, ToolMessage):
             tcid = getattr(m, "tool_call_id", None)
             if tcid and tcid in seen_call_ids:
@@ -210,15 +244,15 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
             lines.append(_summarize_tool_output(m.name, m.content))
     return "\n".join(lines) if lines else "(no prior history)"
 
-
 def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
     latest_tools_by_name = get_latest_tool_per_name(messages)
     best_tool_by_call_id = get_best_tool_message_by_call_id(messages)
     lines = []
     seen_call_ids: set[str] = set()
+    
     for m in messages or []:
         if isinstance(m, HumanMessage):
-            lines.append(f"USER: {m.content}")
+            lines.append(f"USER: {_redact_passwords(m.content)}")
         elif isinstance(m, AIMessage):
             if (m.content or "").strip().startswith("System Note:"):
                 continue
@@ -244,7 +278,7 @@ def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
                         if tm:
                             lines.append(_summarize_tool_output(tm.name, tm.content))
             if (m.content or "").strip():
-                lines.append(f"ASSISTANT: {m.content}")
+                lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
         elif isinstance(m, ToolMessage):
             tcid = getattr(m, "tool_call_id", None)
             if tcid and tcid in seen_call_ids:
