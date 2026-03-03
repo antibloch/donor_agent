@@ -52,16 +52,28 @@ def build_node_stats_tool(base_url: str = CHARITY_BASE_URL) -> StructuredTool:
 #=======================Adding Meta Data for Tool Guidance=======================
 metadata_analytics = {
     "Python_REPL": {
-        "domain": "utility",
+        "domain": "analytics",
         "type": "compute",
-        "when_to_use": "When arithmetic, transformation, parsing, or quick one-off computations are needed.",
-        "do_not_use": "Do not use for external web/page fetches or tool discovery.",
+        "when_to_use": (
+            "- If the user asks for ANY numeric aggregation (e.g: median, mean, average, avg, std, min, max, sum, total)"
+            "- User asks about entities/items in plural/group form and has not explicitly disabled analysis"
+            "- User asks for insights/recommendations/comparison/ranking/trends"
+            
+        ),
+        "do_not_use": "Do not use for external web/page fetches, or for performing transactions",
         "supports_pagination": False,
         "requires_auth": False,
-        "example_usage": "tool_name=Python_REPL",
+        "example_usage": "",
         "hint": (
                     "- Python_REPL must NEVER have empty args.\n"
                     "- Python_REPL argument format: {{ \"input\": \"<python code that performs analysis, whose final line of code is ONLY print statement that prints the final numeric result>\" }}"
+                    "- ALWAYS start with proper imports: `import statistics`"
+                    "- Use the CORRECT statistical function, e.g:"
+                    "        • median → statistics.median(your_list)"
+                    "        • mean   → statistics.mean(your_list)"
+                    "        • sum, min, max, etc. → built-in functions"
+                    "- The code must END with ONE clean `print(…)` statement that outputs ONLY the final numeric result (no lists, no extra text)."
+                    "- Avoid leading indentation on lines unless inside a block (IndentationError risk)."
                 )
     },
     "get_charity_stats": {
