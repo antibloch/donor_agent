@@ -2,7 +2,6 @@ import os
 import asyncio
 import json
 from typing import Annotated, Sequence, TypedDict, Any, List, Dict
-from dotenv import load_dotenv
 from rich.console import Console
 from rich import print as rich_print
 
@@ -29,9 +28,7 @@ from nodes import (
 )
 from routing import route_after_validator, route_after_gate
 
-load_dotenv()
 
-DEBUG_MESSAGES = 1
 
 class AgentState(TypedDict, total=False):
     messages: Annotated[Sequence[BaseMessage], add_messages]
