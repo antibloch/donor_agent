@@ -235,6 +235,63 @@ def build_finalize_ended_auctions_tool() -> StructuredTool:
         args_schema=FinalizeInput,
     )
 
+def build_get_donation_categories_tool() -> StructuredTool:
+    def get_donation_categories() -> str:
+        try:
+            out = _get(f"{AUCTION_BASE_URL}/donation-categories")
+            if out["status"] >= 400:
+                return _fail(f"HTTP {out['status']}: {out['json']}")
+            return _ok(out["json"])
+        except requests.RequestException as e:
+            return _fail(str(e))
+
+    class DonationCategoriesInput(BaseModel):
+        pass
+
+    return StructuredTool.from_function(
+        func=get_donation_categories,
+        name="get_donation_categories",
+        description=(
+            "Fetch all available donation categories (e.g. Emergency Funds, "
+            "Water Projects, Gaza Relief, Food Aid, Education, Healthcare).\n"
+            "Call this FIRST when user wants to browse or filter charities by cause/category.\n"
+            "Returns: list of categories with _id, name, description, icon."
+        ),
+        args_schema=DonationCategoriesInput,
+    )
+
+#get tools added for finding charities by donation type.
+def build_get_charities_by_category_tool() -> StructuredTool:
+    def get_charities_by_category(category_id: str) -> str:
+        cid = (category_id or "").strip()
+        if not cid:
+            return _fail("category_id is required.")
+        try:
+            out = _get(f"{AUCTION_BASE_URL}/charities/by-category/{cid}")
+            if out["status"] >= 400:
+                return _fail(f"HTTP {out['status']}: {out['json']}")
+            return _ok(out["json"])
+        except requests.RequestException as e:
+            return _fail(str(e))
+
+    class CharitiesByCategoryInput(BaseModel):
+        category_id: str = Field(
+            ...,
+            description="Exact _id of the donation category (e.g. cat_emergency, cat_water, cat_gaza)."
+        )
+
+    return StructuredTool.from_function(
+        func=get_charities_by_category,
+        name="get_charities_by_category",
+        description=(
+            "Fetch all charities actively working in a specific donation category.\n"
+            "Requires exact category _id from get_donation_categories.\n"
+            "Returns: list of charities with name, description, website, phone, email."
+        ),
+        args_schema=CharitiesByCategoryInput,
+    )
+
+
 
 
 #=======================Adding Meta Data for Tool Guidance=======================
@@ -283,5 +340,44 @@ metadata_auctions = {
         "requires_auth": False,
         "example_usage": "tool_name=fetch_urls",
         "hint": "none"
+    },
+    "get_donation_categories": {
+        "domain": "charity",
+        "type": "lookup",
+        "when_to_use": (
+            "When user wants to browse, filter, or find charities by cause or donation type. "
+            "Always call this FIRST before get_charities_by_category — never skip this step "
+            "unless the category _id is already present in chat history."
+        ),
+        "do_not_use": (
+            "Do not call again if category _ids are already cached in chat history from a prior call."
+        ),
+        "supports_pagination": False,
+        "requires_auth": False,
+        "example_usage": "no args required",
+        "hint": (
+            "Returns _id values like cat_emergency, cat_water, cat_gaza, cat_food_aid, "
+            "cat_education, cat_healthcare. Pass the exact _id to get_charities_by_category."
+        ),
+    },
+
+    "get_charities_by_category": {
+        "domain": "charity",
+        "type": "lookup",
+        "when_to_use": (
+            "When user wants to see charities working in a specific cause/category "
+            "AND the exact category _id is already known from get_donation_categories output."
+        ),
+        "do_not_use": (
+            "Never call with a guessed or invented _id. "
+            "Only use _ids returned by get_donation_categories."
+        ),
+        "supports_pagination": False,
+        "requires_auth": False,
+        "example_usage": 'category_id="cat_water"',
+        "hint": (
+            "Mandatory two-step flow: get_donation_categories → get_charities_by_category. "
+            "If the user types only a number or category name, resolve it to a _id first."
+        ),
     },
 }

@@ -39,6 +39,8 @@ async def setup_tools():
         build_get_my_bid_history_tool(),
         build_place_bid_tool(),
         build_finalize_ended_auctions_tool(),
+        build_get_donation_categories_tool(),     
+        build_get_charities_by_category_tool(),
 
     ]
 

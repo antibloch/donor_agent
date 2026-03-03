@@ -616,6 +616,32 @@ function finalizeEndedAuctions() {
   console.log("Finalization complete.");
 }
 
+//13. GET /donation-categories
+app.get("/donation-categories", (req, res) => {
+  const db = getDb();
+  const categories = Object.values(db.donationcategories || {});
+  res.json({ success: true, count: categories.length, categories });
+});
+
+//14. GET /charities/by-category/:categoryId
+app.get("/charities/by-category/:categoryId", (req, res) => {
+  const db = getDb();
+  const { categoryId } = req.params;
+  const allCharities = Object.values(db.charities || {});
+  const matched = allCharities.filter(
+    (c) => Array.isArray(c.categories) && c.categories.includes(categoryId),
+  );
+  res.json({
+    success: true,
+    count: matched.length,
+    charities: matched,
+    message:
+      matched.length === 0
+        ? "No charities found for this category."
+        : undefined,
+  });
+});
+
 /* ============================================================
    START SERVER
 ============================================================ */
