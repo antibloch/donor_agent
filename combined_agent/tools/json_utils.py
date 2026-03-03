@@ -109,21 +109,4 @@ def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
     # === REDACT HERE TOO (in case backend echoes tokens) ===
     result = _sanitize_sensitive_data(result)
     # =======================================================
-
-    if tool_name == "get_charity_stats" and isinstance(result, dict):
-        data = result.get("data")
-        tool = result.get("tool") or result.get("query")
-        if tool == "charity_donor_count" and isinstance(data, list):
-            pairs = []
-            for row in data:
-                name = row.get("charityName")
-                cnt = row.get("donorCount")
-                if name is not None and cnt is not None:
-                    pairs.append(f"{name}: {cnt}")
-            if pairs:
-                return "TOOL[get_charity_stats:charity_donor_count] -> " + "; ".join(pairs)
-
-    if tool_name in ("Python_REPL", "python_repl", "PythonREPLTool"):
-        return f"TOOL[Python_REPL] -> {_compact_json(result, max_chars=TRUNCATION_TOOL_LIMIT)}"
-
     return f"TOOL[{tool_name}] -> {_compact_json(result, max_chars=TRUNCATION_TOOL_LIMIT)}"
