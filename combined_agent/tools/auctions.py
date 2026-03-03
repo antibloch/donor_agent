@@ -345,19 +345,22 @@ metadata_auctions = {
         "domain": "charity",
         "type": "lookup",
         "when_to_use": (
-            "When user wants to browse, filter, or find charities by cause or donation type. "
-            "Always call this FIRST before get_charities_by_category — never skip this step "
-            "unless the category _id is already present in chat history."
+            "ALWAYS call this first when user says anything like: "
+            "'show categories', 'donation categories', 'what categories', "
+            "'show donation categories', 'browse causes', 'find charities by cause/type'. "
+            "This is a standalone tool — it does NOT require Python_REPL."
         ),
         "do_not_use": (
-            "Do not call again if category _ids are already cached in chat history from a prior call."
+            "Do not call again if category _ids are already in chat history from a prior call."
         ),
         "supports_pagination": False,
         "requires_auth": False,
         "example_usage": "no args required",
         "hint": (
-            "Returns _id values like cat_emergency, cat_water, cat_gaza, cat_food_aid, "
-            "cat_education, cat_healthcare. Pass the exact _id to get_charities_by_category."
+            "Returns _id values like cat_emergency, cat_water, cat_gaza, "
+            "cat_food_aid, cat_education, cat_healthcare. "
+            "Pass the exact _id to get_charities_by_category. "
+            "No synthesis step needed — this is a direct lookup."
         ),
     },
 
@@ -365,19 +368,20 @@ metadata_auctions = {
         "domain": "charity",
         "type": "lookup",
         "when_to_use": (
-            "When user wants to see charities working in a specific cause/category "
-            "AND the exact category _id is already known from get_donation_categories output."
+            "Call this when user wants charities in a specific cause/category "
+            "AND the exact category _id is already known from get_donation_categories output. "
+            "This is a standalone tool — it does NOT require Python_REPL."
         ),
         "do_not_use": (
-            "Never call with a guessed or invented _id. "
+            "Never call with a guessed _id. "
             "Only use _ids returned by get_donation_categories."
         ),
         "supports_pagination": False,
         "requires_auth": False,
         "example_usage": 'category_id="cat_water"',
         "hint": (
-            "Mandatory two-step flow: get_donation_categories → get_charities_by_category. "
-            "If the user types only a number or category name, resolve it to a _id first."
+            "Two-step flow: get_donation_categories first, then this tool. "
+            "No synthesis step needed — this is a direct lookup."
         ),
     },
 }
