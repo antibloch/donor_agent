@@ -1,50 +1,9 @@
 import json
+from .analytics import metadata_analytics
+from .auctions import metadata_auctions
+from .transactions import metadata_transaction
 
-METADATA = {
-    "Python_REPL": {
-        "domain": "utility",
-        "type": "compute",
-        "when_to_use": "When arithmetic, transformation, parsing, or quick one-off computations are needed.",
-        "do_not_use": "Do not use for external web/page fetches or tool discovery.",
-        "supports_pagination": False,
-        "requires_auth": False,
-        "example_usage": "tool_name=Python_REPL",
-        "hint": (
-                    "- Python_REPL must NEVER have empty args.\n"
-                    "- Python_REPL argument format: {{ \"input\": \"<python code that performs analysis, whose final line of code is ONLY print statement that prints the final numeric result>\" }}"
-                )
-    },
-    "get_charity_stats": {
-        "domain": "charity",
-        "type": "stats",
-        "when_to_use": "When user asks for donor counts, impact metrics, rankings, blogs, products, addresses, or any numeric summary per charity",
-        "do_not_use": "Never use for wallet, bids, payments, or auctions -- those belong to transaction/auction tools",
-        "supports_pagination": False,
-        "requires_auth": False,
-        "example_usage": "tool_name=charity_donor_count",
-        "hint": "none"
-    },
-    "fetch_url": {
-        "domain": "web",
-        "type": "action",
-        "when_to_use": "When a specific URL is already known and you need page content.",
-        "do_not_use": "Do not use when you need discovery/search over unknown URLs.",
-        "supports_pagination": False,
-        "requires_auth": False,
-        "example_usage": "tool_name=fetch_url",
-        "hint": "none"
-    },
-    "fetch_urls": {
-        "domain": "web",
-        "type": "paginate",
-        "when_to_use": "When multiple known URLs should be fetched in one operation.",
-        "do_not_use": "Do not use for keyword search/discovery over the open web.",
-        "supports_pagination": True,
-        "requires_auth": False,
-        "example_usage": "tool_name=fetch_urls",
-        "hint": "none"
-    },
-}
+METADATA = metadata_analytics | metadata_auctions | metadata_transaction
 
 
 
