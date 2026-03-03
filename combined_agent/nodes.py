@@ -51,6 +51,9 @@ A) COVERAGE CHECKLIST (do NOT output this checklist; use it silently):
 2. For EACH requirement, ensure at least one planned step will produce the needed information.
 3. Also add at least one analysis requirement and one recommendation requirement unless user explicitly asks for no analysis.
 4. If ANY requirement is not covered, add the minimal additional step(s).
+5. If you see keywords like "what", "which", "list", "show", "find", "available", "compare", "insight", "recommend", "analy", "trend", "best", "top", then 
+        5.1. ANALYTICS is likely needed. In this case, you MUST additionally orchestrate Python_REPL  to produce insights and recommendations based on retrieved data, unless user explicitly asks for no analysis.
+        5.2. You must opt for base information retrieval tools that return most abundant information, INCLUDING what is basically asked in USER query.
 
 B) TOOL SELECTION RULE:
 - Choose tools based on their descriptions and argument schemas.
