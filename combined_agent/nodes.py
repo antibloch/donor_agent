@@ -57,41 +57,15 @@ B) TOOL SELECTION RULE:
 - Prefer reusable data-collection tools first, then synthesis tools.
 - Keep tool names and args exact.
 
-C) MANDATORY PYTHON TRIGGER:
-- If the user asks for ANY numeric aggregation (median, mean, average, avg, std, min, max, sum, total)
-  OR explicitly says "use python"
-  OR asks about entities/items in plural/group form and has not explicitly disabled analysis
-  OR asks for insights/recommendations/comparison/ranking/trends
-  and has not explicitly disabled analysis
-  → MUST include a Python_REPL step.
-- Python_REPL must NEVER have empty args.
-
-D) Python_REPL argument format:
-- {{ "input": "<python code>" }}
-- For analytics-by-default cases, Python code must:
-  - parse outputs from prior get_charity_stats calls into comparable structures;
-  - compute at least 3 insights (ranking/segmentation/distribution/outlier/opportunity);
-  - produce donor-facing recommendation candidates tied to evidence;
-  - final line must be a single print(...) that prints JSON text.
-
-E) TOOL REUSE RULE:
+C) TOOL REUSE RULE:
 - If the exact needed data already exists in chat history ToolMessage outputs, do NOT call tools again.
 
-F) ANALYTICS-BY-DEFAULT PIPELINE (TOOL-AGNOSTIC):
+D) ANALYTICS-BY-DEFAULT PIPELINE:
 - For any informative query (unless explicitly list-only/no-analysis), do not stop at raw retrieval.
 - Build a 2-layer plan whenever feasible:
   1) Data acquisition layer: gather relevant raw data from one or more data tools.
   2) Synthesis layer: run one computation/synthesis step (prefer Python_REPL if available) to produce donor-oriented insights and practical donation recommendations.
 - If synthesis tooling is unavailable, maximize comparative insight using available data tools and state limits in missing_args.
-
-PAGINATION RULE (CRITICAL – MUST FOLLOW):
-- The following tools support pagination: get_charity_blogs and get_charity_products
-- ALWAYS include BOTH "page" and "limit" explicitly in the "args" object for these tools.
-- Use page=1 and limit=50 (or limit=100 if you want maximum results) as safe defaults.
-- NEVER omit "page" or "limit" — they must appear in the JSON even when using defaults.
-
-AUTH TOKEN USAGE RULE:
-- Always use any kind of auth token as "secret token" for get_charity_blogs, get_charity_products and get_charity_ranking.
 
 OUTPUT FORMAT (STRICT JSON ONLY):
 {{
@@ -351,8 +325,8 @@ OUTPUT RULES (STRICT):
 
 RESPONSE STRUCTURE:
 1) Direct Answer
-2) Donor Insights
-3) Donation Recommendations
+2) Insights
+3) Recommendations
 
 If user explicitly asked for brief/list-only/no-analysis, keep response concise and skip deep analysis.
 
@@ -432,31 +406,7 @@ CRITICAL INSTRUCTIONS — FOLLOW STRICTLY:
 "missing_args": []
 }}
 
-2. For Python_REPL repairs (the most common case):
-- ALWAYS start with proper imports: `import statistics`
-- Extract the REAL data from the "Cached recent tool outputs" section above and hard-code it into variables.
-- Use the CORRECT statistical function:
-        • median → statistics.median(your_list)
-        • mean   → statistics.mean(your_list)
-        • sum, min, max, etc. → built-in functions
-- The code must END with ONE clean `print(…)` statement that outputs ONLY the final numeric result (no lists, no extra text).
-- NEVER print the sorted list. NEVER use `sorted()` alone for median.
-- Avoid leading indentation on lines unless inside a block (IndentationError risk).
-
-3. Concrete good example for a median repair:
-{{
-"steps": [
-    {{
-    "tool": "Python_REPL",
-    "args": {{
-        "input": "import statistics\\ndonor_counts = [4, 2, 7, 5, 3]\\nprint(statistics.median(donor_counts))"
-    }}
-    }}
-],
-"missing_args": []
-}}
-
-4. Think step-by-step about the error and the cached data, then output ONLY the JSON fix.
+2. Think step-by-step about the error and the cached data, then output ONLY the JSON fix.
 
 Conversation History (current round only):
 {history}
