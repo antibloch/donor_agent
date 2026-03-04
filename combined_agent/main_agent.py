@@ -27,7 +27,10 @@ from nodes import (
     make_responder_node,
 )
 from routing import route_after_validator, route_after_gate
-
+from rich.console import Console
+from rich import print as rich_print
+from rich.markdown import Markdown  # <-- Add this
+from rich.panel import Panel        # <-- Add this (optional but recommended)
 
 
 class AgentState(TypedDict, total=False):
@@ -117,7 +120,17 @@ async def main():
                                 if getattr(msg, "tool_calls", None) and not (msg.content or "").strip():
                                     continue
                                 if "System Note:" not in (msg.content or ""):
-                                    rich_print(f"\nAgent: {msg.content}\n")
+                                                                    md = Markdown(msg.content)
+                                                                    console.print(
+                                                                        Panel(
+                                                                            md, 
+                                                                            title="[bold cyan]Agent[/bold cyan]", 
+                                                                            title_align="left",
+                                                                            border_style="cyan",
+                                                                            expand=False
+                                                                        )
+                                                                    )
+                                                                    rich_print() # Add a little padding after
         except Exception as e:
             rich_print(f"\n[ERROR] {e}")
             import traceback
