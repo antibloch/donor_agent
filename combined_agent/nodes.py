@@ -1,8 +1,10 @@
 import json
+import os
 from uuid import uuid4
 from typing import Dict, List, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from rich import print as rich_print
+from dotenv import load_dotenv
 
 from llm import make_model
 from tools.json_utils import _parse_plan, _compact_json          
@@ -15,10 +17,10 @@ from history_formatters import (
     format_msg,          
 )
 from tools.tool_setup import build_tool_context
-import dotenv
 
-dotenv.load_dotenv()
-DEBUG_MESSAGES = int(dotenv.get_key(dotenv.find_dotenv(), "DEBUG_MESSAGES"))
+
+load_dotenv()
+DEBUG_MESSAGES = int(os.getenv("DEBUG_MESSAGES"))
 
 
 def make_planner_node(tools_by_name: dict):
@@ -29,37 +31,35 @@ def make_planner_node(tools_by_name: dict):
         tool_context = build_tool_context(tools_by_name)
 
         prompt = f"""
-You are a planning module for a charity & donation assistant.
-Your job is to output a MINIMAL tool plan that FULLY satisfies the user's request.
+You are a helpful donor assistant on a donation website. Your primary goal is to help donors—especially those who are new to donating—make informed, confident donation decisions.
 
-Available tools:
+When a donor asks a question, your job is to create a plan that:
+1) Directly answers their explicit request
+2) Provides additional value through insights and recommendations by default
+
+NEW DONOR SUPPORT:
+- Assume the user may be unfamiliar with donation terminology, processes, or how to evaluate charities
+- Proactively provide context, explanations, and guidance that helps them understand their options
+- Don't just retrieve data—help them interpret what it means for their donation decision
+
+ANALYTICS & INSIGHTS BY DEFAULT:
+- Unless the user explicitly says "just list", "brief only", "no analysis", or similar, always go beyond raw facts
+- Provide comparative analysis, trade-offs, and practical recommendations
+- Help donors understand WHY certain options might be better suited to their goals
+
+AVAILABLE CAPABILITIES:
 {tool_context}
 
-PLANNING GOAL:
-- Cover every part of the user’s request using the fewest tool calls.
-- Prefer reusing one tool call to satisfy multiple sub-requests when possible.
+PLANNING PRINCIPLES:
+- Use available tools strategically to gather information AND synthesize insights
+- If you can compute comparisons, rankings, or summaries, include those steps
+- Prioritize clarity and actionability over exhaustive data collection
+- Reuse existing data from conversation history when available (don't re-fetch what you already have)
 
-HARD CONSTRAINTS (must follow):
-A) COVERAGE CHECKLIST (do NOT output this checklist; use it silently):
-1. Identify ALL distinct user requirements.
-2. For EACH requirement, ensure at least one planned step will produce the needed information.
-3. If ANY requirement is not covered, add the minimal additional step(s).
-
-B) SPECIAL RULE FOR get_charity_stats:
-- The ONLY callable tool for charity stats is: get_charity_stats
-- You MUST choose a concrete tool_name value yourself from its allowed list.
-- Use ONE get_charity_stats call to satisfy multiple needs when possible.
-
-C) MANDATORY PYTHON TRIGGER:
-- If the user asks for ANY numeric aggregation (median, mean, average, avg, std, min, max, sum, total)
-  OR explicitly says "use python" → MUST include a Python_REPL step.
-- Python_REPL must NEVER have empty args.
-
-D) Python_REPL argument format:
-- {{ "input": "<python code that performs analysis, whose final line of code is ONLY print statement that prints the final numeric result>" }}
-
-E) TOOL REUSE RULE:
-- If the exact needed data already exists in chat history ToolMessage outputs, do NOT call tools again.
+COVERAGE REQUIREMENTS (apply silently):
+1. Address EVERY part of the user's question
+2. Add analytical depth (insights, comparisons, recommendations) unless explicitly told not to
+3. If critical information is missing, note what you need from the user
 
 OUTPUT FORMAT (STRICT JSON ONLY):
 {{
@@ -69,7 +69,7 @@ OUTPUT FORMAT (STRICT JSON ONLY):
 "missing_args": []
 }}
 
-Chat History (may contain prior TOOL_CALL + TOOL outputs to reuse):
+Chat History (may contain prior tool outputs to reuse):
 {chat_history}
 
 User Request (current turn):
@@ -139,13 +139,29 @@ def make_validator_node(tools_by_name: dict):
 
 
 def make_executor_node(tools_by_name: dict):
-    def _invoke_tool(tool, raw_args: dict):
+    async def _invoke_tool(tool, raw_args: dict):
+        tool_name = getattr(tool, "name", "")
+
+        # Prefer async if the tool supports it
+        if hasattr(tool, "ainvoke"):
+            # Some tools have ainvoke but it's not a coroutine function → still try
+            result = await tool.ainvoke(raw_args)
+            return result
+
+        # Fallback to sync invoke
         if getattr(tool, "args_schema", None) is not None:
             return tool.invoke(raw_args)
+
         if not raw_args:
             return tool.invoke("")
+
         if len(raw_args) == 1:
             return tool.invoke(next(iter(raw_args.values())))
+        
+        if tool_name in ("Python_REPL", "python_repl", "PythonREPLTool"):
+            return await tool.ainvoke(str(raw_args.get("input", "") or ""))
+
+        # fallback for tools that expect a string
         return tool.invoke(json.dumps(raw_args, ensure_ascii=False))
 
     def _looks_like_error_text(s: str) -> bool:
@@ -183,7 +199,7 @@ def make_executor_node(tools_by_name: dict):
     def _mk_tool_call(tool_name: str, args: dict, tool_call_id: str) -> dict:
         return {"name": tool_name, "args": args or {}, "id": tool_call_id, "type": "tool_call"}
 
-    def executor_node(state: dict) -> Dict:
+    async def executor_node(state: dict) -> Dict:
         plan = state.get("plan", {})
         steps = plan.get("steps", [])
         if not steps:
@@ -204,10 +220,18 @@ def make_executor_node(tools_by_name: dict):
             messages.append(AIMessage(content="", tool_calls=[_mk_tool_call(tool_name, raw_args, tool_call_id)]))
 
             try:
-                result = _invoke_tool(tool, raw_args)
+                # This is the key change: we now await the invocation
+                result = await _invoke_tool(tool, raw_args)
                 payload = _normalize_result(tool_name, result)
+
             except Exception as e:
-                payload = {"ok": False, "error": str(e), "tool": tool_name, "args": raw_args}
+                error_msg = str(e)
+                payload = {
+                    "ok": False,
+                    "error": error_msg,
+                    "tool": tool_name,
+                    "args": raw_args
+                }
 
             messages.append(ToolMessage(
                 content=json.dumps(payload, ensure_ascii=False, default=str),
@@ -230,7 +254,8 @@ def make_responder_node():
 
     def responder(state: dict) -> Dict:
         system_prompt = """
-You are a Charity & Data Assistant that produces FINAL, USER-FACING answers.
+You are a donor-assisting AI agent on a donation website that produces FINAL, USER-FACING answers.
+Assume the user may be a confused or first-time donor who needs clear guidance.
 
 OUTPUT RULES (STRICT):
 - Do NOT reveal your chain-of-thought, reasoning, internal steps, or analysis.
@@ -238,6 +263,27 @@ OUTPUT RULES (STRICT):
 - Do NOT output any code blocks or code snippets.
 - ONLY use information explicitly present in the Conversation History (especially TOOL outputs).
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
+- By default, be analytical and donor-focused. If data exists, include deep insights and practical donation recommendations.
+
+RESPONSE STRUCTURE RULES:
+
+If the latest user request is asking for information, data exploration, comparisons, or explanations 
+or contain key words like "what", "how", "list", "compare", "difference", "recommend", "suggest", "best", "worst", etc., respond with:
+
+    1) Direct Answer — provide the requested information using data available in the Conversation History
+    2) Insights — briefly explain what the data implies or any meaningful patterns
+    3) Recommendations — suggest practical next steps for the donor based on the available data
+
+If the latest user request is a simple factual question or requires only a specific value or action, respond with:
+
+    1) Direct Answer — clearly provide the requested information using the available Conversation History
+
+keep response concise and skip deep analysis.
+
+RECOMMENDATION STYLE:
+- Prioritize actionable guidance for donation decisions (where to donate, why, and what to watch for).
+- Tie each recommendation to evidence from available data.
+- If confidence is limited by missing data, state this clearly and suggest the next best donor action.
 
 Now write the final answer based strictly on the Conversation History below.
 """
@@ -310,31 +356,7 @@ CRITICAL INSTRUCTIONS — FOLLOW STRICTLY:
 "missing_args": []
 }}
 
-2. For Python_REPL repairs (the most common case):
-- ALWAYS start with proper imports: `import statistics`
-- Extract the REAL data from the "Cached recent tool outputs" section above and hard-code it into variables.
-- Use the CORRECT statistical function:
-        • median → statistics.median(your_list)
-        • mean   → statistics.mean(your_list)
-        • sum, min, max, etc. → built-in functions
-- The code must END with ONE clean `print(…)` statement that outputs ONLY the final numeric result (no lists, no extra text).
-- NEVER print the sorted list. NEVER use `sorted()` alone for median.
-- Avoid leading indentation on lines unless inside a block (IndentationError risk).
-
-3. Concrete good example for a median repair:
-{{
-"steps": [
-    {{
-    "tool": "Python_REPL",
-    "args": {{
-        "input": "import statistics\\ndonor_counts = [4, 2, 7, 5, 3]\\nprint(statistics.median(donor_counts))"
-    }}
-    }}
-],
-"missing_args": []
-}}
-
-4. Think step-by-step about the error and the cached data, then output ONLY the JSON fix.
+2. Think step-by-step about the error and the cached data, then output ONLY the JSON fix.
 
 Conversation History (current round only):
 {history}
