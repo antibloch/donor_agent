@@ -1,8 +1,6 @@
 import requests
 from langchain_core.tools import tool
-from .tool_helpers import _ok, _fail, _get
-
-
+from tools.tool_helpers import _ok, _fail, _get
 
 BASE_URL = "https://giverr-api.verior.co"
 DONATION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhOTVkMTIwZGI2MWFmYWYwM2UiLCJyb2xlIjoiRG9ub3IiLCJwcm9maWxlVHlwZSI6IkRvbm9yIiwiaWF0IjoxNzcxNDg1NzYyLCJleHAiOjQ5MjcyNDU3NjJ9.9bTr--7-iHIemenKrFRYL3uTDx9auCY98GvYa0NnaOg"
@@ -10,16 +8,23 @@ headers = {
     "Authorization": f"Bearer {DONATION_TOKEN}"
 }
 
+def verify_user_password(password: str = None):
+    import bcrypt
+    # Dummy stored bcrypt hash for "Google@123"
+    STORED_HASH = b"$2b$12$IRTl/UIdKOTPYUeBPiolH.d01DxSKXcokA/k70yed926lYovhkFq6"
+    try:
+        if bcrypt.checkpw(password.encode("utf-8"), STORED_HASH):
+            return {"success": True}
+        return {"success": False, "message": "Invalid password."}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
-
-
+PASSWORD = "Google@123"
 
 @tool
 def check_wallet_balance():
     """
-    Fetch the wallet and associated virtual card details
-    for the authenticated user.  
-    
+    Fetch the wallet details for the authenticated user.  
     Returns: 
         dict:
             - success (bool): Indicates whether the request was successful
@@ -31,56 +36,36 @@ def check_wallet_balance():
                 - lockedBalance (float): Locked amount 
                 - isDeleted (bool): Deletion status
                 - isActive (bool): Wallet active status
-                - transactionsHistory (list): List of transaction records
                 - createdAt (str): Creation timestamp (ISO format)
-
-            - virtualCard (dict | None):
-                - _id (str): Virtual card ID
-                - user (str): Associated user ID 
-                - cardHolder (str): Card holder name
-                - expiryDate (str): Card expiry date (YYYY-MM-DD)
-                - isActive (bool): Card active status
-                - isBlocked (bool): Card blocked status
-                - cardType (str): Card network type (e.g., VISA)
-                - currency (str): Card currency
-                - limit (float): Spending limit
-                - createdAt (str): Creation timestamp
-                - updatedAt (str): Last update timestamp
 
         If the wallet is not found:
             - success (bool): False
             - message (str): Error message
     """
     try:
-        response = requests.get(f"{BASE_URL}/api/v1/wallet/balance", headers=headers).json()
+        response = requests.get(f"{BASE_URL}/api/v1/wallet/balance", headers=headers)
+
+        response.raise_for_status() 
+        data = response.json()
         
-        if not response.get("success"):
+        if not data.get("success"):
             return {
                 "success": False,
-                "message": response.get("message", "Failed to fetch wallet balance"),
+                "message": "Failed to fetch wallet balance",
                 "wallet": None,
-                "virtualCard": None
             } 
 
-        wallet = response.get("wallet")
-        virtual_card = response.get("virtualCard")
+        wallet = data.get("wallet")
 
         # Clean wallet data
         if wallet:
             wallet.pop("__v", None)
-
-        # Clean virtual card data and extract last 4 digits
-        if virtual_card:
-            full_card_number = virtual_card.get("cardNumber", "")
-            virtual_card["last4"] = full_card_number[-4:] if full_card_number else None
-            virtual_card.pop("cardNumber", None)
-            virtual_card.pop("cvv", None)
+            wallet.pop("transactionsHistory",None)
 
         return {
             "success": True,
-            "message": response.get("message", "Wallet fetched successfully"),
+            "message": "Wallet fetched successfully",
             "wallet": wallet,
-            "virtualCard": virtual_card
         }
 
     except Exception as e:
@@ -88,7 +73,6 @@ def check_wallet_balance():
             "success": False,
             "message": f"Error fetching wallet balance: {str(e)}",
             "wallet": None,
-            "virtualCard": None
         }
 
 
@@ -112,7 +96,7 @@ def get_payment_methods():
                     - expiryDate (str): Card expiry date (YYYY-MM-DD)
                     - uid (str): Unique payment method identifier
                     - country (str): Issuing country code (ISO 2-letter)
-                
+                    
         If retrieval fails:
             - error (str): Error message explaining the issue. 
     """
@@ -145,8 +129,8 @@ def get_payment_methods():
 @tool
 def add_payment_method():
     """
-    Generate a hosted payment method page URL for the authenticated mock user.
-    
+    Generate a hosted payment method page URL for the authenticated user.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                             
     Returns:
         dict:
             - success (bool): Indicates if the request was successful
@@ -186,7 +170,7 @@ def list_charities_by_country(country_code: str):
     Retrieve a list of charities available in the specified country.
     
     Args:
-        country_code (str): The country for which to fetch charities for e.g., (PK)
+        country_code (str): The country for which to fetch charities for e.g., (PK). You should ask the user for it. 
     
     Returns:
         dict: 
@@ -199,32 +183,37 @@ def list_charities_by_country(country_code: str):
                 - description (str): Charity description
                 - address (dict): Charity address with fields:
                     - street (str), city (str), state (str), country (str), countryCode (str), postalCode (str), latitude (float), longitude (float)
-                - documents (dict): Verification documents with fields like registrationCertificate, taxExemptionCertificate, annualReport, governmentApproval
                 - verificationStatus (str): Approval status
                 - CountryAvailability (list[dict]): List of countries where the charity operates
                 - website (str): Charity website URL 
-                - logo (str): URL to charity logo
-                - isLikedByMe (bool): Whether the current user has liked this charity
-                - other fields like paymentCustomerId, registrationNumber, walletUid, partOfGiver, isDeleted, isSuspended, user, createdAt, updatedAt, __v
-            - pagination (dict): 
-                - currentPage (int): Current page number
-                - totalPages (int): Total number of pages
-                - totalResults (int): Total number of charities 
-                - hasMore (bool): Whether more pages are available
+                - other fields like paymentCustomerId, registrationNumber, walletUid, partOfGiver, isDeleted, isSuspended, user, createdAt, updatedAt
     """
+    params = {
+        "page": 1,
+        "limit": 10,
+    }
     try:
         response = requests.get(
             f"{BASE_URL}/api/v1/donations/charities/{country_code}",
-            headers=headers
+            headers=headers,
+            params=params
         )
 
         response.raise_for_status()  
         data = response.json()
+        charities = data.get("charities", [])
+
+        # Clean charities data
+        if charities:
+            charities.pop("documents", None)
+            charities.pop("logo",None)
+            charities.pop("isLikedByMe",None)
+            charities.pop("walletUid",None)
+            charities.pop("__v",None)
 
         return {
             "success": True,
-            "charities": data.get("charities", []),
-            "pagination": data.get("pagination", {})
+            "charities": charities,
         }
 
     except requests.exceptions.RequestException as e:
@@ -238,18 +227,15 @@ def list_charities_by_country(country_code: str):
             "success": False,
             "error": f"Unexpected error: {str(e)}"
         }
-
+    
 @tool
 def get_charity_donation_products(charityID: str):
     """
     Retrieve the information regarding donation products for a specific charity.
-    User can donate in any of the following product. For information related to
-    different donation products of different charities, call this method.
-    
     Args:
         charityID (str): The unique identifier of the charity whose products 
-                         are to be fetched.
-    
+                         are to be fetched. You should get it from list_charities_by_country() tool.
+
     Returns:
         dict:
             - success (bool): Indicates whether the request was successful.
@@ -259,28 +245,14 @@ def get_charity_donation_products(charityID: str):
                 - name (str): Product name. 
                 - description (str): Product description.
                 - pricePerUnit (int | float): Cost per unit of the product.
-                - images (list[dict]): List of product images:
-                    - url (str): Image file path or URL.
-                    - isPrimary (bool): Whether this image is the primary image.
-                    - _id (str): Image ID.
                 - category (dict): Product category details:
                     - _id (str): Category ID.
                     - name (str): Category name.
-                    - color (str): Category display color (hex code).
                 - charity (dict): Charity information:
                     - _id (str): Charity ID.
                     - name (str): Charity name.
                     - registrationNumber (str): Charity registration number.
                     - logo (str): Path/URL to charity logo.
-                    - address (dict):
-                        - street (str)
-                        - city (str)
-                        - state (str) 
-                        - country (str)
-                        - countryCode (str)
-                        - postalCode (str)
-                        - latitude (float)
-                        - longitude (float)
                 - partner (dict):
                     - _id (str): Partner ID.
                 - minimumDonationQuantity (int): Minimum allowed donation quantity.
@@ -295,27 +267,37 @@ def get_charity_donation_products(charityID: str):
                     - country (str)
                 - createdAt (str): ISO timestamp of product creation.
                 - updatedAt (str): ISO timestamp of last update.
-            - pagination (dict):
-                - currentPage (int): Current page number.
-                - totalPages (int): Total number of pages.
-                - totalItems (int): Total number of products.
-                - hasNext (bool): Whether a next page exists.
-                - hasPrev (bool): Whether a previous page exists. 
                 
     """
+    params = {
+        "page": 1,
+        "limit": 10,
+    }
     try:
         response = requests.get(
             f"{BASE_URL}/api/v1/donors/get-charity-products/{charityID}",
-            headers=headers
+            headers=headers,
+            params=params
         )
+        response.raise_for_status()
 
-        response.raise_for_status()  
         data = response.json()
+        products = data.get("products", data.get("data", []))
+
+        if isinstance(products, list):
+            for product in products:
+                product.pop("images", None)
+                category = product.get("category")
+                if isinstance(category, dict):
+                    category.pop("color", None)
+                charity = product.get("charity")
+                if isinstance(charity, dict):
+                    charity.pop("address", None)
+                    charity.pop("logo", None)
 
         return {
             "success": True,
-            "products": data.get("products", data.get("data", [])),
-            "pagination": data.get("pagination")
+            "products": products,
         }
 
     except requests.exceptions.RequestException as e:
@@ -412,7 +394,7 @@ def get_all_charities_with_grants():
 def get_all_active_campaigns():
     """
     Retrieve a paginated list of all active campaigns.
-    
+
     Returns:
         dict:
             - success (bool): Indicates whether the request was successful.
@@ -451,7 +433,7 @@ def get_all_active_campaigns():
                     - logo (str): Charity logo.
                     - country (str): Charity country.
                 - donor (dict, optional): Donor details (for donor-created campaigns):
-                    - _id (str): Donor ID.
+                    - _id (str): Donor ID. 
                     - firstName (str): Donor first name.
                     - lastName (str): Donor last name.
                     - profile (str): Profile image path.
@@ -460,8 +442,7 @@ def get_all_active_campaigns():
                     - country (str): Country where campaign is focused. 
                 - numberOfUniqueDonors (int): Total unique donors for this campaign.
                 - createdAt (str): ISO timestamp when campaign was created.
-                - updatedAt (str): ISO timestamp when campaign was last updated.
-            
+                - updatedAt (str): ISO timestamp when campaign was last updated.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
             - featuredCampaigns (list[dict]): List of featured campaign objects 
               (same structure as items inside `data`).
             - pagination (dict): Pagination details:
@@ -531,10 +512,15 @@ def get_donation_types_campaign():
                 - hasNextPage (bool): Whether a next page exists.
                 - hasPrevPage (bool): Whether a previous page exists.
     """
+    params = {
+        "page": 1,
+        "limit": 50,
+    }
     try:
         response = requests.get(
             f"{BASE_URL}/api/v3/donors/campaign/donation-types",
-            headers=headers
+            headers=headers,
+            params=params
         )
 
         response.raise_for_status()  
@@ -558,9 +544,9 @@ def get_donation_types_campaign():
         }
 
 @tool 
-def get_transaction_history(page: int = 1, sortBy: str = "createdAt", order: str = "desc"):
+def get_transaction_history():
     """
-    Retrieve a paginated list of the user's last 10 wallet transactions.
+    Retrieve a paginated list of the user's last 30 wallet transactions.
     This endpoint returns all financial transactions associated with the 
     authenticated user's wallet, including donations, withdrawals, refunds, 
     and other balance movements. 
@@ -595,10 +581,10 @@ def get_transaction_history(page: int = 1, sortBy: str = "createdAt", order: str
                 - hasPrevPage (bool): Whether a previous page exists.
     """
     params = {
-        "page": page,
-        "limit": 10,
-        "sortBy": sortBy,
-        "order": order
+        "page": 1,
+        "limit": 30,
+        "sortBy": "createdAt",
+        "order": "desc"
     }
     try:
         response = requests.get(
@@ -633,19 +619,20 @@ def get_transaction_history(page: int = 1, sortBy: str = "createdAt", order: str
 # POST APIs
 # ----------------------------
 @tool
-def fund_wallet(amount: float, paymentMethodId: str):
+def fund_wallet(amount: float, paymentMethodId: str, password: str):
     """
     Fund a user's wallet using a selected payment method.
 
     This tool sends a funding request to the wallet service using the
     provided paymentMethodId and amount. It does not perform local
     wallet or card validation logic; validation is handled by the backend API.
-    
+
     Args:
         amount (float): The amount to fund into the wallet. 
             Must be greater than zero.
         paymentMethodId (str): Unique identifier of the selected
             payment method (card) to be charged.
+        password (str): The user's account password for transaction authorization.
 
     Returns:
         dict: A dictionary containing: 
@@ -662,6 +649,13 @@ def fund_wallet(amount: float, paymentMethodId: str):
             - message (str): Error description (e.g., missing fields,
               invalid payment method, limit exceeded).
     """
+    auth = verify_user_password(password)
+    if not auth["success"]:
+        return {
+            "success": False,
+            "message": f"Transaction Denied: {auth['message']}",
+            "data": {}
+        }
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/payment-apis/fund-wallet",
@@ -696,10 +690,10 @@ def fund_wallet(amount: float, paymentMethodId: str):
         }
 
 @tool
-def product_donation(charityId: str, partners: list, categories: list, country: str, countryCode: str, products: list):
+def product_donation(charityId: str, partners: list, categories: list, country: str, countryCode: str, products: list, password: str):
     """
     Create a product donation for a specific charity.
-
+    
     This tool sends a product-based donation request to the donation service.
     It does not perform local validation of IDs, pricing, or quantities.
     All validation logic is handled by the backend API.
@@ -717,18 +711,26 @@ def product_donation(charityId: str, partners: list, categories: list, country: 
             - category (str): Category ID
             - charityProdPrice (float): Product price
             - quantity (int): Quantity of the product
+        password (str): The user's account password for transaction authorization.
         
     Returns:
         dict: A dictionary containing:
             - success (bool): Indicates if the request was successful.
             - message (str): Confirmation or error message.
             - data (dict): Donation details returned by backend.
-        
+
         If the request fails:
             - success (bool): False 
             - message (str): Error description (e.g., invalid IDs,
               insufficient balance, validation failure).
     """
+    auth = verify_user_password(password)
+    if not auth['success']:
+        return {
+            "success":False,
+            "message":f'Transaction Denied: {auth["message"]}',
+            "data":{}
+        }
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/donations/donate",
@@ -769,7 +771,7 @@ def product_donation(charityId: str, partners: list, categories: list, country: 
         }
 
 @tool
-def campaign_donation(campaignId: str, amount: float, donationTypeId: str, campaignType: str = 'CharityOrganization'):
+def campaign_donation(campaignId: str, amount: float, donationTypeId: str, password: str, campaignType: str = 'CharityOrganization'):
     """
     Make a monetary donation to a specific campaign.
     
@@ -781,6 +783,7 @@ def campaign_donation(campaignId: str, amount: float, donationTypeId: str, campa
         campaignId (str): Unique identifier of the campaign to donate to.
         amount (float): Donation amount.
         donationTypeId (str): ID of the donation type to be used.
+        password (str): The user's account password for transaction authorization.
         campaignType (str, optional): Type of campaign. Default is 'CharityOrganization'.
         
     Returns:
@@ -812,6 +815,13 @@ def campaign_donation(campaignId: str, amount: float, donationTypeId: str, campa
             - message (str): Error description (e.g., invalid IDs, insufficient balance, validation failure).
 
     """
+    auth = verify_user_password(password)
+    if not auth["success"]:
+        return {
+            "success":False,
+            "message":f"Transaction Denied: {auth['message']}",
+            'data':{}
+        }
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/donors/campaign/donate",
@@ -848,19 +858,20 @@ def campaign_donation(campaignId: str, amount: float, donationTypeId: str, campa
         }
 
 @tool
-def grant_donation(charityId: str, amount: float, grantId: str):
+def grant_donation(charityId: str, amount: float, grantId: str, password: str):
     """
     Create a grant donation for a specific charity.
-
+    
     This tool sends a monetary donation request for a specific grant
     to the donation service.
     It does not perform local validation of IDs or balance checks.
     All validation logic is handled by the backend API. 
-    
+
     Args:
         charityId (str): Unique identifier of the charity.
         amount (float): Donation amount to contribute toward the grant.
         grantId (str): Unique identifier of the grant being funded.
+        password (str): The user's account password for transaction authorization.
 
     Returns:
         dict: A dictionary containing:
@@ -872,6 +883,13 @@ def grant_donation(charityId: str, amount: float, grantId: str):
             - message (str): Error description (e.g., invalid IDs,
             insufficient balance, validation failure).
     """
+    auth = verify_user_password(password)
+    if not auth["success"]:
+        return {
+            "success":False,
+            "message":f"Transaction Denied: {auth['message']}",
+            "data":{}
+        }
     try:
         response = requests.post(
             f"{BASE_URL}/api/v3/donors/donate-grant",
@@ -913,50 +931,148 @@ def grant_donation(charityId: str, amount: float, grantId: str):
 
 
 
+
 #=======================Adding Meta Data for Tool Guidance=======================
 
 metadata_transaction = {
-    "Python_REPL": {
-        "domain": "utility",
-        "type": "compute",
-        "when_to_use": "When arithmetic, transformation, parsing, or quick one-off computations are needed.",
-        "do_not_use": "Do not use for external web/page fetches or tool discovery.",
+    "check_wallet_balance": {
+        "domain": "finance",
+        "type": "read",
+        "when_to_use": "When the user wants to check their available wallet balance, locked balance, or confirm sufficient funds before making a donation or financial transaction.",
+        "do_not_use": "Do not use for making transactions, modifying wallet data, retrieving transaction history, or fetching other user profile information.",
         "supports_pagination": False,
-        "requires_auth": False,
-        "example_usage": "tool_name=Python_REPL",
+        "requires_auth": True,
+        "example_usage": "tool_name=check_wallet_balance",
         "hint": (
-                    "- Python_REPL must NEVER have empty args.\n"
-                    "- Python_REPL argument format: {{ \"input\": \"<python code that performs analysis, whose final line of code is ONLY print statement that prints the final numeric result>\" }}"
+                    "- This tool requires authenticated user context (valid auth headers).\n"
+                    "- Use this tool before initiating a financial transaction if balance confirmation is required.\n"
+                    "- The response includes only cleaned wallet data (no transaction history or internal fields).\n"
+                    "- If success is False, do not assume balance values and handle the error message accordingly."
                 )
     },
-    "get_charity_stats": {
-        "domain": "charity",
-        "type": "stats",
-        "when_to_use": "When user asks for donor counts, impact metrics, rankings, blogs, products, addresses, or any numeric summary per charity",
-        "do_not_use": "Never use for wallet, bids, payments, or auctions -- those belong to transaction/auction tools",
+    "get_payment_methods": {
+        "domain": "finance",
+        "type": "read",
+        "when_to_use": "When the user wants to view their saved payment methods before making a transaction, selecting a card for donation, or confirming available payment options.",
+        "do_not_use": "Do not use for adding, deleting, or modifying payment methods. Do not use for processing payments.",
         "supports_pagination": False,
-        "requires_auth": False,
-        "example_usage": "tool_name=charity_donor_count",
-        "hint": "none"
+        "requires_auth": True,
+        "example_usage": "tool_name=get_payment_methods",
+        "hint": (
+                    "- This tool requires authenticated user context (valid auth headers).\n"
+                    "- Use this tool before initiating a payment if the user needs to select a saved method.\n"
+                    "- The response includes masked card details (e.g., last4) and metadata only.\n"
+                    "- If success is False, handle the error field and avoid assuming payment methods exist."
+                )
     },
-    "fetch_url": {
-        "domain": "web",
-        "type": "action",
-        "when_to_use": "When a specific URL is already known and you need page content.",
-        "do_not_use": "Do not use when you need discovery/search over unknown URLs.",
+    "add_payment_method": {
+        "domain": "finance",
+        "type": "read",
+        "when_to_use": "When the user wants to add a new payment method and needs a hosted payment page URL to securely enter card details.",
+        "do_not_use": "Do not use for retrieving existing payment methods or processing a payment transaction directly.",
         "supports_pagination": False,
-        "requires_auth": False,
-        "example_usage": "tool_name=fetch_url",
-        "hint": "none"
+        "requires_auth": True,
+        "example_usage": "tool_name=add_payment_method",
+        "hint": (
+                    "- This tool requires authenticated user context (valid auth headers).\n"
+                    "- It returns a hosted URL where the user must complete the payment method setup.\n"
+                    "- The agent should instruct the user to open the returned URL to add their card.\n"
+                    "- Do not expect card details in the response; only a secure redirection link is provided."
+                )
     },
-    "fetch_urls": {
-        "domain": "web",
-        "type": "paginate",
-        "when_to_use": "When multiple known URLs should be fetched in one operation.",
-        "do_not_use": "Do not use for keyword search/discovery over the open web.",
+    "list_charities_by_country": {
+        "domain": "donations",
+        "type": "read",
+        "when_to_use": "When the user wants to explore or select charities available in a specific country before making a donation, viewing causes, or initiating a transaction.",
+        "do_not_use": "Do not use for retrieving donation products, grants, wallet information, or executing financial transactions. Do not use without a valid country_code.",
         "supports_pagination": True,
-        "requires_auth": False,
-        "example_usage": "tool_name=fetch_urls",
-        "hint": "none"
+        "requires_auth": True,
+        "example_usage": "tool_name=list_charities_by_country",
+        "hint": (
+                    "- Always ask the user for the country code (e.g., PK, US) before calling this tool.\n"
+                    "- Use this tool early in the donation flow to narrow down charity options.\n"
+                    "- The tool returns cleaned charity data but may still include backend metadata fields.\n"
+                    "- Default pagination is page=1 and limit=10; if more results are needed, pagination handling should be implemented.\n"
+                    "- If success is False, surface the error message and avoid assuming charities exist."
+                )
     },
+    "get_transaction_history": {
+        "domain": "finance",
+        "type": "read",
+        "when_to_use": "When the user wants to view their recent wallet activity, including deposits, withdrawals, refunds, or donations, for tracking or verification purposes.",
+        "do_not_use": "Do not use for initiating transactions, modifying wallet balance, or adding funds. Avoid using this tool for other users' transaction data.",
+        "supports_pagination": True,
+        "requires_auth": True,
+        "example_usage": "tool_name=get_transaction_history",
+        "hint": (
+                    "- This tool retrieves the last 30 transactions by default, sorted by creation date descending.\n"
+                    "- Use pagination details in the response to fetch more transactions if needed.\n"
+                    "- Always ensure the user is authenticated before calling this tool.\n"
+                    "- Each transaction object contains sensitive financial data; handle responses securely.\n"
+                    "- If success is False, surface the error message and do not assume transaction data is available."
+                )
+    },
+    "fund_wallet": {
+        "domain": "finance",
+        "type": "action",
+        "when_to_use": "When the user explicitly wants to add funds to their wallet using a saved payment method (Payment Method Id) and has provided the amount, and transaction authorization password.",
+        "do_not_use": "Do not use for checking wallet balance, retrieving payment methods, or making donations directly. Do not use if the user has not confirmed the funding amount or has not provided transaction authorization.",
+        "supports_pagination": False,
+        "requires_auth": True,
+        "example_usage": "tool_name=fund_wallet",
+        "hint": (
+                    "- This tool performs a financial transaction and requires strong user confirmation before execution.\n"
+                    "- Always confirm the funding amount and selected payment method with the user before calling this tool.\n"
+                    "- The password argument is mandatory for transaction authorization and must never be logged or exposed.\n"
+                    "- Ensure amount > 0 before calling the tool.\n"
+                    "- On failure (success=False), carefully surface the backend message to the user and do not assume funds were added."
+                )
+    },
+    "product_donation": {
+        "domain": "donations",
+        "type": "action",
+        "when_to_use": "When the user wants to donate physical products to a charity using specified partners, categories, and product details, after confirming the delivery country and providing transaction authorization.",
+        "do_not_use": "Do not use for monetary donations, fetching charity data, or wallet balance checks. Avoid using without confirmed product list and user password.",
+        "supports_pagination": False,
+        "requires_auth": True,
+        "example_usage": "tool_name=product_donation",
+        "hint": (
+                    "- Always confirm charityId, products, partners, and categories with the user before execution.\n"
+                    "- The password argument is mandatory for transaction authorization and must never be exposed.\n"
+                    "- Backend API validates quantities, pricing, and IDs; the tool does not.\n"
+                    "- On failure (success=False), relay the backend message to the user."
+                )
+    },
+    "campaign_donation": {
+        "domain": "donations",
+        "type": "action",
+        "when_to_use": "When the user wants to make a monetary donation to a specific campaign after confirming the amount, donation type, and transaction authorization password.",
+        "do_not_use": "Do not use for product donations, wallet funding, or viewing transaction history. Avoid calling without user authorization.",
+        "supports_pagination": False,
+        "requires_auth": True,
+        "example_usage": "tool_name=campaign_donation",
+        "hint": (
+                    "- Confirm campaignId, donation amount, and donationTypeId with the user before execution.\n"
+                    "- Password is required for transaction authorization and must not be logged.\n"
+                    "- The backend validates IDs, donor balance, and campaign eligibility.\n"
+                    "- The response may include a receipt URL; surface it to the user if needed.\n"
+                    "- If success=False, display the backend message to the user."
+                )
+    },
+    "grant_donation": {
+        "domain": "donations",
+        "type": "action",
+        "when_to_use": "When the user wants to donate a specific amount to a grant associated with a charity, after confirming the grantId, amount, and providing transaction authorization.",
+        "do_not_use": "Do not use for product or campaign donations, wallet funding, or viewing wallet transactions. Avoid calling without user confirmation and password.",
+        "supports_pagination": False,
+        "requires_auth": True,
+        "example_usage": "tool_name=grant_donation",
+        "hint": (
+                    "- Confirm charityId, grantId, and donation amount with the user before calling.\n"
+                    "- The password argument is required for transaction authorization and must never be exposed.\n"
+                    "- Backend handles validation of IDs and balance; the tool does not.\n"
+                    "- On failure (success=False), relay the backend message to the user.\n"
+                    "- Use this tool for monetary grant donations only."
+                )
+    }
 }
