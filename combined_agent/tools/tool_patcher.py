@@ -3,7 +3,7 @@ from .analytics import metadata_analytics
 from .auctions import metadata_auctions
 from .transactions import metadata_transaction
 
-METADATA = metadata_analytics | metadata_auctions | metadata_transaction
+METADATA = metadata_analytics | metadata_transaction
 
 
 
