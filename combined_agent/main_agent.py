@@ -105,7 +105,7 @@ async def main():
 
         outgoing_user_input = user_input
         if _should_wrap_as_password(chat_memory):
-            outgoing_user_input = f"Passoword: {user_input}"
+            outgoing_user_input = f"Password: {user_input}"
 
         user_msg = HumanMessage(content=outgoing_user_input)
         chat_memory.append(user_msg)
