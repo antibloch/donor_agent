@@ -1,10 +1,8 @@
 import json
-import os
 from uuid import uuid4
 from typing import Dict, List, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from rich import print as rich_print
-from dotenv import load_dotenv
 
 from llm import make_model
 from tools.json_utils import _parse_plan, _compact_json          
@@ -18,9 +16,9 @@ from history_formatters import (
 )
 from tools.tool_setup import build_tool_context
 
-
-load_dotenv()
-DEBUG_MESSAGES = int(os.getenv("DEBUG_MESSAGES"))
+import dotenv
+dotenv.load_dotenv()
+DEBUG_MESSAGES = int(dotenv.get_key(dotenv.find_dotenv(), "DEBUG_MESSAGES") or "0")
 
 
 def make_planner_node(tools_by_name: dict):
@@ -31,41 +29,26 @@ def make_planner_node(tools_by_name: dict):
         tool_context = build_tool_context(tools_by_name)
 
         prompt = f"""
-You are a helpful donor assistant on a donation website. Your primary goal is to help donors—especially those who are new to donating—make informed, confident donation decisions.
-
-When a donor asks a question, your job is to create a plan that:
-1) Directly answers their explicit request
-2) Provides additional value through insights and recommendations by default
+You are a planning module for a charity & donation assistant.
+Your job is to output a maximal set of tools plan that FULLY satisfies the user's request.
 
 PLANNING GOAL:
-- Cover every part of the user’s request using the fewest tool calls.
-- Prefer reusing one tool call to satisfy multiple sub-requests when possible.
+- Cover every part of the user’s request using the maximum tool calls.
+- Call more tools rather than fewer, as long as they are relevant to the user’s request and the conversation history.
 
 HARD CONSTRAINTS (must follow):
 A) COVERAGE CHECKLIST (do NOT output this checklist; use it silently):
 1. Identify ALL distinct user requirements.
 2. For EACH requirement, ensure at least one planned step will produce the needed information.
 3. If ANY requirement is not covered, add the minimal additional step(s).
+4. Use maximum number of tools that not only provide needed data to answer query, but also provide additonal information for future use.
+5. YOU MUST USE PRECISE TOOLS FROM FOLLOWING, that best match the user's query needs, as well as conversation history
 
 
-B) ANALYTICS & INSIGHTS BY DEFAULT:
-1. Unless the user explicitly says "just list", "brief only", "no analysis", or similar, always go beyond raw facts
-2. Provide comparative analysis, trade-offs, and practical recommendations
-3. Help donors understand WHY certain options might be better suited to their goals
-
-AVAILABLE CAPABILITIES:
+AVAILABLE TOOLS:
 {tool_context}
+---
 
-PLANNING PRINCIPLES:
-- Use available tools strategically to gather information AND synthesize insights
-- If you can compute comparisons, rankings, or summaries, include those steps
-- Prioritize clarity and actionability over exhaustive data collection
-- Reuse existing data from conversation history when available (don't re-fetch what you already have)
-
-COVERAGE REQUIREMENTS (apply silently):
-1. Address EVERY part of the user's question
-2. Add analytical depth (insights, comparisons, recommendations) unless explicitly told not to
-3. If critical information is missing, note what you need from the user
 
 OUTPUT FORMAT (STRICT JSON ONLY):
 {{
@@ -75,7 +58,7 @@ OUTPUT FORMAT (STRICT JSON ONLY):
 "missing_args": []
 }}
 
-Chat History (may contain prior tool outputs to reuse):
+Chat History (may contain prior TOOL_CALL + TOOL outputs to reuse):
 {chat_history}
 
 User Request (current turn):
@@ -146,8 +129,6 @@ def make_validator_node(tools_by_name: dict):
 
 def make_executor_node(tools_by_name: dict):
     async def _invoke_tool(tool, raw_args: dict):
-        tool_name = getattr(tool, "name", "")
-
         # Prefer async if the tool supports it
         if hasattr(tool, "ainvoke"):
             # Some tools have ainvoke but it's not a coroutine function → still try
@@ -163,9 +144,6 @@ def make_executor_node(tools_by_name: dict):
 
         if len(raw_args) == 1:
             return tool.invoke(next(iter(raw_args.values())))
-        
-        if tool_name in ("Python_REPL", "python_repl", "PythonREPLTool"):
-            return await tool.ainvoke(str(raw_args.get("input", "") or ""))
 
         # fallback for tools that expect a string
         return tool.invoke(json.dumps(raw_args, ensure_ascii=False))
@@ -272,12 +250,11 @@ OUTPUT RULES (STRICT):
 - Do NOT output any code blocks or code snippets.
 - ONLY use information explicitly present in the Conversation History (especially TOOL outputs).
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
-- By default, be analytical and donor-focused. If data exists, include deep insights and practical donation recommendations.
 
 RESPONSE STRUCTURE RULES:
 
-If the latest user request is of information, data exploration, comparisons, or explanation nature,
-or contain key words like "what", "how", "where", "list", "compare", "difference", "recommend", "suggest", "best", "worst", etc., respond with:
+If the latest user request is asking for information, data exploration, comparisons, or explanations 
+or contain key words like "what", "how", "list", "compare", "difference", "recommend", "suggest", "best", "worst", etc., respond with:
 
     1) Direct Answer — provide the requested information using data available in the Conversation History
     2) Insights — briefly explain what the data implies or any meaningful patterns
@@ -365,7 +342,31 @@ CRITICAL INSTRUCTIONS — FOLLOW STRICTLY:
 "missing_args": []
 }}
 
-2. Think step-by-step about the error and the cached data, then output ONLY the JSON fix.
+2. For Python_REPL repairs (the most common case):
+- ALWAYS start with proper imports: `import statistics`
+- Extract the REAL data from the "Cached recent tool outputs" section above and hard-code it into variables.
+- Use the CORRECT statistical function:
+        • median → statistics.median(your_list)
+        • mean   → statistics.mean(your_list)
+        • sum, min, max, etc. → built-in functions
+- The code must END with ONE clean `print(…)` statement that outputs ONLY the final numeric result (no lists, no extra text).
+- NEVER print the sorted list. NEVER use `sorted()` alone for median.
+- Avoid leading indentation on lines unless inside a block (IndentationError risk).
+
+3. Concrete good example for a median repair:
+{{
+"steps": [
+    {{
+    "tool": "Python_REPL",
+    "args": {{
+        "input": "import statistics\\ndonor_counts = [4, 2, 7, 5, 3]\\nprint(statistics.median(donor_counts))"
+    }}
+    }}
+],
+"missing_args": []
+}}
+
+4. Think step-by-step about the error and the cached data, then output ONLY the JSON fix.
 
 Conversation History (current round only):
 {history}
