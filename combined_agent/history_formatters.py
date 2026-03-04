@@ -105,7 +105,8 @@ def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) ->
 
     error_markers = [
         "Traceback", "IndentationError", "SyntaxError", "NameError", "KeyError",
-        "TypeError", "ValueError", "Exception", "Error:", "ERROR", "invalid", "missing", "failed",
+        "Incorrect", "Invalid", "TypeError", "ValueError", "Exception",
+        "Error:", "ERROR", "invalid", "missing", "failed",
     ]
 
     for m in reversed(tool_msgs):
@@ -147,7 +148,8 @@ def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
     seen_call_ids: set[str] = set()
     for m in current_round:
         if isinstance(m, HumanMessage):
-            lines.append(f"USER: {_redact_passwords(m.content)}")
+            # lines.append(f"USER: {_redact_passwords(m.content)}")
+            lines.append(f"USER: {m.content}")
         elif isinstance(m, AIMessage):
             if (m.content or "").strip().startswith("System Note:"):
                 continue
@@ -252,7 +254,8 @@ def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
     
     for m in messages or []:
         if isinstance(m, HumanMessage):
-            lines.append(f"USER: {_redact_passwords(m.content)}")
+            # lines.append(f"USER: {_redact_passwords(m.content)}")
+            lines.append(f"USER: {m.content}")
         elif isinstance(m, AIMessage):
             if (m.content or "").strip().startswith("System Note:"):
                 continue
