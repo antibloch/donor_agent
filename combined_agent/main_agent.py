@@ -50,7 +50,7 @@ async def build_graph():
     tools = await setup_tools()
 
     # Patch tool descriptions with usage hints for better performance
-    tools = patch_tool_descriptions(tools)
+    # tools = patch_tool_descriptions(tools)
 
     tools_by_name = {t.name: t for t in tools}
 
