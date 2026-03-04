@@ -39,6 +39,13 @@ class AgentState(TypedDict, total=False):
     repair_attempts: int
     last_tool_error: Dict[str, Any]
 
+
+def _should_wrap_as_password(messages: Sequence[BaseMessage]) -> bool:
+    for msg in reversed(messages or []):
+        if isinstance(msg, AIMessage):
+            return (msg.content or "").strip() == "Please enter password"
+    return False
+
 async def build_graph():
     tools = await setup_tools()
 
@@ -96,7 +103,11 @@ async def main():
             rich_print("\nGoodbye!")
             break
 
-        user_msg = HumanMessage(content=user_input)
+        outgoing_user_input = user_input
+        if _should_wrap_as_password(chat_memory):
+            outgoing_user_input = f"Passoword: {user_input}"
+
+        user_msg = HumanMessage(content=outgoing_user_input)
         chat_memory.append(user_msg)
 
         rich_print("\n(Agent is thinking...)\n")
