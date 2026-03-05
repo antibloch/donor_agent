@@ -1,7 +1,7 @@
 import requests
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
-from tool_helpers import _ok, _fail, _get
+from .tool_helpers import _ok, _fail, _get
 
 
 # From your message / deployment:
