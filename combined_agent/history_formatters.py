@@ -101,7 +101,20 @@ def _compact_err(payload: dict) -> str:
 
 def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -> List[Dict[str, Any]]:
     current_round = get_current_round_messages(messages)
-    tool_msgs = [m for m in current_round if isinstance(m, ToolMessage)][-max_k:]
+    # If at least one repair cycle already happened in this round, only inspect
+    # tool outputs generated after the latest gate repair note.
+    # This makes each gate pass focus on failures from the immediately previous
+    # repair execution instead of re-processing older, already-addressed errors.
+    start_idx = 0
+    for i, m in enumerate(current_round):
+        if not isinstance(m, AIMessage):
+            continue
+        txt = (m.content or "").strip()
+        if txt.startswith("System Note: Detected ") and "Attempting automatic repair." in txt:
+            start_idx = i + 1
+
+    scoped_msgs = current_round[start_idx:]
+    tool_msgs = [m for m in scoped_msgs if isinstance(m, ToolMessage)][-max_k:]
 
     error_markers = [
         "Traceback", "IndentationError", "SyntaxError", "NameError", "KeyError",
@@ -129,6 +142,8 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
 
         if any(k in raw for k in error_markers):
             errors.append({"tool": m.name, "error": raw[:800], "tool_message": raw})
+            continue
+
     return errors
 
 def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) -> Dict[str, Any] | None:
