@@ -12,7 +12,8 @@ from typing import Any
 async def setup_tools():
     local_tools = [
         # charity analytics tools
-        build_node_stats_tool(),
+        build_charity_discovery_tool(),
+        build_charity_detail_tool(),
         PythonREPLTool(),
 
         # transactions tools
