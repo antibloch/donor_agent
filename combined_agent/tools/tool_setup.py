@@ -56,11 +56,13 @@ async def setup_tools():
     client = MultiServerMCPClient({
         "fetch": {"transport": "stdio", "command": "npx", "args": ["-y", "fetcher-mcp"]}
     })
-    # additional charity analytics tools
-    mcp_tools = await client.get_tools()
+    # # additional charity analytics tools
+    # mcp_tools = await client.get_tools()
 
     
-    return [*local_tools, *mcp_tools] 
+    # return [*local_tools, *mcp_tools] 
+
+    return local_tools
 
 
 
