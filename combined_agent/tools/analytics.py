@@ -168,8 +168,9 @@ def build_charity_detail_tool(
             "  blogs (list): blog posts with title, description, hashtags, and media\n"
             "  address: charity location (street, city, state, country, postalCode)\n"
             "  contact: charity contact information (email, phone, website)\n\n"
-            "Use this tool after identifying the charity using 'charity_discovery_list'.\n"
-            "When you need to call 'charity_details' tool, always call 'fetch_url' tool to retrieve the charity's website content from 'discover_charities' tool output"
+            "Typical usage:\n"
+            "1) Use this tool after identifying the charity using 'charity_discovery_list'.\n"
+            "2) When you need to call 'charity_details' tool, always call 'fetch_url' tool to retrieve the charity's website content from 'discover_charities' tool output"
         ),
         args_schema=CharityDetailInput,
     )

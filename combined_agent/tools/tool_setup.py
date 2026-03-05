@@ -182,7 +182,7 @@ def build_tool_context(
 
         # Preserve previous explicit fallback for tools without declared schema.
         if getattr(tool, "name", "") == "Python_REPL":
-            return "- input (required string). For Python_REPL, this must be python code."
+            return "- query (required string containing atleast 3 line code). For Python_REPL, this must be python code."
         
         if getattr(tool, "name", "") == "fetch_url":
             return "- url (required string). The full URL to fetch. Must include schema (e.g., 'https://...'). Prefer https over http."
