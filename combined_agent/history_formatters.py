@@ -114,7 +114,11 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
             start_idx = i + 1
 
     scoped_msgs = current_round[start_idx:]
-    tool_msgs = [m for m in scoped_msgs if isinstance(m, ToolMessage)][-max_k:]
+    tool_msgs = [m for m in scoped_msgs if isinstance(m, ToolMessage)]
+    # First gate pass in a round: keep the historical window (last K).
+    # Subsequent gate passes: inspect the full previous repair-cycle output.
+    if start_idx == 0 and isinstance(max_k, int) and max_k > 0:
+        tool_msgs = tool_msgs[-max_k:]
 
     error_markers = [
         "Traceback", "IndentationError", "SyntaxError", "NameError", "KeyError",
@@ -126,22 +130,23 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
     for m in reversed(tool_msgs):
         raw = (m.content or "").strip()
         payload = _safe_json_loads(raw)
+        tcid = getattr(m, "tool_call_id", None)
 
         if isinstance(payload, dict):
             if payload.get("ok") is False:
-                errors.append({"tool": m.name, "error": _compact_err(payload), "tool_message": raw})
+                errors.append({"tool": m.name, "tool_call_id": tcid, "error": _compact_err(payload), "tool_message": raw})
                 continue
             result = payload.get("result", None)
             if isinstance(result, str) and any(k in result for k in error_markers):
-                errors.append({"tool": m.name, "error": result[:800], "tool_message": raw})
+                errors.append({"tool": m.name, "tool_call_id": tcid, "error": result[:800], "tool_message": raw})
                 continue
             err = payload.get("error", None)
             if isinstance(err, str) and any(k in err for k in error_markers):
-                errors.append({"tool": m.name, "error": err[:800], "tool_message": raw})
+                errors.append({"tool": m.name, "tool_call_id": tcid, "error": err[:800], "tool_message": raw})
                 continue
 
         if any(k in raw for k in error_markers):
-            errors.append({"tool": m.name, "error": raw[:800], "tool_message": raw})
+            errors.append({"tool": m.name, "tool_call_id": tcid, "error": raw[:800], "tool_message": raw})
             continue
 
     return errors

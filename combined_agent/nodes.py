@@ -301,8 +301,28 @@ Now write the final answer based strictly on the Conversation History below.
     return responder
 
 
+
 def make_gate_node(tools_by_name: dict, max_repairs: int = 1):
     model = make_model(temperature=0.0)
+
+    def _sanitize_repair_plan(raw_plan: Dict[str, Any]) -> Dict[str, Any]:
+        steps_in = raw_plan.get("steps", []) if isinstance(raw_plan, dict) else []
+        missing_in = raw_plan.get("missing_args", []) if isinstance(raw_plan, dict) else []
+        valid_steps = []
+        for step in steps_in if isinstance(steps_in, list) else []:
+            if not isinstance(step, dict):
+                continue
+            tool_name = step.get("tool")
+            args = step.get("args", {})
+            if tool_name not in tools_by_name:
+                continue
+            if not isinstance(args, dict):
+                continue
+            valid_steps.append({"tool": tool_name, "args": args})
+        return {
+            "steps": valid_steps,
+            "missing_args": missing_in if isinstance(missing_in, list) else [],
+        }
 
     def gate_node(state: dict) -> Dict:
         attempts = int(state.get("repair_attempts") or 0)
@@ -324,8 +344,8 @@ def make_gate_node(tools_by_name: dict, max_repairs: int = 1):
         valid_tool_names = list(tools_by_name.keys())
 
         errors_block = "\n".join(
-            f"- tool: {err['tool']}\n- error: {err['error']}"
-            for err in recent_errors
+            f"{i+1}. tool: {err['tool']}\n   call_id: {err.get('tool_call_id', '')}\n   error: {err['error']}"
+            for i, err in enumerate(recent_errors)
         )
 
         prompt = f"""
@@ -352,6 +372,9 @@ CRITICAL INSTRUCTIONS — FOLLOW STRICTLY:
 ],
 "missing_args": []
 }}
+1.1 REQUIRED COVERAGE:
+- You MUST return at least {len(recent_errors)} repair step(s): one step per detected error entry above, in the same order.
+- Do not merge multiple errors into a single step.
 
 2. For Python_REPL repairs (the most common case):
 - ALWAYS start with proper imports: `import statistics`
@@ -399,7 +422,30 @@ Conversation History (current round only):
             rich_print(resp.content)
             rich_print("="*80)
 
-        repair_plan = _parse_plan(resp.content)
+        repair_plan = _sanitize_repair_plan(_parse_plan(resp.content))
+
+        required_steps = len(recent_errors)
+        if len(repair_plan.get("steps", [])) < required_steps:
+            repair_shortfall_prompt = f"""
+Your previous output did not satisfy REQUIRED COVERAGE.
+
+Detected errors count: {required_steps}
+Returned steps count: {len(repair_plan.get("steps", []))}
+
+Return corrected JSON now.
+Rules:
+- Output ONLY JSON.
+- Include at least {required_steps} steps.
+- Keep one repair step per detected error, in the same order.
+- Use only valid tool names.
+
+Detected tool errors (most recent first):
+{errors_block}
+"""
+            retry_resp = model.invoke([HumanMessage(content=repair_shortfall_prompt)])
+            retry_plan = _sanitize_repair_plan(_parse_plan(retry_resp.content))
+            if len(retry_plan.get("steps", [])) >= len(repair_plan.get("steps", [])):
+                repair_plan = retry_plan
 
         return {
             "plan": repair_plan,
