@@ -4,7 +4,8 @@ from .transactions import *
 from langchain_experimental.tools import PythonREPLTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from typing import Any
-
+import json
+from langchain_core.messages import HumanMessage
 # --------------------------
 # Tool setup
 # --------------------------
@@ -64,7 +65,86 @@ async def setup_tools():
 
 
 
-def build_tool_context(tools_by_name: dict):
+def build_tool_context(
+    tools_by_name: dict,
+    *,
+    do_selection: bool = False,
+    user_query: str = "",
+    chat_history: str = "",
+    model: Any = None,
+):
+    def _render_tool_context(local_tools_by_name: dict) -> str:
+        sections = ["# Available Tools"]
+        tools_sorted = sorted(local_tools_by_name.values(), key=lambda t: getattr(t, "name", "").lower())
+
+        for index, tool in enumerate(tools_sorted, start=1):
+            name = tool.name
+            description = (getattr(tool, "description", "") or "No description.").strip()
+            args_text = _render_args_markdown(tool)
+
+            sections.append(
+                "\n".join(
+                    [
+                        f"## {index}. `{name}`",
+                        "",
+                        "### Description",
+                        description,
+                        "",
+                        "### Arguments",
+                        _render_args_bullets(tool),
+                        "",
+                        "### Parameters",
+                        args_text,
+                    ]
+                )
+            )
+
+        return "\n\n".join(sections).strip()
+
+    def _select_reduced_tool_map(full_context: str) -> dict:
+        if model is None:
+            return tools_by_name
+
+        selector_prompt = f"""
+            You are a tool selector. Select the smallest practical subset of tools that can fully answer the current user request.
+
+            Rules:
+            - Prioritize complete coverage of current user request.
+            - Use chat history only to disambiguate intent.
+            - Return only tool names that exist in the provided tool catalog.
+            - If uncertain, include more tools instead of missing critical ones.
+            - Output STRICT JSON only in this format:
+            {{
+            "selected_tools": ["tool_name_1", "tool_name_2"]
+            }}
+
+            Tool Catalog:
+            {full_context}
+
+            Chat History:
+            {chat_history}
+
+            Current User Request:
+            {user_query}
+            """
+        try:
+            response = model.invoke([HumanMessage(content=selector_prompt)])
+            parsed = json.loads((response.content or "").strip())
+            selected = parsed.get("selected_tools", [])
+            if not isinstance(selected, list):
+                return tools_by_name
+
+            selected_names = []
+            for name in selected:
+                if isinstance(name, str) and name in tools_by_name and name not in selected_names:
+                    selected_names.append(name)
+
+            if not selected_names:
+                return tools_by_name
+            return {name: tools_by_name[name] for name in selected_names}
+        except Exception:
+            return tools_by_name
+
     def _normalize_type(annotation: Any) -> str:
         if annotation is None:
             return "any"
@@ -111,31 +191,11 @@ def build_tool_context(tools_by_name: dict):
                 )
             return "\n".join(lines)
 
-        return "_Parameters are not explicitly declared. Pass the expected input payload for this tool._"
+        return "string (required)"
 
-    sections = ["# Available Tools"]
-    tools_sorted = sorted(tools_by_name.values(), key=lambda t: getattr(t, "name", "").lower())
+    full_context = _render_tool_context(tools_by_name)
+    if not do_selection:
+        return full_context
 
-    for index, tool in enumerate(tools_sorted, start=1):
-        name = tool.name
-        description = (getattr(tool, "description", "") or "No description.").strip()
-        args_text = _render_args_markdown(tool)
-
-        sections.append(
-            "\n".join(
-                [
-                    f"## {index}. `{name}`",
-                    "",
-                    "### Description",
-                    description,
-                    "",
-                    "### Arguments",
-                    _render_args_bullets(tool),
-                    "",
-                    "### Parameters",
-                    args_text,
-                ]
-            )
-        )
-
-    return "\n\n".join(sections).strip()
+    reduced_map = _select_reduced_tool_map(full_context)
+    return _render_tool_context(reduced_map)

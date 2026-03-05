@@ -19,14 +19,21 @@ from tools.tool_setup import build_tool_context
 import dotenv
 dotenv.load_dotenv()
 DEBUG_MESSAGES = int(dotenv.get_key(dotenv.find_dotenv(), "DEBUG_MESSAGES") or "0")
-
+DO_SELECTION = (dotenv.get_key(dotenv.find_dotenv(), "DO_SELECTION") or "0").strip().lower() in ("1", "true", "yes", "on")
 
 def make_planner_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
 
     def planner_node(state: dict) -> Dict:
         chat_history = format_history_for_planner(state.get("messages", []), drop_last_user=True)
-        tool_context = build_tool_context(tools_by_name)
+        user_query = state.get("messages", [])[-1].content if state.get("messages") else ""
+        tool_context = build_tool_context(
+            tools_by_name,
+            do_selection=DO_SELECTION,
+            user_query=user_query,
+            chat_history=chat_history,
+            model=model,
+        )
 
         prompt = f"""
 You are a planning module for a charity & donation assistant.
@@ -67,7 +74,7 @@ User Request (current turn):
 
         if DEBUG_MESSAGES == 1:
             rich_print("\n" + "="*80)
-            rich_print("PLANNER INPUT")
+            rich_print("PLANNER INPUT (DO_SELECTION={DO_SELECTION})")
             rich_print("="*80)
             rich_print(prompt)
             rich_print("="*80)
