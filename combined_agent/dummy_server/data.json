@@ -4,7 +4,7 @@
       "_id": "wlt_mujtaba",
       "user": "usr_mujtaba",
       "balance": 5000,
-      "lockedBalance": 30,
+      "lockedBalance": 60,
       "isDeleted": false,
       "transactionsHistory": [
         {
@@ -158,7 +158,11 @@
       "phone": "+92-21-1234567",
       "description": "Providing emergency relief and food aid across Pakistan since 2010.",
       "website": "https://hopefoundation.org",
-      "categories": ["cat_emergency", "cat_food_aid", "cat_gaza"],
+      "categories": [
+        "cat_emergency",
+        "cat_food_aid",
+        "cat_gaza"
+      ],
       "country": "Pakistan",
       "status": "Active"
     },
@@ -169,7 +173,10 @@
       "phone": "+92-51-9876543",
       "description": "Clean water projects and environmental sustainability programs.",
       "website": "https://greenearth.org",
-      "categories": ["cat_water", "cat_healthcare"],
+      "categories": [
+        "cat_water",
+        "cat_healthcare"
+      ],
       "country": "Pakistan",
       "status": "Active"
     },
@@ -180,7 +187,10 @@
       "phone": "+92-42-5551234",
       "description": "Scholarships and school programs for underprivileged children.",
       "website": "https://brightfutures.org",
-      "categories": ["cat_education", "cat_healthcare"],
+      "categories": [
+        "cat_education",
+        "cat_healthcare"
+      ],
       "country": "Pakistan",
       "status": "Active"
     }
@@ -342,6 +352,17 @@
       "status": "Leading",
       "createdAt": "2026-03-02T21:59:26.687Z",
       "updatedAt": "2026-03-02T21:59:26.687Z",
+      "__v": 0
+    },
+    "beb913194e5340939eff3797": {
+      "_id": "beb913194e5340939eff3797",
+      "profile": "usr_mujtaba",
+      "profileModel": "DonorProfile",
+      "auction": "auc_active_nobids",
+      "amount": 30,
+      "status": "Leading",
+      "createdAt": "2026-03-05T13:11:06.375Z",
+      "updatedAt": "2026-03-05T13:11:06.375Z",
       "__v": 0
     }
   },
