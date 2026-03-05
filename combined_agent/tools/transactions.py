@@ -827,7 +827,7 @@ def campaign_donation(campaignId: str, amount: float, donationTypeId: str, passw
             f"{BASE_URL}/api/v1/donors/campaign/donate",
             headers=headers,
             json={
-                "campaignId": campaignId,  # fixed typo from 'compaignId'
+                "compaignId": campaignId,  
                 "amount": amount,
                 "campaignType": campaignType,
                 "donationTypeId": donationTypeId
@@ -1077,3 +1077,4 @@ metadata_transaction = {
     }
 
 }
+
