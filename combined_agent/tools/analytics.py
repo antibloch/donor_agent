@@ -180,6 +180,167 @@ def build_charity_detail_tool(
     )
 
 
+
+
+#=======================Adding Meta Data for Tool Guidance=======================
+metadata_analytics = {
+    "discover_charities": {
+        "domain": "charity",
+        "type": "discovery",
+        "when_to_use": (
+            "- When user asks to list available charities\n"
+            "- When user asks to search charities by name/registration keyword\n"
+            "- When user asks for comparisons/rankings across charities (e.g., highest donor count)\n"
+            "- When you need a charity_id (_id) to fetch detailed information\n"
+            "- When you need lightweight fields only: name, uniqueDonorCount, verification/active flags, location\n"
+        ),
+        "do_not_use": (
+            "Do not use for per-charity deep details (products, blogs, address/contact, donation breakdown). "
+            "Use charity_donation_stats_detail for that."
+        ),
+        "supports_pagination": True,
+        "pagination_hints": (
+            "- Response includes result.data.pagination.hasMore\n"
+            "- If hasMore=true and the user needs a GLOBAL max/min/ranking across ALL charities, "
+            "fetch additional pages until hasMore=false (or until you have enough data).\n"
+            "- Use limit as high as allowed to reduce calls (e.g., 500-1000) if you need global ranking."
+        ),
+        "requires_auth": True,
+        "auth_hints": (
+            "- Requires X-API-KEY header\n"
+            "- Implemented internally in the tool (agent does NOT pass the key as an argument)"
+        ),
+        "args": {
+            "page": "int (default=1). 1-based page index.",
+            "limit": "int (default=1000). Page size. Keep within server limits.",
+            "search": "str (default=''). Optional filter by name/registration text.",
+        },
+        "output_schema": (
+            "ok: bool\n"
+            "result.success: bool\n"
+            "result.data.items: list[{\n"
+            "  _id: str,\n"
+            "  name: str,\n"
+            "  uniqueDonorCount: number,\n"
+            "  isVerified: bool,\n"
+            "  isActive: bool,\n"
+            "  countryCode: str,\n"
+            "  city: str\n"
+            "}]\n"
+            "result.data.pagination: { page:int, limit:int, total:int, hasMore:bool }\n"
+            "meta: { endpoint:str, http_status:int, params:{...} }\n"
+        ),
+        "example_usage": (
+            "page=1, limit=50, search='Al'\n"
+            "Then read: result.data.items and result.data.pagination.hasMore"
+        ),
+        "hint": (
+            "- For 'highest donor count' or 'top charities', sort items by uniqueDonorCount.\n"
+            "- If hasMore=true, ranking across ALL charities may require fetching remaining pages.\n"
+            "- Use this tool first in a 2-step flow, then call charity_donation_stats_detail with an _id."
+        ),
+    },
+
+    "charity_details": {
+        "domain": "charity",
+        "type": "detail",
+        "when_to_use": (
+            "- When user asks for details of ONE charity (by name or by id)\n"
+            "- When user asks for products, product categories, or product donation totals\n"
+            "- When user asks for blogs/posts of a charity\n"
+            "- When user asks for address/contact information\n"
+            "- When user asks for donationAmount, impactLife, or other per-charity stats\n"
+        ),
+        "do_not_use": (
+            "Do not use for listing or ranking across many charities. "
+            "Use charity_discovery_list first to find/filter/rank and obtain charity_id."
+        ),
+        "supports_pagination": False,
+        "requires_auth": True,
+        "auth_hints": (
+            "- Requires X-API-KEY header\n"
+            "- Implemented internally in the tool (agent does NOT pass the key as an argument)"
+        ),
+        "args": {
+            "charity_id": "str (required). Use the _id returned by charity_discovery_list.",
+        },
+        "output_schema": (
+            "ok: bool\n"
+            "result.success: bool\n"
+            "result.data: {\n"
+            "  impactLife: bool,\n"
+            "  donationAmount: number,\n"
+            "  totalDonationByProduct: number,\n"
+            "  productCategories: list[str],\n"
+            "  products: list[{\n"
+            "    productName: str,\n"
+            "    pricePerUnit: number,\n"
+            "    description: str,\n"
+            "    category: str,\n"
+            "    totalDonated: number,\n"
+            "    isActive: bool,\n"
+            "    status: str\n"
+            "  }],\n"
+            "  blogs: list[{ title:str, description:str, file:str, hashtags:list[str] }],\n"
+            "  address: { street:str, city:str, state:str, country:str, countryCode:str, postalCode:str },\n"
+            "  contact: { email:str, phone:str, website:str }\n"
+            "}\n"
+            "meta: { endpoint:str, http_status:int, charity_id:str }\n"
+        ),
+        "example_usage": "charity_id='6957c567b7df149a6c552513'",
+        "hint": (
+            "- Typical flow: call charity_discovery_list → pick charity _id → call this tool.\n"
+            "- If the user provides only a name, first search via charity_discovery_list to find matching _id.\n"
+            "- Prefer summarizing: donationAmount, key categories, top 3 products, and contact/address when answering."
+        ),
+    },
+    "Python_REPL": {
+        "domain": "analytics",
+        "type": "compute",
+        "when_to_use": (
+            "- If the user asks for ANY numeric aggregation (e.g: median, mean, average, avg, std, min, max, sum, total)"
+            "- User asks about entities/items in plural/group form and has not explicitly disabled analysis"
+            "- User asks for insights/recommendations/comparison/ranking/trends"
+            
+        ),
+        "do_not_use": "Do not use for external web/page fetches, or for performing transactions",
+        "supports_pagination": False,
+        "requires_auth": False,
+        "example_usage": "",
+        "hint": (
+                    "- Python_REPL must NEVER have empty args.\n"
+                    "- Python_REPL argument format: {{ \"input\": \"<python code that performs analysis, whose final line of code is ONLY print statement that prints the final numeric result>\" }}"
+                    "- ALWAYS start with proper imports: `import statistics`"
+                    "- Use the CORRECT statistical function, e.g:"
+                    "        • median → statistics.median(your_list)"
+                    "        • mean   → statistics.mean(your_list)"
+                    "        • sum, min, max, etc. → built-in functions"
+                    "- The code must END with ONE clean `print(…)` statement that outputs ONLY the final numeric result (no lists, no extra text)."
+                    "- Avoid leading indentation on lines unless inside a block (IndentationError risk)."
+                )
+    },
+    "fetch_url": {
+        "domain": "web",
+        "type": "action",
+        "when_to_use": "When a specific URL is already known and you need page content.",
+        "do_not_use": "Do not use when you need discovery/search over unknown URLs.",
+        "supports_pagination": False,
+        "requires_auth": False,
+        "example_usage": "tool_name=fetch_url",
+        "hint": "none"
+    },
+    "fetch_urls": {
+        "domain": "web",
+        "type": "paginate",
+        "when_to_use": "When multiple known URLs should be fetched in one operation.",
+        "do_not_use": "Do not use for keyword search/discovery over the open web.",
+        "supports_pagination": True,
+        "requires_auth": False,
+        "example_usage": "tool_name=fetch_urls",
+        "hint": "none"
+    },
+}
+
 if __name__ == "__main__":
     import json
 
