@@ -11,7 +11,7 @@ from history_formatters import (
     format_history_for_gate,
     build_cached_tool_outputs,
     format_history_for_responder,
-    detect_latest_tool_error,
+    detect_recent_tool_errors,
     format_msg,          
 )
 from tools.tool_setup import build_tool_context
@@ -313,8 +313,8 @@ def make_gate_node(tools_by_name: dict, max_repairs: int = 1):
             }
 
         messages = list(state.get("messages", []) or [])
-        last_error = detect_latest_tool_error(messages)
-        if not last_error:
+        recent_errors = detect_recent_tool_errors(messages)
+        if not recent_errors:
             return {"plan": {"steps": [], "missing_args": []}}
 
         history = format_history_for_gate(messages)
@@ -323,8 +323,13 @@ def make_gate_node(tools_by_name: dict, max_repairs: int = 1):
         tool_context = build_tool_context(tools_by_name)
         valid_tool_names = list(tools_by_name.keys())
 
+        errors_block = "\n".join(
+            f"- tool: {err['tool']}\n- error: {err['error']}"
+            for err in recent_errors
+        )
+
         prompt = f"""
-You are an EXPERT TOOL-REPAIR AGENT. Your sole job is to fix the most recent tool failure with MAXIMUM precision and correctness.
+You are an EXPERT TOOL-REPAIR AGENT. Your sole job is to fix ALL tool failures listed below with MAXIMUM precision and correctness.
 
 Available tools:
 {tool_context}
@@ -332,9 +337,8 @@ Available tools:
 Valid tool names (must match EXACTLY):
 {valid_tool_names}
 
-Most recent tool error:
-- tool: {last_error["tool"]}
-- error: {last_error["error"]}
+Detected tool errors (most recent first):
+{errors_block}
 
 Cached recent tool outputs (USE THIS DATA EXACTLY — do NOT invent values):
 {cache}
@@ -400,9 +404,9 @@ Conversation History (current round only):
         return {
             "plan": repair_plan,
             "repair_attempts": attempts + 1,
-            "last_tool_error": last_error,
+            "last_tool_error": recent_errors[0],
             "messages": [
-                AIMessage(content=f"System Note: Detected tool error in {last_error['tool']}. Attempting automatic repair.")
+                AIMessage(content=f"System Note: Detected {len(recent_errors)} tool error(s). Attempting automatic repair.")
             ],
         }
 

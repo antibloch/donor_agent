@@ -99,7 +99,7 @@ def _compact_err(payload: dict) -> str:
         s = str(payload)
     return s[:TRUNCATION_TOOL_LIMIT] + (" ...[truncated]" if len(s) > TRUNCATION_TOOL_LIMIT else "")
 
-def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) -> Dict[str, Any] | None:
+def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -> List[Dict[str, Any]]:
     current_round = get_current_round_messages(messages)
     tool_msgs = [m for m in current_round if isinstance(m, ToolMessage)][-max_k:]
 
@@ -109,23 +109,31 @@ def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) ->
         "Error:", "ERROR", "invalid", "missing", "failed",
     ]
 
+    errors: List[Dict[str, Any]] = []
     for m in reversed(tool_msgs):
         raw = (m.content or "").strip()
         payload = _safe_json_loads(raw)
 
         if isinstance(payload, dict):
             if payload.get("ok") is False:
-                return {"tool": m.name, "error": _compact_err(payload), "tool_message": raw}
+                errors.append({"tool": m.name, "error": _compact_err(payload), "tool_message": raw})
+                continue
             result = payload.get("result", None)
             if isinstance(result, str) and any(k in result for k in error_markers):
-                return {"tool": m.name, "error": result[:800], "tool_message": raw}
+                errors.append({"tool": m.name, "error": result[:800], "tool_message": raw})
+                continue
             err = payload.get("error", None)
             if isinstance(err, str) and any(k in err for k in error_markers):
-                return {"tool": m.name, "error": err[:800], "tool_message": raw}
+                errors.append({"tool": m.name, "error": err[:800], "tool_message": raw})
+                continue
 
         if any(k in raw for k in error_markers):
-            return {"tool": m.name, "error": raw[:800], "tool_message": raw}
-    return None
+            errors.append({"tool": m.name, "error": raw[:800], "tool_message": raw})
+    return errors
+
+def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) -> Dict[str, Any] | None:
+    errors = detect_recent_tool_errors(messages, max_k=max_k)
+    return errors[0] if errors else None
 
 def _format_tool_calls_block(tool_calls: list) -> str:
     out = []
@@ -242,6 +250,9 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
             if tcid and tcid in seen_call_ids:
                 continue
             if m is not latest_tools_by_name.get(m.name):
+                continue
+            payload = _safe_json_loads((m.content or "").strip())
+            if isinstance(payload, dict) and payload.get("ok") is False:
                 continue
             lines.append(_summarize_tool_output(m.name, m.content))
     return "\n".join(lines) if lines else "(no prior history)"
