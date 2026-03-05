@@ -106,28 +106,31 @@ def build_tool_context(
             return tools_by_name
 
         selector_prompt = f"""
-            You are a tool selector. Select the smallest practical subset of tools that can fully answer the current user request.
+                You are a tool selector for a planner. Build a MAXIMAL PLAUSIBLE subset of tools for the current user request.
+                Goal: remove only clearly implausible tools, while preserving all tools that could reasonably help answer the request.
 
-            Rules:
-            - Prioritize complete coverage of current user request.
-            - Use chat history only to disambiguate intent.
-            - Reason (silently) what information is needed to answer the user request, then select tools that provide that information.
-            - Return only tool names that exist in the provided tool catalog.
-            - If uncertain, include more tools instead of missing critical ones.
-            - Output STRICT JSON only in this format:
-            {{
-            "selected_tools": ["tool_name_1", "tool_name_2"]
-            }}
+                Rules:
+                - Keep every tool that is plausibly useful for any part of the current request.
+                - Exclude a tool only if it is clearly irrelevant to the request and immediate follow-up needs.
+                - Prioritize recall over precision: false positives are acceptable, false negatives are not.
+                - Use chat history only to disambiguate intent and entities.
+                - Reason silently about required information, then include all tools that could provide it.
+                - Return only tool names that exist in the provided tool catalog.
+                - Never return an empty list unless no listed tool is remotely relevant.
+                - Output STRICT JSON only in this format:
+                {{
+                "selected_tools": ["tool_name_1", "tool_name_2"]
+                }}
 
-            Tool Catalog:
-            {full_context}
+                Tool Catalog:
+                {full_context}
 
-            Chat History:
-            {chat_history}
+                Chat History:
+                {chat_history}
 
-            Current User Request:
-            {user_query}
-            """
+                Current User Request:
+                {user_query}
+                """
         try:
             response = model.invoke([HumanMessage(content=selector_prompt)])
             parsed = json.loads((response.content or "").strip())
