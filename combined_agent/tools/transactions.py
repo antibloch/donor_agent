@@ -366,7 +366,7 @@ def get_all_charities_with_grants():
     """
     try:
         response = requests.get(
-            f"{BASE_URL}/api/v1/payment-apis/add-method",
+            f"{BASE_URL}/api/v3/donors/all-charities",
             headers=headers
         )
 
@@ -1075,4 +1075,5 @@ metadata_transaction = {
                     "- Use this tool for monetary grant donations only."
                 )
     }
+
 }
