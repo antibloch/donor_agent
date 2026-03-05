@@ -106,7 +106,7 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
     error_markers = [
         "Traceback", "IndentationError", "SyntaxError", "NameError", "KeyError",
         "Incorrect", "Invalid", "TypeError", "ValueError", "Exception",
-        "Error:", "ERROR", "invalid", "missing", "failed",
+        "Error:", "ERROR", "invalid", "missing", "failed", "unexpected"
     ]
 
     errors: List[Dict[str, Any]] = []

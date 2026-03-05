@@ -56,13 +56,23 @@ async def setup_tools():
     client = MultiServerMCPClient({
         "fetch": {"transport": "stdio", "command": "npx", "args": ["-y", "fetcher-mcp"]}
     })
-    # # additional charity analytics tools
-    # mcp_tools = await client.get_tools()
 
+
+    mcp_tools = await client.get_tools()
+    crawler_tool = []
+    for tool in mcp_tools:
+        if tool.name in ['fetch_url']:
+            desc = "Retrieve web page content from a specified URL.\n"
+            desc += "\nParameters:\n"
+            desc += "  - url (required, string): The full URL to fetch. Must include schema (e.g., 'https://...'). Prefer https over http.\n"
+            desc += "\nUsage Rules:\n"
+            desc += "  - ALWAYS call 'fetch_url' whenever you call the 'charity_details' tool, passing the charity website URL from the output of 'discover_charities' tool found in conversation history.\n"
+            desc += "  - If 'discover_charities' was NOT called in conversation history, you MUST still call 'fetch_url' alongside 'charity_details', using the charity's default website URL.\n"
+            desc += "  - If 'discover_charities' WAS called in conversation history, you MUST call 'fetch_url' with the relevant URL from the 'discover_charities' tool output.\n"
+            setattr(tool, 'description', desc)
+            crawler_tool.append(tool)
     
-    # return [*local_tools, *mcp_tools] 
-
-    return local_tools
+    return [*local_tools, *crawler_tool] 
 
 
 
@@ -173,6 +183,9 @@ def build_tool_context(
         # Preserve previous explicit fallback for tools without declared schema.
         if getattr(tool, "name", "") == "Python_REPL":
             return "- input (required string). For Python_REPL, this must be python code."
+        
+        if getattr(tool, "name", "") == "fetch_url":
+            return "- url (required string). The full URL to fetch. Must include schema (e.g., 'https://...'). Prefer https over http."
 
         return "- input (required)"
 

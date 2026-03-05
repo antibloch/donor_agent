@@ -31,7 +31,7 @@ def build_charity_discovery_tool(
       GET {baseUrl}/api/v3/agent/charities/discovery?page=1&limit=1000&search=...
     """
 
-    def discover_charities(page: int = 1, limit: int = 1000, search: str = "") -> str:
+    def discover_charities(page: int = 1, limit: int = 1000) -> str:
         try:
             page_i = int(page)
             limit_i = int(limit)
@@ -41,9 +41,6 @@ def build_charity_discovery_tool(
                 return _fail("limit must be between 1 and 2000", provided=limit)
 
             params = {"page": page_i, "limit": limit_i}
-            search = (search or "").strip()
-            if search:
-                params["search"] = search
 
             url = f"{base_url}{AGENT_BASE_PATH}/charities/discovery"
             # Using requests directly so headers are guaranteed to be sent
@@ -71,7 +68,6 @@ def build_charity_discovery_tool(
     class CharityDiscoveryInput(BaseModel):
         page: int = Field(1, description="1-based page index (default 1).")
         limit: int = Field(1000, description="Page size (default 1000, max 2000).")
-        search: str = Field("", description="Optional search by name or registration number.")
 
     return StructuredTool.from_function(
         func=discover_charities,
@@ -80,13 +76,11 @@ def build_charity_discovery_tool(
             "Retrieve a coarse-grained list of charities with their brief info.\n\n"
             "Use this tool when you need to:\n"
             "- list available charities\n"
-            "- search charities by name or registration\n"
             "- compare charities (e.g., highest donor count)\n"
             "- obtain charity IDs for fetching detailed information\n\n"
             "Arguments:\n"
             "- page (int): page index starting from 1\n"
             "- limit (int): number of charities to return (recommended <= 1000)\n"
-            "- search (str, optional): filter charities by name or registration number\n\n"
             "Response structure:\n"
             "result.data.items -> list of charities where each item contains:\n"
             "  _id: unique charity identifier\n"
@@ -103,7 +97,7 @@ def build_charity_discovery_tool(
             "Typical usage:\n"
             "1) Call this tool to retrieve charities.\n"
             "2) Extract the charity '_id'.\n"
-            "3) Use 'charity_donation_stats_detail' to fetch full details."
+            "3) Donot use 'discover_charities' tool to get full details. Use 'charity_details' tool to fetch full details from charity '_id' (alongside with 'fetch_url' tool)."
         ),
         args_schema=CharityDiscoveryInput,
     )
@@ -174,7 +168,8 @@ def build_charity_detail_tool(
             "  blogs (list): blog posts with title, description, hashtags, and media\n"
             "  address: charity location (street, city, state, country, postalCode)\n"
             "  contact: charity contact information (email, phone, website)\n\n"
-            "Use this tool after identifying the charity using 'charity_discovery_list'."
+            "Use this tool after identifying the charity using 'charity_discovery_list'.\n"
+            "When you need to call 'charity_details' tool, always call 'fetch_url' tool to retrieve the charity's website content from 'discover_charities' tool output"
         ),
         args_schema=CharityDetailInput,
     )
