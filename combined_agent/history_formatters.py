@@ -125,6 +125,20 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
         "Incorrect", "Invalid", "TypeError", "ValueError", "Exception",
         "Error:", "ERROR", "invalid", "missing", "failed", "unexpected"
     ]
+    marker_lc = [m.lower() for m in error_markers]
+
+    def _text_has_error_markers(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, str):
+            text = value
+        else:
+            try:
+                text = json.dumps(value, ensure_ascii=False, default=str)
+            except Exception:
+                text = str(value)
+        low = text.lower()
+        return any(m in low for m in marker_lc)
 
     errors: List[Dict[str, Any]] = []
     for m in reversed(tool_msgs):
@@ -137,15 +151,25 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
                 errors.append({"tool": m.name, "tool_call_id": tcid, "error": _compact_err(payload), "tool_message": raw})
                 continue
             result = payload.get("result", None)
-            if isinstance(result, str) and any(k in result for k in error_markers):
-                errors.append({"tool": m.name, "tool_call_id": tcid, "error": result[:800], "tool_message": raw})
+            if _text_has_error_markers(result):
+                errors.append({
+                    "tool": m.name,
+                    "tool_call_id": tcid,
+                    "error": _compact_json(result, max_chars=800),
+                    "tool_message": raw
+                })
                 continue
             err = payload.get("error", None)
-            if isinstance(err, str) and any(k in err for k in error_markers):
-                errors.append({"tool": m.name, "tool_call_id": tcid, "error": err[:800], "tool_message": raw})
+            if _text_has_error_markers(err):
+                errors.append({
+                    "tool": m.name,
+                    "tool_call_id": tcid,
+                    "error": _compact_json(err, max_chars=800),
+                    "tool_message": raw
+                })
                 continue
 
-        if any(k in raw for k in error_markers):
+        if _text_has_error_markers(raw):
             errors.append({"tool": m.name, "tool_call_id": tcid, "error": raw[:800], "tool_message": raw})
             continue
 
