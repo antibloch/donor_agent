@@ -111,6 +111,7 @@ def build_tool_context(
             Rules:
             - Prioritize complete coverage of current user request.
             - Use chat history only to disambiguate intent.
+            - Reason (silently) what information is needed to answer the user request, then select tools that provide that information.
             - Return only tool names that exist in the provided tool catalog.
             - If uncertain, include more tools instead of missing critical ones.
             - Output STRICT JSON only in this format:
