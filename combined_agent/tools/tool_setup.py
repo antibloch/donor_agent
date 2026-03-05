@@ -66,7 +66,7 @@ async def setup_tools():
             desc += "\nParameters:\n"
             desc += "  - url (required, string): The full URL to fetch. Must include schema (e.g., 'https://...'). Prefer https over http.\n"
             desc += "\nUsage Rules:\n"
-            desc += "  - ALWAYS call 'fetch_url' whenever you call the 'charity_details' tool, passing the charity website URL from the output of 'discover_charities' tool found in conversation history.\n"
+            desc += "  - ALWAYS call 'fetch_url' WHENEVER you call the 'charity_details' tool\n, and ONLY use the website URL from 'charity_details' tool output.\n"
             desc += "  - If 'discover_charities' was NOT called in conversation history, you MUST still call 'fetch_url' alongside 'charity_details', using the charity's default website URL.\n"
             desc += "  - If 'discover_charities' WAS called in conversation history, you MUST call 'fetch_url' with the relevant URL from the 'discover_charities' tool output.\n"
             setattr(tool, 'description', desc)

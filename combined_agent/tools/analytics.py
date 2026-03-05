@@ -78,6 +78,7 @@ def build_charity_discovery_tool(
             "- list available charities\n"
             "- compare charities (e.g., highest donor count)\n"
             "- obtain charity IDs for fetching detailed information\n\n"
+            "- find if a particular charity exists with similar name\n\n"
             "Arguments:\n"
             "- page (int): page index starting from 1\n"
             "- limit (int): number of charities to return (recommended <= 1000)\n"
@@ -94,10 +95,10 @@ def build_charity_discovery_tool(
             "  page, limit, total, hasMore\n\n"
             "If hasMore=true, additional pages exist and may need to be fetched "
             "to compute global rankings (e.g., highest donor count).\n\n"
-            "Typical usage:\n"
+            "Usage:\n"
             "1) Call this tool to retrieve charities.\n"
             "2) Extract the charity '_id'.\n"
-            "3) Donot use 'discover_charities' tool to get full details. Use 'charity_details' tool to fetch full details from charity '_id' (alongside with 'fetch_url' tool)."
+            "3) Donot use 'discover_charities' tool to get full details about some charity. Use 'charity_details' tool to fetch full details from charity '_id' (alongside with 'fetch_url' at URL of charity from 'charity_details' output)."
         ),
         args_schema=CharityDiscoveryInput,
     )
@@ -146,7 +147,7 @@ def build_charity_detail_tool(
         func=charity_details,
         name="charity_details",
         description=(
-            "Retrieve detailed information and donation statistics for a specific charity.\n\n"
+            "Retrieve detailed information and donation statistics for a specific charity or a charity with similar name.\n\n"
             "Use this tool when the user asks about:\n"
             "- donation statistics\n"
             "- products or product categories\n"
@@ -168,9 +169,9 @@ def build_charity_detail_tool(
             "  blogs (list): blog posts with title, description, hashtags, and media\n"
             "  address: charity location (street, city, state, country, postalCode)\n"
             "  contact: charity contact information (email, phone, website)\n\n"
-            "Typical usage:\n"
-            "1) Use this tool after identifying the charity using 'charity_discovery_list'.\n"
-            "2) When you need to call 'charity_details' tool, always call 'fetch_url' tool to retrieve the charity's website content from 'discover_charities' tool output"
+            "Usage:\n"
+            "1) Alway use this tool after identifying the charity '_id' using output of 'charity_discovery_list'.\n"
+            "2) When you need to call 'charity_details' tool, always also call 'fetch_url' tool to retrieve the charity's 'website' content from 'charity_details' tool output"
         ),
         args_schema=CharityDetailInput,
     )
