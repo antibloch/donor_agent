@@ -37,19 +37,42 @@ def make_planner_node(tools_by_name: dict):
 
         prompt = f"""
 You are a planning module for a charity & donation assistant.
-Your job is to output a maximal set of tools plan that FULLY satisfies the user's request.
+Your job is to output a maximal relevant tool plan that FULLY satisfies the user's request.
 
 PLANNING GOAL:
-- Cover every part of the user’s request using the maximum tool calls.
-- Call more tools rather than fewer, as long as they are relevant to the user’s request and the conversation history.
+- Cover every part of the user's request.
+- Prefer reusing prior successful tool outputs from conversation history only for requirements they already satisfy.
+- For any requirement not already satisfied by conversation history, use the maximum relevant tool calls that help answer that unmet part of the request.
+- Avoid only truly redundant tool calls.
+- If conversation history does not already contain the required information, you should aggressively expand the plan to include all relevant tools that can contribute useful evidence or details.
 
 HARD CONSTRAINTS (must follow):
 A) COVERAGE CHECKLIST (do NOT output this checklist; use it silently):
 1. Identify ALL distinct user requirements.
-2. For EACH requirement, ensure at least one planned step will produce the needed information.
-3. If ANY requirement is not covered, add the minimal additional step(s).
-4. Use maximum number of tools that not only provide needed data to answer query, but also provide additonal information for future use.
-5. YOU MUST USE PRECISE TOOLS FROM FOLLOWING, that best match the user's query needs, as well as conversation history
+2. For EACH requirement, first check whether prior successful tool outputs in chat history already satisfy it.
+3. If prior successful tool outputs already satisfy a requirement, do NOT add a new tool step for that requirement.
+4. If a requirement is NOT satisfied by chat history, plan one or more tool steps for it.
+5. If multiple requirements remain uncovered, add multiple tool steps as needed to cover all of them.
+6. For uncovered requirements, prefer a rich plan with multiple relevant tools when they contribute meaningful evidence, comparison, validation, or supporting detail for the final answer.
+7. Do NOT add extra tools for requirements that are already satisfied by cached successful results.
+8. YOU MUST USE PRECISE TOOLS FROM FOLLOWING, that best match the user's query needs and the reusable conversation history.
+9. When chat history does NOT satisfy the request, bias strongly toward MORE relevant tool calls rather than fewer.
+10. For uncovered requests, under-planning is worse than over-planning.
+
+REUSE RULES:
+- Treat `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]` entries in chat history as reusable prior results.
+- If cached successful results are sufficient to answer the current turn, return `"steps": []`.
+- Re-call a previously used tool only when the user explicitly asks for refresh/latest/current data, or when the cached result is insufficient for the current request.
+- Do not repeat the same tool with the same effective purpose if cached successful output already exists.
+- When cached results cover only part of the request, reuse those results and aggressively plan tool calls for the uncovered parts.
+- It is valid and often desirable to return several tool steps when they all contribute to fully answering the current request.
+- Reuse of history is a guard against redundancy, not a reason to under-plan uncovered requirements.
+
+DECISION POLICY:
+- If chat history already contains enough successful information, reuse it and avoid redundant calls.
+- If chat history does NOT contain enough information, produce a broad plan using every relevant tool that can materially help answer the request.
+- For discovery, comparison, recommendation, evaluation, or research-style requests, prefer multiple complementary tools over a single narrow tool.
+- Only omit a relevant tool if it would add no meaningful information beyond what is already available from chat history or other planned steps.
 
 
 AVAILABLE TOOLS:
@@ -255,7 +278,9 @@ OUTPUT RULES (STRICT):
 - Do NOT reveal your chain-of-thought, reasoning, internal steps, or analysis.
 - Do NOT describe tool usage steps.
 - Do NOT output any code blocks or code snippets.
-- ONLY use information explicitly present in the Conversation History (especially TOOL outputs), do NOT invent or assume any facts not in the history.
+- The Conversation History may contain cached tool traces labeled as `CACHED_TOOL_CALL[...]` and cached successful results labeled as `CACHED_SUCCESS[...]`.
+- Treat `CACHED_SUCCESS[...]` as reusable factual evidence from prior successful tool execution.
+- ONLY use information explicitly present in the Conversation History (especially `CACHED_SUCCESS[...]` entries and other tool outputs), do NOT invent or assume any facts not in the history.
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
 
 RESPONSE STRUCTURE RULES:
@@ -278,7 +303,7 @@ RECOMMENDATION STYLE:
 - Tie each recommendation to evidence from available data.
 - If confidence is limited by missing data, state this clearly and suggest the next best donor action.
 
-Now write the final answer based strictly on the Conversation History below.
+Now write the final answer based strictly on the Conversation History below, including any `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]` entries.
 """
 
         transcript = format_history_for_responder(state.get("messages", []))
@@ -299,7 +324,6 @@ Now write the final answer based strictly on the Conversation History below.
         return {"messages": [summary], "final_answer": final_text}
 
     return responder
-
 
 
 def make_gate_node(tools_by_name: dict, max_repairs: int = 1):
@@ -363,6 +387,9 @@ Detected tool errors (most recent first):
 Cached recent tool outputs (USE THIS DATA EXACTLY — do NOT invent values):
 {cache}
 
+Conversation history may include cached successful tool traces labeled as `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]`.
+Treat `CACHED_SUCCESS[...]` entries as trustworthy reusable prior results when constructing repairs.
+
 CRITICAL INSTRUCTIONS — FOLLOW STRICTLY:
 
 1. Output ONLY valid JSON in this exact format, nothing else:
@@ -402,7 +429,7 @@ CRITICAL INSTRUCTIONS — FOLLOW STRICTLY:
 
 4. Think step-by-step about the error and the cached data, then output ONLY the JSON fix.
 
-Conversation History (current round only):
+Conversation History (current round only; may include `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]`):
 {history}
 """
 

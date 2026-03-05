@@ -95,14 +95,42 @@ def _compact_json(obj: Any, max_chars: int = 900) -> str:
         return s[:max_chars] + " ...[truncated]"
     return s
 
+def _extract_tool_error(payload: Any) -> Any | None:
+    if isinstance(payload, dict) and payload.get("ok") is False:
+        return payload.get("error") or payload.get("result") or payload
+
+    if isinstance(payload, list):
+        text_blocks = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            text = item.get("text")
+            if isinstance(text, str) and text.strip():
+                text_blocks.append(text.strip())
+        if text_blocks:
+            joined = "\n".join(text_blocks)
+            lower = joined.lower()
+            error_markers = (
+                "<error>",
+                "title: error",
+                "failed to retrieve",
+                "err_name_not_resolved",
+                "traceback",
+                "exception",
+                "error:",
+            )
+            if any(marker in lower for marker in error_markers):
+                return joined
+
+    return None
 
 def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
     payload = _safe_json_loads(tool_content) if isinstance(tool_content, str) else None
     if not payload:
         return f"TOOL[{tool_name}] -> {tool_content}"
 
-    if isinstance(payload, dict) and payload.get("ok") is False:
-        err = payload.get("error") or payload.get("result") or payload
+    err = _extract_tool_error(payload)
+    if err is not None:
         return f"TOOL[{tool_name}] ERROR -> {_compact_json(err, max_chars=TRUNCATION_TOOL_LIMIT)}"
 
     result = payload.get("result", payload) if isinstance(payload, dict) else payload

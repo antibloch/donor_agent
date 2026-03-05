@@ -32,13 +32,17 @@ async def setup_tools():
         get_donation_types_campaign, 
         campaign_donation,
 
-        # auction tools
-        get_active_auctions,
-        get_auction_details,
-        get_my_bid_history,
-        place_bid,
-        get_donation_categories,
-        get_charities_by_donation_type,
+        #auction tools
+        build_get_wallet_balance_tool(),
+        build_get_active_auctions_tool(),
+        build_get_auction_details_tool(),
+        build_get_auction_bids_tool(),
+        build_get_auction_items_tool(),
+        build_get_my_bid_history_tool(),
+        build_place_bid_tool(),
+        build_finalize_ended_auctions_tool(),
+        build_get_donation_categories_tool(),     
+        build_get_charities_by_category_tool(),
         
         # get_active_auctions,
         # get_auction_details,
@@ -121,7 +125,9 @@ def build_tool_context(
                 - Keep every tool that is plausibly useful for any part of the current request.
                 - Exclude a tool only if it is clearly irrelevant to the request and immediate follow-up needs.
                 - Prioritize recall over precision: false positives are acceptable, false negatives are not.
-                - Use chat history only to disambiguate intent and entities.
+                - Chat history may contain cached tool traces labeled as `CACHED_TOOL_CALL[...]` and cached successful results labeled as `CACHED_SUCCESS[...]`.
+                - Use `CACHED_SUCCESS[...]` to understand what information is already available, and use `CACHED_TOOL_CALL[...]` to understand which tools were previously used.
+                - Use chat history only to disambiguate intent, entities, and already-available information.
                 - Reason silently about required information, then include all tools that could provide it.
                 - Return only tool names that exist in the provided tool catalog.
                 - Never return an empty list unless no listed tool is remotely relevant.

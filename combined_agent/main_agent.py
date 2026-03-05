@@ -34,7 +34,7 @@ from rich.panel import Panel        # <-- Add this (optional but recommended)
 import dotenv
 
 dotenv.load_dotenv()
-GATE_REPAIR_LIMIT = int(os.getenv("GATE_REPAIR_LIMIT", "2"))
+GATE_REPAIR_LIMIT = int(os.getenv("GATE_REPAIR_LIMIT", "1"))
 
 
 class AgentState(TypedDict, total=False):

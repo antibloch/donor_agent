@@ -6,6 +6,7 @@ from tools.json_utils import (
     _safe_json_loads, 
     _compact_json, 
     _summarize_tool_output, 
+    _extract_tool_error,
     TRUNCATION_TOOL_LIMIT, 
     SENSITIVE_KEY_PATTERNS, 
     _sanitize_sensitive_data
@@ -101,10 +102,8 @@ def _compact_err(payload: dict) -> str:
 
 def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -> List[Dict[str, Any]]:
     current_round = get_current_round_messages(messages)
-    # If at least one repair cycle already happened in this round, only inspect
-    # tool outputs generated after the latest gate repair note.
-    # This makes each gate pass focus on failures from the immediately previous
-    # repair execution instead of re-processing older, already-addressed errors.
+    # After a repair attempt in the current round, only inspect tool outputs
+    # produced since the latest repair note so old failures do not get retried.
     start_idx = 0
     for i, m in enumerate(current_round):
         if not isinstance(m, AIMessage):
@@ -115,8 +114,6 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
 
     scoped_msgs = current_round[start_idx:]
     tool_msgs = [m for m in scoped_msgs if isinstance(m, ToolMessage)]
-    # First gate pass in a round: keep the historical window (last K).
-    # Subsequent gate passes: inspect the full previous repair-cycle output.
     if start_idx == 0 and isinstance(max_k, int) and max_k > 0:
         tool_msgs = tool_msgs[-max_k:]
 
@@ -137,8 +134,7 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
                 text = json.dumps(value, ensure_ascii=False, default=str)
             except Exception:
                 text = str(value)
-        low = text.lower()
-        return any(m in low for m in marker_lc)
+        return any(marker in text.lower() for marker in marker_lc)
 
     errors: List[Dict[str, Any]] = []
     for m in reversed(tool_msgs):
@@ -156,7 +152,7 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
                     "tool": m.name,
                     "tool_call_id": tcid,
                     "error": _compact_json(result, max_chars=800),
-                    "tool_message": raw
+                    "tool_message": raw,
                 })
                 continue
             err = payload.get("error", None)
@@ -165,14 +161,12 @@ def detect_recent_tool_errors(messages: Sequence[BaseMessage], max_k: int = 8) -
                     "tool": m.name,
                     "tool_call_id": tcid,
                     "error": _compact_json(err, max_chars=800),
-                    "tool_message": raw
+                    "tool_message": raw,
                 })
                 continue
 
         if _text_has_error_markers(raw):
             errors.append({"tool": m.name, "tool_call_id": tcid, "error": raw[:800], "tool_message": raw})
-            continue
-
     return errors
 
 def detect_latest_tool_error(messages: Sequence[BaseMessage], max_k: int = 8) -> Dict[str, Any] | None:
@@ -191,6 +185,34 @@ def _format_tool_calls_block(tool_calls: list) -> str:
 
         out.append(f"TOOL_CALL[{name} id={tid}] args={_compact_json(args, max_chars=TRUNCATION_TOOL_LIMIT)}")
     return "\n".join(out)
+
+def _format_planner_tool_calls_block(tool_calls: list) -> str:
+    out = []
+    for tc in tool_calls or []:
+        tid = tc.get("id") or tc.get("tool_call_id") or ""
+        name = tc.get("name") or ""
+        args = _sanitize_sensitive_data(dict(tc.get("args") or {}))
+
+        if name and name != "get_charity_stats" and "tool_name" not in args:
+            args["tool_name"] = name
+
+        out.append(f"CACHED_TOOL_CALL[{name} id={tid}] args={_compact_json(args, max_chars=TRUNCATION_TOOL_LIMIT)}")
+    return "\n".join(out)
+
+def _format_planner_tool_output(tool_name: str, tool_content: str) -> str:
+    summary = _summarize_tool_output(tool_name, tool_content)
+    if summary.startswith(f"TOOL[{tool_name}] -> "):
+        return summary.replace(f"TOOL[{tool_name}] -> ", f"CACHED_SUCCESS[{tool_name}] -> ", 1)
+    if summary.startswith(f"TOOL[{tool_name}] ERROR -> "):
+        return summary.replace(f"TOOL[{tool_name}] ERROR -> ", f"CACHED_ERROR[{tool_name}] -> ", 1)
+    return summary
+
+def _format_cached_tool_output(tool_name: str, tool_content: str) -> str:
+    return _format_planner_tool_output(tool_name, tool_content)
+
+def _format_synthetic_cached_tool_call(tool_name: str, tool_call_id: str | None = None) -> str:
+    tid = tool_call_id or ""
+    return f'CACHED_TOOL_CALL[{tool_name} id={tid}] args={{"tool_name": "{tool_name}", "source": "prior_successful_tool_message"}}'
 
 def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
     """Provides history for the repair node (Gate)."""
@@ -275,17 +297,17 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
                     if tcid and tcid in best_tool_by_call_id:
                         tm = best_tool_by_call_id[tcid]
                         payload = _safe_json_loads((tm.content or "").strip())
-                        if isinstance(payload, dict) and payload.get("ok") is True:
+                        if payload is not None and _extract_tool_error(payload) is None:
                             visible_calls.append(tc)
                     else:
                         visible_calls.append(tc)
                 if visible_calls:
-                    lines.append(_format_tool_calls_block(visible_calls))
+                    lines.append(_format_planner_tool_calls_block(visible_calls))
                     for tc in visible_calls:
                         tcid = tc.get("id") or tc.get("tool_call_id")
                         if tcid and tcid in best_tool_by_call_id:
                             tm = best_tool_by_call_id[tcid]
-                            lines.append(_summarize_tool_output(tm.name, tm.content))
+                            lines.append(_format_planner_tool_output(tm.name, tm.content))
                             seen_call_ids.add(tcid)
             if (m.content or "").strip():
                 lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
@@ -296,9 +318,10 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
             if m is not latest_tools_by_name.get(m.name):
                 continue
             payload = _safe_json_loads((m.content or "").strip())
-            if isinstance(payload, dict) and payload.get("ok") is False:
+            if payload is not None and _extract_tool_error(payload) is not None:
                 continue
-            lines.append(_summarize_tool_output(m.name, m.content))
+            lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
+            lines.append(_format_cached_tool_output(m.name, m.content))
     return "\n".join(lines) if lines else "(no prior history)"
 
 def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
@@ -321,12 +344,12 @@ def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
                     if tcid and tcid in best_tool_by_call_id:
                         tm = best_tool_by_call_id[tcid]
                         payload = _safe_json_loads((tm.content or "").strip())
-                        if isinstance(payload, dict) and payload.get("ok") is True:
+                        if payload is not None and _extract_tool_error(payload) is None:
                             visible_calls.append(tc)
                     else:
                         visible_calls.append(tc)
                 if visible_calls:
-                    lines.append(_format_tool_calls_block(visible_calls))
+                    lines.append(_format_planner_tool_calls_block(visible_calls))
                     for tc in visible_calls:
                         tcid = tc.get("id") or tc.get("tool_call_id")
                         if not tcid:
@@ -334,7 +357,7 @@ def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
                         seen_call_ids.add(tcid)
                         tm = best_tool_by_call_id.get(tcid)
                         if tm:
-                            lines.append(_summarize_tool_output(tm.name, tm.content))
+                            lines.append(_format_cached_tool_output(tm.name, tm.content))
             if (m.content or "").strip():
                 lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
         elif isinstance(m, ToolMessage):
@@ -344,7 +367,8 @@ def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
             if m is not latest_tools_by_name.get(m.name):
                 continue
             payload = _safe_json_loads((m.content or "").strip())
-            if isinstance(payload, dict) and payload.get("ok") is False:
+            if payload is not None and _extract_tool_error(payload) is not None:
                 continue
-            lines.append(_summarize_tool_output(m.name, m.content))
+            lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
+            lines.append(_format_cached_tool_output(m.name, m.content))
     return "\n".join(lines) if lines else "(empty)"
