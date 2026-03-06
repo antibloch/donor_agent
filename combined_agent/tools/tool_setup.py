@@ -1,5 +1,12 @@
 from .analytics import *
-from .auctions import *
+from .auctions import (
+    get_active_auctions,
+    get_auction_details,
+    get_my_bid_history,
+    place_bid,
+    get_donation_categories,
+    get_charities_by_donation_type,
+)
 from .transactions import *
 from langchain_experimental.tools import PythonREPLTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
@@ -33,22 +40,22 @@ async def setup_tools():
         campaign_donation,
 
         #auction tools
-        build_get_wallet_balance_tool(),
-        build_get_active_auctions_tool(),
-        build_get_auction_details_tool(),
-        build_get_auction_bids_tool(),
-        build_get_auction_items_tool(),
-        build_get_my_bid_history_tool(),
-        build_place_bid_tool(),
-        build_finalize_ended_auctions_tool(),
-        build_get_donation_categories_tool(),     
-        build_get_charities_by_category_tool(),
-        
-        # get_active_auctions,
-        # get_auction_details,
-        # get_my_bid_history,
-        # place_bid,
-        # build_get_donation_categories_tool(),
+        # auction tools
+        get_active_auctions,
+        get_auction_details,
+        get_my_bid_history,
+        place_bid,
+        get_donation_categories,
+        get_charities_by_donation_type,
+        # build_get_wallet_balance_tool(),
+        # build_get_active_auctions_tool(),
+        # build_get_auction_details_tool(),
+        # build_get_auction_bids_tool(),
+        # build_get_auction_items_tool(),
+        # build_get_my_bid_history_tool(),
+        # build_place_bid_tool(),
+        # build_finalize_ended_auctions_tool(),
+        # build_get_donation_categories_tool(),     
         # build_get_charities_by_category_tool(),
 
     ]

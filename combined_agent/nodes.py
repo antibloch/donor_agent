@@ -375,6 +375,7 @@ def make_gate_node(tools_by_name: dict, max_repairs: int = 1):
         prompt = f"""
 You are an EXPERT TOOL-REPAIR AGENT. Your sole job is to fix ALL tool failures listed below with MAXIMUM precision and correctness.
 
+
 Available tools:
 {tool_context}
 
