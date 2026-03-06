@@ -44,11 +44,7 @@ The graph contains five active nodes:
 
 The graph starts at `planner` and ends at `responder`.
 
-<br><br><br><br><br><br><br><br><br><br>
-
-<br>
-
-<br><br><br>
+<br><br>
 
 <br>
 
@@ -57,8 +53,6 @@ The graph starts at `planner` and ends at `responder`.
 <br>
 
 <br>
-
-
 
 ```mermaid
 flowchart TD
