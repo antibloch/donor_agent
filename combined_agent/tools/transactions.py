@@ -453,9 +453,12 @@ def get_all_active_campaigns():
                 - hasNextPage (bool): Whether a next page exists.
                 - hasPrevPage (bool): Whether a previous page exists.
     """
+    headers = {
+        "xApiKey":"eee8bae8b2db4915b9e544a7abbe4e8ced48814b52d7853bcc8c2253b35fd0bb:7c6cded935b7fc97542366898ba45c27"
+    }
     try:
         response = requests.get(
-            f"{BASE_URL}/api/v1/donors/fetch-all-active-campaigns",
+            f"{BASE_URL}/api/v3/agent/campaigns/active",
             headers=headers
         )
 
