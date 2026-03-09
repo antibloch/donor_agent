@@ -89,8 +89,29 @@ def build_charity_discovery_tool(
         - user wants listing, ranking, or comparison
         - charity_id is not yet known
 
-        RETURNS:
+        REQUIRES (Intuitive Schema):
+        - no required arguments, but `page` and `limit` can be used for pagination
+
+        REQUIRES (Detailed Schema):
+            - page (int): page index starting from 1
+            - limit (int): number of charities to return (recommended <= 1000)
+
+        RETURNS (Intuitive Schema):
         - candidate charities including _id and name
+
+        RETURNS (Detailed Schema):
+            - result.data.items -> list of charities where each item contains:
+              _id: unique charity identifier
+              name: charity name
+              uniqueDonorCount: number of unique donors
+              isVerified: whether charity is verified
+              isActive: whether charity is active
+              countryCode: country code
+              city: city of charity
+            - result.data.pagination contains:
+              page, limit, total, hasMore
+            - If hasMore=true, additional pages exist and may need to be fetched to compute global rankings (e.g., highest donor count).
+        
 
         CHAIN_OUTPUT_FOR_NEXT_TOOL:
         - output of this tool should supply the charity_id for charity_details
@@ -157,17 +178,32 @@ def build_charity_detail_tool(
         DEFAULT_CHAIN:
         - discover_charities -> charity_details -> fetch_url
 
-        REQUIRES:
+        REQUIRES (Intuitive Schema):
         - charity_id
+
+        REQUIRES (Detailed Schema):
+        - charity_id (str): the unique charity identifier obtained from discover_charities
 
         WHEN charity_id IS NOT YET AVAILABLE AT PLANNING TIME:
         - planner must still include this tool in the chain
         - use placeholder:
         "<BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>"
 
-        RETURNS:
+        RETURNS (Intuitive Schema):
         - detailed charity fields
         - website/contact information if available
+
+        RETURNS (Detailed Schema):
+        - result.data contains:
+            impactLife (bool): whether the charity supports impact-life donations
+            donationAmount (number): total donation amount received
+            totalDonationByProduct (number): donation amount linked to products
+            productCategories (list[str]): categories of products offered
+            products (list): each product includes:\n"
+            productName, pricePerUnit, description, category,totalDonated, isActive, status
+            blogs (list): blog posts with title, description, hashtags, and media
+            address: charity location (street, city, state, country, postalCode)
+            contact: charity contact information (email, phone, website)
 
         CHAIN_OUTPUT_FOR_NEXT_TOOL:
         - output of this tool should supply the website URL for fetch_url
