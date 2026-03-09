@@ -131,16 +131,15 @@ def make_validator_node(tools_by_name: dict):
             if tool_name not in tools_by_name:
                 messages.append(AIMessage(content=f"System Note: Tool '{tool_name}' not found."))
                 continue
-            if not args and missing_args:
-                continue
-            valid_steps.append(step)
+            valid_steps.append(step)  # ✅ pass all steps with known tools
 
         updated_plan = {"steps": valid_steps, "missing_args": missing_args}
 
+        # Only block if missing_args AND genuinely no steps at all
         if missing_args and not valid_steps:
             return {
                 "plan": updated_plan,
-                "messages": [AIMessage(content=f"System Note: STOP EXECUTION. The planner needs input. Ask the user strictly for: {', '.join(missing_args)}")]
+                "messages": [AIMessage(content=f"System Note: STOP EXECUTION. Ask user strictly for: {', '.join(missing_args)}")]
             }
         if not valid_steps and not missing_args:
             return {
