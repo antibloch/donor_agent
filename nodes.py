@@ -16,6 +16,8 @@ from history_formatters import (
 )
 from tools.tool_setup import build_tool_context
 
+import re
+
 import dotenv
 dotenv.load_dotenv()
 DEBUG_MESSAGES = int(dotenv.get_key(dotenv.find_dotenv(), "DEBUG_MESSAGES") or "0")
@@ -23,6 +25,67 @@ DO_SELECTION = (dotenv.get_key(dotenv.find_dotenv(), "DO_SELECTION") or "0").str
 SHOW_PLANNER_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_PLANNER_INPUT") or "0")
 SHOW_RESPONDER_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_RESPONDER_INPUT") or "0")
 SHOW_GATE_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_INPUT") or "0")
+
+
+_PLACEHOLDER_RE = re.compile(r"<([A-Z0-9_]+)>")
+
+def _resolve_args(raw_args: dict, prior_results: dict) -> dict:
+    """
+    Replace placeholder strings like <BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>
+    with values extracted from prior successful tool outputs in this execution round.
+    prior_results: {tool_name: parsed_result_dict}
+    """
+    resolved = {}
+    for key, val in raw_args.items():
+        if isinstance(val, str):
+            match = _PLACEHOLDER_RE.fullmatch(val.strip())
+            if match:
+                val = _lookup_placeholder(match.group(1), prior_results) or val
+        resolved[key] = val
+    return resolved
+
+def _lookup_placeholder(placeholder: str, prior_results: dict) -> str | None:
+    """
+    Heuristic: scan prior successful results for a value that matches
+    what the placeholder name implies.
+    e.g. BEST_MATCH_ID_FROM_DISCOVER_CHARITIES → look in discover_charities result for _id
+    """
+    placeholder_lower = placeholder.lower()
+
+    # Determine which prior tool's output to look in
+    source_tool = None
+    for tool_name in prior_results:
+        if tool_name.lower().replace("_", "") in placeholder_lower.replace("_", ""):
+            source_tool = tool_name
+            break
+
+    if not source_tool:
+        # Fallback: search all prior results
+        candidates = list(prior_results.values())
+    else:
+        candidates = [prior_results[source_tool]]
+
+    for result in candidates:
+        found = _deep_find_id(result)
+        if found:
+            return found
+    return None
+
+def _deep_find_id(obj, key_hints=("_id", "id", "charityId", "charity_id")):
+    """Recursively find the first ID-like value in a nested result."""
+    if isinstance(obj, dict):
+        for hint in key_hints:
+            if hint in obj and isinstance(obj[hint], str) and obj[hint]:
+                return obj[hint]
+        # Check inside common wrappers like {"result": {"data": {"items": [...]}}}
+        for v in obj.values():
+            found = _deep_find_id(v, key_hints)
+            if found:
+                return found
+    elif isinstance(obj, list) and obj:
+        return _deep_find_id(obj[0], key_hints)
+    return None
+
 
 def make_planner_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
@@ -218,6 +281,8 @@ def make_executor_node(tools_by_name: dict):
             return {}
 
         messages: List[BaseMessage] = []
+        prior_results: dict = {}   # ← track successful outputs by tool name
+
         for step in steps:
             tool_name = step.get("tool")
             raw_args = dict(step.get("args", {}) or {})
@@ -226,30 +291,28 @@ def make_executor_node(tools_by_name: dict):
                 messages.append(AIMessage(content=f"System Note: Tool '{tool_name}' not found. Skipping."))
                 continue
 
+            # ✅ Resolve placeholders from prior successful outputs
+            raw_args = _resolve_args(raw_args, prior_results)
+
             tool = tools_by_name[tool_name]
             tool_call_id = str(uuid4())
-
             messages.append(AIMessage(content="", tool_calls=[_mk_tool_call(tool_name, raw_args, tool_call_id)]))
 
             try:
-                # This is the key change: we now await the invocation
                 result = await _invoke_tool(tool, raw_args)
                 payload = _normalize_result(tool_name, result)
-
             except Exception as e:
-                error_msg = str(e)
-                payload = {
-                    "ok": False,
-                    "error": error_msg,
-                    "tool": tool_name,
-                    "args": raw_args
-                }
+                payload = {"ok": False, "error": str(e), "tool": tool_name, "args": raw_args}
 
             messages.append(ToolMessage(
                 content=json.dumps(payload, ensure_ascii=False, default=str),
                 name=tool_name,
                 tool_call_id=tool_call_id,
             ))
+
+            # ✅ Store successful results for downstream steps to use
+            if payload.get("ok"):
+                prior_results[tool_name] = payload.get("result")
 
             if DEBUG_MESSAGES == 1:
                 preview = payload.get("result") if payload.get("ok") else payload.get("error")
