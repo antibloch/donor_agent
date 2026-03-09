@@ -67,9 +67,10 @@ flowchart TD
     D -->|Missing args or no valid steps| H[Responder]
     E --> F[Gate]
     F -->|No recent tool errors| H
-    F -->|Errors found and repair limit not reached| G[Repair Plan]
-    G --> D
-    F -->|Repair limit reached| H
+    F -->|Errors found| G[Gate ReAct loop]
+    G -->|Emit one repair tool call| D
+    G -->|Need user input| D
+    G -->|No safe repair possible| H
     H --> I[Final Answer]
 ```
 
@@ -134,32 +135,55 @@ Failure:
 
 This makes downstream processing tool-agnostic.
 
-# Gate (Repair / Replanner Node)
+# Gate (ReAct Repair Agent)
 
 The gate runs after the executor.
 
-Its purpose is to detect tool failures and attempt automatic repair cycles. It looks only at the current round of tool outputs and checks for:
+Its purpose is to detect tool failures and attempt automatic repair cycles. The current implementation is not a generic replanner that returns a fresh full plan in one shot. It is a targeted ReAct-style repair agent that:
+
+- looks only at the current round of execution
+- inspects recent tool outputs for failures
+- chooses one unresolved error to work on next
+- decides one repair action at a time
+- executes that repair step immediately inside the gate
+- repeats for up to `GATE_MAX_REACT_STEPS`
+
+It detects failures using:
 
 - explicit `ok: false` failures
+- backend payloads that encode failure as `success: false`
 - traceback-like strings
 - common error markers such as `SyntaxError`, `TypeError`, `Invalid`, or `missing`
 
-If an error is found and the repair limit has not been reached, the gate asks the LLM to create a corrected plan and routes the flow back to the validator.
+For each ReAct step, the gate prompt asks the model to return exactly one JSON decision:
 
-This is especially useful when a multi-step request depends on one tool’s output being transformed by another tool, such as Python-based numeric analysis.
+<html><body><table><tr><td>Field</td><td>Meaning</td></tr><tr><td>`target_error_id`</td><td>Which unresolved error to work on now</td></tr><tr><td>`step`</td><td>At most one repair tool call to attempt next</td></tr><tr><td>`mark_target_fixed_if_success`</td><td>Whether a successful step should resolve the selected error</td></tr><tr><td>`done`</td><td>Stop repairing if no safe automatic step exists</td></tr><tr><td>`missing_args`</td><td>User inputs the gate could not derive from tools or cache</td></tr></table></body></html>
 
-# Multi-Gate Repair Attempts
+This is especially useful when a multi-step request depends on one tool’s output being transformed by another tool, such as Python-based numeric analysis, prerequisite discovery, or ID recovery.
 
-The gate supports more than one repair attempt, even though the default limit is usually `1`.
+# Gate ReAct Behavior
 
-The current implementation tracks `repair_attempts` in graph state and compares it with `max_repairs`, which is loaded from `GATE_REPAIR_LIMIT`.
+The gate maintains internal state for the current repair pass:
 
-<html><body><table><tr><td>Behavior</td><td>Implementation Detail</td></tr><tr><td>First failure pass</td><td>The gate inspects recent tool outputs and builds a repair prompt</td></tr><tr><td>Multiple detected failures</td><td>The repair prompt explicitly requires at least one repair step per detected error, in the same order</td></tr><tr><td>Repeated repair loops</td><td>The graph can cycle Gate → Validator → Executor → Gate until `repair_attempts` reaches `max_repairs`</td></tr><tr><td>Limit reached</td><td>The gate stops retrying and routes to the responder with a system note</td></tr></table></body></html>
+- original detected errors, each tagged with an `E1`, `E2`, ... identifier
+- errors already fixed
+- unresolved errors
+- attempted repair steps in the current gate run
+- successful tool outputs cached from the current round
+- any `missing_args` the gate discovered but could not fill automatically
 
-This means the gate has two separate “multi” behaviors:
+The gate follows these rules:
 
-- it can repair multiple tool failures inside one gate pass
-- it can perform multiple gate passes across the same user turn when the configured repair limit is greater than 1
+- it can choose a prerequisite repair step before retrying the failing tool
+- it must not invent IDs, passwords, URLs, or other arguments not grounded in history or cache
+- it filters repair arguments against the real tool schema before invoking the tool
+- it avoids duplicate or semantically equivalent repair steps in the same gate run
+- it can stop with `step: null` when no safe repair exists
+- it can return `missing_args` when repair requires new user input
+
+<html><body><table><tr><td>Behavior</td><td>Implementation Detail</td></tr><tr><td>Error discovery</td><td>`detect_recent_tool_errors()` inspects only the current round and ignores failures already superseded by later repair notes</td></tr><tr><td>One-step execution</td><td>The gate emits an `AIMessage` tool call and a matching `ToolMessage` result for each repair attempt it executes</td></tr><tr><td>Direct fix</td><td>If the repair succeeds and directly resolves the selected error, the gate marks that error fixed</td></tr><tr><td>Prerequisite fix</td><td>If the step only prepares for a later retry, the gate leaves the target error unresolved</td></tr><tr><td>User input needed</td><td>The gate returns `missing_args`, which are routed back through validator so the responder can ask the user</td></tr><tr><td>No safe repair</td><td>The gate stops and hands off to the responder with a system note</td></tr></table></body></html>
+
+The limit for internal ReAct iterations is loaded from `GATE_MAX_REACT_STEPS`.
 
 # Responder
 
@@ -178,7 +202,7 @@ The responder also has special behavior for password failures and reuses prior s
 
 Two routing functions in `routing.py` control the graph transitions after validation and repair.
 
-<html><body><table><tr><td>Decision Point</td><td>Condition</td><td>Route</td></tr><tr><td>After Validator</td><td>At least one valid tool step exists</td><td>Executor</td></tr><tr><td>After Validator</td><td>No valid steps remain, either because tools are unnecessary or because user input is missing</td><td>Responder</td></tr><tr><td>After Gate</td><td>Repair plan contains steps and repair limit is not reached</td><td>Validator</td></tr><tr><td>After Gate</td><td>No repair needed, no repair steps produced, or repair limit reached</td><td>Responder</td></tr></table></body></html>
+<html><body><table><tr><td>Decision Point</td><td>Condition</td><td>Route</td></tr><tr><td>After Validator</td><td>At least one valid tool step exists</td><td>Executor</td></tr><tr><td>After Validator</td><td>No valid steps remain, either because tools are unnecessary or because user input is missing</td><td>Responder</td></tr><tr><td>After Gate</td><td>`missing_args` returned by gate</td><td>Validator</td></tr><tr><td>After Gate</td><td>No missing args returned by gate</td><td>Responder</td></tr></table></body></html>
 
 # 2.4 State Schema
 
@@ -384,7 +408,7 @@ Based on the current codebase and README, the system depends on:
 
 # 8.2 Important Environment Variables
 
-<html><body><table><tr><td>Variable</td><td>Required</td><td>Description</td></tr><tr><td>OPENAI_API_KEY or equivalent configured key</td><td>Yes</td><td>Credential used by the OpenAI-compatible client, including NVIDIA NIM when exposed through that interface</td></tr><tr><td>OPENAI_BASE_URL or equivalent endpoint setting</td><td>Required for custom NIM deployments</td><td>Points the OpenAI-compatible client to the NVIDIA NIM server instead of a default hosted endpoint</td></tr><tr><td>Model name</td><td>Yes in practice</td><td>Name of the model exposed by the OpenAI-compatible endpoint and selected in `llm.py`</td></tr><tr><td>GATE_REPAIR_LIMIT</td><td>No</td><td>Maximum number of gate repair cycles for one user turn, default 1</td></tr><tr><td>DEBUG_MESSAGES</td><td>No</td><td>Prints detailed prompts and responses for debugging</td></tr><tr><td>DO_SELECTION</td><td>No</td><td>Enables LLM-based selector mode to reduce the visible tool catalog before planning</td></tr><tr><td>TRUNCATION_TOOL_LIMIT</td><td>Yes in practice</td><td>Controls tool output summarization length</td></tr></table></body></html>
+<html><body><table><tr><td>Variable</td><td>Required</td><td>Description</td></tr><tr><td>OPENAI_API_KEY or equivalent configured key</td><td>Yes</td><td>Credential used by the OpenAI-compatible client, including NVIDIA NIM when exposed through that interface</td></tr><tr><td>OPENAI_BASE_URL or equivalent endpoint setting</td><td>Required for custom NIM deployments</td><td>Points the OpenAI-compatible client to the NVIDIA NIM server instead of a default hosted endpoint</td></tr><tr><td>Model name</td><td>Yes in practice</td><td>Name of the model exposed by the OpenAI-compatible endpoint and selected in `llm.py`</td></tr><tr><td>GATE_MAX_REACT_STEPS</td><td>No</td><td>Maximum number of one-step ReAct repair attempts inside a single gate pass</td></tr><tr><td>DEBUG_MESSAGES</td><td>No</td><td>Prints detailed prompts and responses for debugging</td></tr><tr><td>DO_SELECTION</td><td>No</td><td>Enables LLM-based selector mode to reduce the visible tool catalog before planning</td></tr><tr><td>TRUNCATION_TOOL_LIMIT</td><td>Yes in practice</td><td>Controls tool output summarization length</td></tr></table></body></html>
 
 # 8.3 Starting the Agent
 
@@ -409,11 +433,11 @@ The executor does not reason about what to do next. It only runs the tools chose
 
 This separation improves speed and reduces cost because tool execution itself does not require another LLM reasoning cycle.
 
-# Gate-Based Repair Instead of Full ReAct
+# Gate Uses Targeted ReAct
 
-Instead of using a fully iterative ReAct-style agent for every turn, this project uses a targeted repair gate only when recent tool execution fails.
+Instead of using a fully iterative ReAct-style agent for every turn, this project uses a targeted ReAct repair agent only when recent tool execution fails.
 
-This keeps most successful flows lightweight, while still allowing automatic correction when a tool plan partially breaks.
+This keeps most successful flows lightweight, while still allowing automatic correction when a tool plan partially breaks. The ReAct loop is scoped to repair, not to the full end-to-end conversation.
 
 # Structured History Reuse
 
