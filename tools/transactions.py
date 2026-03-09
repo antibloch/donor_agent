@@ -280,31 +280,52 @@ def list_charities_in_country(country_code: str):
 @tool
 def list_charity_products(charity_id: str):
     """
-    Retrieve active donation products for a specific charity.
+        PURPOSE:
+        Retrieve active donation products for a specific charity and return detailed product information.
 
-    Use this tool when the user:
-    - wants to see donation products for a charity
-    - asks what they can donate to a selected charity
-    - wants product details like price, quantity, and impact
+        MUST_CALL_FIRST:
+        - after obtaining a valid charity_id from list_charities_by_country or discover_charities
 
-    Args:
-        charity_id (str): ID of the charity (from list_charities_in_country)
+        DEFAULT_CHAIN:
+        - discover_charities -> charity_details -> get_charity_donation_products
 
-    Returns:
-        dict:
-            success (bool)
-            products (list): List of donation products
-                - _id (str): Product ID
-                - name (str)
-                - description (str)
-                - pricePerUnit (float)
-                - minimumDonationQuantity (int)
-                - maximumDonationQuantity (int)
-                - availableQuantity (int)
-                - remainingQuantity (int)
-                - isActive (bool)
-            totalProducts (int)
-            message (str)
+        WHEN TO USE:
+        - user wants to see donation products for a selected charity
+        - user asks what they can donate to a charity
+        - user wants product details like price, quantity, and impact
+
+        REQUIRES (Intuitive Schema):
+        - charity_id (str): unique identifier of the charity
+
+        REQUIRES (Detailed Schema):
+            - charity_id (str): ID of the charity, obtained from list_charities_by_country or discover_charities
+
+        RETURNS (Intuitive Schema):
+        - active donation products for the charity including id, name, price, and availability
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates if the request was successful
+            - products (list) -> each item contains:
+                _id (str): product identifier
+                name (str): product name
+                description (str)
+                pricePerUnit (float)
+                minimumDonationQuantity (int)
+                maximumDonationQuantity (int)
+                availableQuantity (int)
+                remainingQuantity (int)
+                isActive (bool)
+            - totalProducts (int): total number of products returned
+            - message (str): any status or informational message
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - product _id can be used for tools requiring donation product selection or checkout
+        - if planning before execution, planner should use placeholder:
+        "<SELECTED_PRODUCT_ID_FROM_GET_CHARITY_DONATION_PRODUCTS>"
+
+        DO NOT STOP HERE WHEN:
+        - user wants further charity information or campaign context
+        - additional product details are needed
     """
     params = {"page": 1, "limit": 50}
     headers = {
@@ -375,32 +396,59 @@ def list_charity_products(charity_id: str):
 @tool
 def list_charity_grants(charity_id: str):
     """
-    Retrieve all grants for a specific charity.
+        PURPOSE:
+        Retrieve all grants for a specific charity and return detailed grant information.
 
-    Use this tool when the user:
-        - wants to see grants for a charity
-        - asks what grants they can donate to a selected charity
-        - grants details such as raised amount, title, etc.
+        MUST_CALL_FIRST:
+        - after obtaining a valid charity_id from list_charities_by_country or discover_charities
 
-    Args:
-        charity_id (str): ID of the charity (from list_charities_in_country)
+        DEFAULT_CHAIN:
+        - discover_charities -> charity_details -> get_charity_grants
 
-    Returns:
-        dict:
-            success (bool)
-            grants (list): List of grant objects
-                - _id (str): Grant ID
-                - title (str)
-                - description (str)
-                - expectedAmount (float)
-                - raisedAmount (float)
-                - status (str)
-                - location (dict): { city, state, country, countryCode, latitude, longitude }
-                - charityId (str): Reference to the charity
-                - createdAt (str)
-                - updatedAt (str)
-            totalGrants (int)
-            message (str)
+        WHEN TO USE:
+        - user wants to see grants available for a selected charity
+        - user asks what grants they can donate to
+        - user wants details like raised amount, title, status, and location
+
+        REQUIRES (Intuitive Schema):
+        - charity_id (str): unique identifier of the charity
+
+        REQUIRES (Detailed Schema):
+            - charity_id (str): ID of the charity, obtained from list_charities_by_country or discover_charities
+
+        RETURNS (Intuitive Schema):
+        - list of grants for the charity including id, title, and status
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates if the request was successful
+            - grants (list) -> each item contains:
+                _id (str): grant identifier
+                title (str)
+                description (str)
+                expectedAmount (float)
+                raisedAmount (float)
+                status (str)
+                location (dict):
+                    city (str)
+                    state (str)
+                    country (str)
+                    countryCode (str)
+                    latitude (float)
+                    longitude (float)
+                charityId (str): reference to the charity
+                createdAt (str)
+                updatedAt (str)
+            - totalGrants (int): total number of grants returned
+            - message (str): any status or informational message
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - grant _id can be used for tools requiring grant selection or checkout
+        - if planning before execution, planner should use placeholder:
+        "<SELECTED_GRANT_ID_FROM_GET_CHARITY_GRANTS>"
+
+        DO NOT STOP HERE WHEN:
+        - user wants further charity information or donation product context
+        - additional grant details are needed
     """
     try:
         headers = {
@@ -472,23 +520,64 @@ def list_charity_grants(charity_id: str):
 @tool
 def list_charity_active_campaigns(charity_id: str):
     """
-    Retrieve all active campaigns, for a specific charity.
+        PURPOSE:
+        Retrieve all active campaigns for a specific charity and return detailed campaign information.
 
-    Use this tool when the user:
-        - wants to see active campaigns for a charity
-        - asks what campaigns they can donate to a selected charity
-        - campaign details such as raised amount, title, etc.
-        - asks which donation types are valid for a selected campaign
+        MUST_CALL_FIRST:
+        - after obtaining a valid charity_id from list_charities_by_country or discover_charities
 
-    Args:
-        charity_id (str): ID of the charity (from list_charities_in_country)
+        DEFAULT_CHAIN:
+        - discover_charities -> charity_details -> get_charity_campaigns
 
-    Returns:
-        dict:
-            - success (bool)
-            - campaigns (list): List of active campaign objects (flattened)
-            - pagination (dict): { page, limit, total, hasMore }
-            - message (str)
+        WHEN TO USE:
+        - user wants to see active campaigns for a selected charity
+        - user asks what campaigns they can donate to
+        - user wants details like raised amount, title, and valid donation types
+
+        REQUIRES (Intuitive Schema):
+        - charity_id (str): unique identifier of the charity
+
+        REQUIRES (Detailed Schema):
+            - charity_id (str): ID of the charity, obtained from list_charities_by_country or discover_charities
+
+        RETURNS (Intuitive Schema):
+        - list of active campaigns including id, title, and status
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates if the request was successful
+            - campaigns (list) -> each item contains campaign details (flattened):
+                _id (str): campaign identifier
+                title (str)
+                description (str)
+                expectedAmount (float)
+                raisedAmount (float)
+                status (str)
+                donationTypes (list): valid donation types for this campaign
+                startDate (str)
+                endDate (str)
+                charityId (str): reference to the charity
+                location (dict):
+                    city (str)
+                    state (str)
+                    country (str)
+                    countryCode (str)
+                    latitude (float)
+                    longitude (float)
+            - pagination (dict):
+                page (int)
+                limit (int)
+                total (int)
+                hasMore (bool)
+            - message (str): any status or informational message
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - campaign _id can be used for tools requiring campaign selection or checkout
+        - if planning before execution, planner should use placeholder:
+        "<SELECTED_CAMPAIGN_ID_FROM_GET_CHARITY_CAMPAIGNS>"
+
+        DO NOT STOP HERE WHEN:
+        - user wants further charity, grant, or product details
+        - additional campaign details are needed
     """
     try:
         headers = {
