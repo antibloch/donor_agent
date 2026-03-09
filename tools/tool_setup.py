@@ -110,16 +110,22 @@ def build_tool_context(
 
         selector_prompt = f"""
                 You are a tool selector for a planner. Build a MAXIMAL PLAUSIBLE subset of tools for the current user request.
-                Goal: remove only clearly implausible tools, while preserving all tools that could reasonably help answer the request.
+                Goal: remove only clearly implausible tools, while preserving all tools needed for the full dependency-aware orchestration that could answer the request.
 
                 Rules:
                 - Keep every tool that is plausibly useful for any part of the current request.
+                - Keep prerequisite tools, downstream tools, and follow-up tools when the tool descriptions indicate they form a normal dependency chain.
+                - Do not keep only the first tool in a chain if later tools are needed to actually answer the user.
                 - Exclude a tool only if it is clearly irrelevant to the request and immediate follow-up needs.
                 - Prioritize recall over precision: false positives are acceptable, false negatives are not.
                 - Chat history may contain cached tool traces labeled as `CACHED_TOOL_CALL[...]` and cached successful results labeled as `CACHED_SUCCESS[...]`.
                 - Use `CACHED_SUCCESS[...]` to understand what information is already available, and use `CACHED_TOOL_CALL[...]` to understand which tools were previously used.
                 - Use chat history only to disambiguate intent, entities, and already-available information.
-                - Reason silently about required information, then include all tools that could provide it.
+                - Reason silently about the complete path from user request to answer, then include all tools that could be needed along that path.
+                - Prefer complete dependency coverage over aggressive narrowing.
+                - If a vague charity name is mentioned, preserve the default charity chain when relevant.
+                - If downstream arguments are not yet known, still preserve the tool that will need those arguments later.
+                - Keep auth-sensitive action tools and any prerequisite lookup tools needed to execute them safely.
                 - Return only tool names that exist in the provided tool catalog.
                 - Never return an empty list unless no listed tool is remotely relevant.
                 - Output STRICT JSON only in this format:
