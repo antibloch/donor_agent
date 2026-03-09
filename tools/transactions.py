@@ -860,22 +860,6 @@ def product_donation(
             "data": {}
         }
 @tool
-def product_donation_on_behalf(
-    charityId: str, 
-    partners: list, 
-    categories: list, 
-    country: str, 
-    countryCode: str, 
-    products: list, 
-    password: str,
-    identity: str,
-    fullName: str,
-    type: str
-):
-    pass
-
-
-@tool
 def campaign_donation(
     campaignId: str,
     amount: float,
@@ -1157,4 +1141,5 @@ metadata_transaction = {
     }
 
 }
+
 
