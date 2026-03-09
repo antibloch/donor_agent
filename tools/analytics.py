@@ -2,6 +2,8 @@ import requests
 from pydantic import BaseModel, Field
 from langchain_core.tools import StructuredTool
 from .tool_helpers import _ok, _fail, _get
+from langchain_experimental.tools import PythonREPLTool
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 
 # From your message / deployment:
@@ -72,34 +74,33 @@ def build_charity_discovery_tool(
     return StructuredTool.from_function(
         func=discover_charities,
         name="discover_charities",
-        description=(
-            "Retrieve a coarse-grained list of charities with their brief info.\n\n"
-            "Use this tool when you need to:\n"
-            "- list available charities\n"
-            "- compare charities (e.g., highest donor count)\n"
-            "- obtain charity IDs for fetching detailed information\n\n"
-            "- find if a particular charity exists with similar name\n\n"
-            "Arguments:\n"
-            "- page (int): page index starting from 1\n"
-            "- limit (int): number of charities to return (recommended <= 1000)\n"
-            "Response structure:\n"
-            "result.data.items -> list of charities where each item contains:\n"
-            "  _id: unique charity identifier\n"
-            "  name: charity name\n"
-            "  uniqueDonorCount: number of unique donors\n"
-            "  isVerified: whether charity is verified\n"
-            "  isActive: whether charity is active\n"
-            "  countryCode: country code\n"
-            "  city: city of charity\n\n"
-            "result.data.pagination contains:\n"
-            "  page, limit, total, hasMore\n\n"
-            "If hasMore=true, additional pages exist and may need to be fetched "
-            "to compute global rankings (e.g., highest donor count).\n\n"
-            "Usage:\n"
-            "1) Call this tool to retrieve charities.\n"
-            "2) Extract the charity '_id'.\n"
-            "3) Donot use 'discover_charities' tool to get full details about some charity. Use 'charity_details' tool to fetch full details from charity '_id' (alongside with 'fetch_url' at URL of charity from 'charity_details' output)."
-        ),
+        description = """
+        PURPOSE:
+        Discover charities by name or search text and return candidate charity records.
+
+        MUST_CALL_FIRST:
+        - for vague, fuzzy, partial, or misspelled charity-name requests
+
+        DEFAULT_CHAIN:
+        - discover_charities -> charity_details -> fetch_url
+
+        WHEN TO USE:
+        - user asks about a charity by name but exact identity is uncertain
+        - user wants listing, ranking, or comparison
+        - charity_id is not yet known
+
+        RETURNS:
+        - candidate charities including _id and name
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - output of this tool should supply the charity_id for charity_details
+        - if planning before execution, planner should use placeholder:
+        "<BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>"
+
+        DO NOT STOP HERE WHEN:
+        - user asks for general information about a specific charity
+        - deeper charity details are needed
+        """,
         args_schema=CharityDiscoveryInput,
     )
 
@@ -146,35 +147,133 @@ def build_charity_detail_tool(
     return StructuredTool.from_function(
         func=charity_details,
         name="charity_details",
-        description=(
-            "Retrieve detailed information and donation statistics for a specific charity or a charity with similar name.\n\n"
-            "Use this tool when the user asks about:\n"
-            "- donation statistics\n"
-            "- products or product categories\n"
-            "- blogs or updates from the charity\n"
-            "- address or contact information\n"
-            "- detailed charity profile\n\n"
-            "Argument:\n"
-            "- charity_id (str): the unique charity identifier obtained from "
-            "'charity_discovery_list'.\n\n"
-            "Response structure:\n"
-            "result.data contains:\n"
-            "  impactLife (bool): whether the charity supports impact-life donations\n"
-            "  donationAmount (number): total donation amount received\n"
-            "  totalDonationByProduct (number): donation amount linked to products\n"
-            "  productCategories (list[str]): categories of products offered\n"
-            "  products (list): each product includes:\n"
-            "      productName, pricePerUnit, description, category,\n"
-            "      totalDonated, isActive, status\n"
-            "  blogs (list): blog posts with title, description, hashtags, and media\n"
-            "  address: charity location (street, city, state, country, postalCode)\n"
-            "  contact: charity contact information (email, phone, website)\n\n"
-            "Usage:\n"
-            "1) Alway use this tool after identifying the charity '_id' using output of 'charity_discovery_list'.\n"
-            "2) When you need to call 'charity_details' tool, always also call 'fetch_url' tool to retrieve the charity's 'website' content from 'charity_details' tool output"
-        ),
+        description = """
+        PURPOSE:
+        Retrieve full details for one charity using charity_id.
+
+        MUST_FOLLOW:
+        - discover_charities for vague or fuzzy charity-name queries
+
+        DEFAULT_CHAIN:
+        - discover_charities -> charity_details -> fetch_url
+
+        REQUIRES:
+        - charity_id
+
+        WHEN charity_id IS NOT YET AVAILABLE AT PLANNING TIME:
+        - planner must still include this tool in the chain
+        - use placeholder:
+        "<BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>"
+
+        RETURNS:
+        - detailed charity fields
+        - website/contact information if available
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - output of this tool should supply the website URL for fetch_url
+        - if planning before execution, planner should use placeholder:
+        "<WEBSITE_URL_FROM_CHARITY_DETAILS>"
+
+        DO NOT USE ALONE WHEN:
+        - the charity was not yet resolved from a fuzzy name
+        """,
         args_schema=CharityDetailInput,
     )
+
+
+
+
+def Python_tool():
+    python_tool = PythonREPLTool()
+    python_tool.name = "Python_REPL"
+    python_tool.description = """
+    PURPOSE:
+    Run Python code to compute, transform, aggregate, sort, filter, compare, or summarize structured data that was already obtained from other tools.
+
+    MUST_NOT_CALL_FIRST:
+    - Never use this tool as the first tool for a charity-information request.
+    - Never use this tool to search for charities, identify a charity, fetch charity details, or fetch website content.
+
+    REQUIRED_PREDECESSOR:
+    - This tool must use data already returned by discover_charities and/or charity_details.
+    - It may also use data returned by fetch_url only if the website text has already been fetched and needs structured processing.
+
+    WHEN TO USE:
+    - when the user asks for calculations
+    - when the user asks for mean, median, max, min, count, ranking, sorting, grouping, filtering, percentages, or comparisons
+    - when multiple charity records from discover_charities need numeric/statistical analysis
+    - when charity_details output needs structured extraction or computation
+    - when tool output is too large and needs deterministic post-processing
+
+    WHEN NOT TO USE:
+    - when the needed information can be answered directly from discover_charities or charity_details without computation
+    - when no prior tool output exists yet
+    - when the task is entity resolution, search, lookup, or website retrieval
+    - when the model can answer directly without code execution
+
+    INPUT SOURCE POLICY:
+    - Prefer discover_charities output for list-level analytics across many charities
+    - Prefer charity_details output for deep analysis of one resolved charity
+    - Prefer fetch_url output only after the webpage has already been fetched and only if code-based parsing/counting is actually useful
+    - Do not fabricate data; only operate on prior tool outputs from chat history
+
+    DEFAULT DEPENDENCY CHAINS:
+    - discover_charities -> Python_REPL
+    - discover_charities -> charity_details -> Python_REPL
+    - discover_charities -> charity_details -> fetch_url -> Python_REPL
+
+    CHAIN POSITION:
+    - post-processing tool
+    - usually final tool in a chain, after retrieval tools have produced data
+
+    EXAMPLES:
+    - 'Which charity has the highest donor count?' -> discover_charities -> Python_REPL
+    - 'What are the mean and median donor counts across charities?' -> discover_charities -> Python_REPL
+    - 'Compare donation fields for this charity and summarize totals' -> charity_details -> Python_REPL
+    - 'Count how many times education is mentioned on the charity website' -> charity_details -> fetch_url -> Python_REPL
+    """
+
+
+    return python_tool
+
+
+async def Crawler_tool():
+    client = MultiServerMCPClient({
+        "fetch": {"transport": "stdio", "command": "npx", "args": ["-y", "fetcher-mcp"]}
+    })
+    mcp_tools = await client.get_tools()
+    crawler_tool = []
+    for tool in mcp_tools:
+        if tool.name in ['fetch_url']:
+            description = """
+                        PURPOSE:
+                        Fetch webpage text/content from a known URL.
+
+                        MUST_FOLLOW:
+                        - charity_details when a website exists and the user asked for general info or website-enriched info
+
+                        DEFAULT_CHAIN:
+                        - discover_charities -> charity_details -> fetch_url
+
+                        REQUIRES:
+                        - url
+
+                        WHEN url IS NOT YET AVAILABLE AT PLANNING TIME:
+                        - planner must still include this tool if it is part of the required chain
+                        - use placeholder:
+                        "<WEBSITE_URL_FROM_CHARITY_DETAILS>"
+
+                        USE WHEN:
+                        - website content can enrich or complete the final answer
+
+                        DO NOT USE:
+                        - as a search tool
+                        - before charity website is known or expected from charity_details
+                        """
+            setattr(tool, 'description', description)
+            crawler_tool.append(tool)
+
+    return crawler_tool
 
 
 

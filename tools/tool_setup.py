@@ -1,4 +1,8 @@
-from .analytics import *
+from .analytics import (build_charity_discovery_tool, 
+                        build_charity_detail_tool, 
+                        Python_tool, 
+                        Crawler_tool
+                        )
 from .auctions import (
     get_active_auctions,
     get_auction_details,
@@ -8,8 +12,6 @@ from .auctions import (
     get_charities_by_donation_type,
 )
 from .transactions import *
-from langchain_experimental.tools import PythonREPLTool
-from langchain_mcp_adapters.client import MultiServerMCPClient
 from typing import Any
 import json
 from langchain_core.messages import HumanMessage
@@ -18,11 +20,12 @@ from langchain_core.messages import HumanMessage
 # --------------------------
 
 async def setup_tools():
+
     local_tools = [
         # charity analytics tools
         build_charity_discovery_tool(),
         build_charity_detail_tool(),
-        PythonREPLTool(),
+        Python_tool,
 
         # transactions tools
         check_wallet_balance, 
@@ -60,27 +63,9 @@ async def setup_tools():
 
     ]
 
-    client = MultiServerMCPClient({
-        "fetch": {"transport": "stdio", "command": "npx", "args": ["-y", "fetcher-mcp"]}
-    })
-
-
-    mcp_tools = await client.get_tools()
-    crawler_tool = []
-    for tool in mcp_tools:
-        if tool.name in ['fetch_url']:
-            desc = "Retrieve web page content from a specified URL.\n"
-            desc += "\nParameters:\n"
-            desc += "  - url (required, string): The full URL to fetch. Must include schema (e.g., 'https://...'). Prefer https over http.\n"
-            desc += "\nUsage Rules:\n"
-            desc += "  - ALWAYS call 'fetch_url' WHENEVER you call the 'charity_details' tool\n, and ONLY use the website URL from 'charity_details' tool output.\n"
-            desc += "  - If 'discover_charities' was NOT called in conversation history, you MUST still call 'fetch_url' alongside 'charity_details', using the charity's default website URL.\n"
-            desc += "  - If 'discover_charities' WAS called in conversation history, you MUST call 'fetch_url' with the relevant URL from the 'discover_charities' tool output.\n"
-            setattr(tool, 'description', desc)
-            crawler_tool.append(tool)
+    crawler_tools = await Crawler_tool()
+    return [*local_tools, *crawler_tools]
     
-    return [*local_tools, *crawler_tool] 
-
 
 
 
