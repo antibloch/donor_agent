@@ -193,6 +193,10 @@ def make_executor_node(tools_by_name: dict):
                     parsed = json.loads(s)
                     if isinstance(parsed, dict) and parsed.get("ok") is False:
                         return parsed
+                    # ✅ NEW: detect success: false API pattern
+                    if parsed.get("success") is False:
+                        msg = parsed.get("message") or parsed.get("error") or "Tool returned success=false"
+                        return {"ok": False, "error": str(msg), "result": parsed}
                     return {"ok": True, "result": parsed}
                 except json.JSONDecodeError:
                     pass

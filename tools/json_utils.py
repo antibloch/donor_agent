@@ -99,6 +99,15 @@ def _extract_tool_error(payload: Any) -> Any | None:
     if isinstance(payload, dict) and payload.get("ok") is False:
         return payload.get("error") or payload.get("result") or payload
 
+    # ✅ NEW: detect raw API-level failure pattern (success: false)
+    if payload.get("success") is False:
+        return payload.get("message") or payload.get("error") or payload
+
+    # ✅ NEW: detect falsely-wrapped failures {"ok": True, "result": {"success": false, ...}}
+    result = payload.get("result")
+    if isinstance(result, dict) and result.get("success") is False:
+        return result.get("message") or result.get("error") or result
+    
     if isinstance(payload, list):
         text_blocks = []
         for item in payload:
