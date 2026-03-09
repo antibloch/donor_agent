@@ -25,7 +25,7 @@ async def setup_tools():
         # charity analytics tools
         build_charity_discovery_tool(),
         build_charity_detail_tool(),
-        Python_tool,
+        Python_tool(),
 
         # transactions tools
         check_wallet_balance, 
