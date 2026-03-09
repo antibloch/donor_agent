@@ -66,16 +66,10 @@ def get_current_round_messages(messages: Sequence[BaseMessage]) -> List[BaseMess
 
 def get_latest_tool_per_name(messages: Sequence[BaseMessage]) -> Dict[str, ToolMessage]:
     latest_any: Dict[str, ToolMessage] = {}
-    latest_ok: Dict[str, ToolMessage] = {}
     for m in messages or []:
         if isinstance(m, ToolMessage):
             latest_any[m.name] = m
-            payload = _safe_json_loads((m.content or "").strip())
-            if isinstance(payload, dict) and payload.get("ok") is True:
-                latest_ok[m.name] = m
-    out = dict(latest_any)
-    out.update(latest_ok)
-    return out
+    return latest_any
 
 def get_best_tool_message_by_call_id(messages: Sequence[BaseMessage]) -> Dict[str, ToolMessage]:
     latest_any: Dict[str, ToolMessage] = {}
@@ -92,6 +86,48 @@ def get_best_tool_message_by_call_id(messages: Sequence[BaseMessage]) -> Dict[st
     out = dict(latest_any)
     out.update(latest_ok)
     return out
+
+def get_superseded_failed_call_ids(messages: Sequence[BaseMessage]) -> set[str]:
+    tool_name_by_call_id: Dict[str, str] = {}
+    first_tool_index_by_call_id: Dict[str, int] = {}
+    failed_tool_index_by_call_id: Dict[str, int] = {}
+    latest_ok_index_by_tool: Dict[str, int] = {}
+
+    for idx, m in enumerate(messages or []):
+        if isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
+            for tc in m.tool_calls or []:
+                tcid = tc.get("id") or tc.get("tool_call_id")
+                name = tc.get("name") or ""
+                if not tcid or not name:
+                    continue
+                tool_name_by_call_id[tcid] = name
+                first_tool_index_by_call_id.setdefault(tcid, idx)
+
+        if not isinstance(m, ToolMessage):
+            continue
+
+        tcid = getattr(m, "tool_call_id", None)
+        name = m.name or ""
+        payload = _safe_json_loads((m.content or "").strip())
+        is_ok = isinstance(payload, dict) and payload.get("ok") is True and _extract_tool_error(payload) is None
+
+        if is_ok and name:
+            latest_ok_index_by_tool[name] = idx
+            continue
+
+        if tcid:
+            failed_tool_index_by_call_id[tcid] = idx
+
+    superseded: set[str] = set()
+    for tcid, fail_idx in failed_tool_index_by_call_id.items():
+        tool_name = tool_name_by_call_id.get(tcid)
+        if not tool_name:
+            continue
+        ok_idx = latest_ok_index_by_tool.get(tool_name)
+        if ok_idx is not None and ok_idx > fail_idx:
+            superseded.add(tcid)
+
+    return superseded
 
 def _compact_err(payload: dict) -> str:
     try:
@@ -281,6 +317,7 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
     
     latest_tools_by_name = get_latest_tool_per_name(msgs)
     best_tool_by_call_id = get_best_tool_message_by_call_id(msgs)
+    superseded_failed_call_ids = get_superseded_failed_call_ids(msgs)
     lines = []
     seen_call_ids: set[str] = set()
     
@@ -294,6 +331,8 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
                 visible_calls = []
                 for tc in m.tool_calls or []:
                     tcid = tc.get("id") or tc.get("tool_call_id")
+                    if tcid and tcid in superseded_failed_call_ids:
+                        continue
                     if tcid and tcid in best_tool_by_call_id:
                         tm = best_tool_by_call_id[tcid]
                         payload = _safe_json_loads((tm.content or "").strip())
@@ -325,8 +364,19 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
     return "\n".join(lines) if lines else "(no prior history)"
 
 def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
+    current_round = get_current_round_messages(messages)
+    current_round_ids = {id(m) for m in current_round}
+    current_round_failed_tools: set[str] = set()
+    for m in current_round:
+        if not isinstance(m, ToolMessage):
+            continue
+        payload = _safe_json_loads((m.content or "").strip())
+        if payload is not None and _extract_tool_error(payload) is not None and m.name:
+            current_round_failed_tools.add(m.name)
+
     latest_tools_by_name = get_latest_tool_per_name(messages)
     best_tool_by_call_id = get_best_tool_message_by_call_id(messages)
+    superseded_failed_call_ids = get_superseded_failed_call_ids(messages)
     lines = []
     seen_call_ids: set[str] = set()
     
@@ -340,7 +390,12 @@ def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
             if getattr(m, "tool_calls", None):
                 visible_calls = []
                 for tc in m.tool_calls or []:
+                    name = tc.get("name") or ""
+                    if id(m) not in current_round_ids and name in current_round_failed_tools:
+                        continue
                     tcid = tc.get("id") or tc.get("tool_call_id")
+                    if tcid and tcid in superseded_failed_call_ids:
+                        continue
                     if tcid and tcid in best_tool_by_call_id:
                         tm = best_tool_by_call_id[tcid]
                         payload = _safe_json_loads((tm.content or "").strip())
@@ -361,6 +416,8 @@ def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
             if (m.content or "").strip():
                 lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
         elif isinstance(m, ToolMessage):
+            if id(m) not in current_round_ids and m.name in current_round_failed_tools:
+                continue
             tcid = getattr(m, "tool_call_id", None)
             if tcid and tcid in seen_call_ids:
                 continue

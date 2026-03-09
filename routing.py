@@ -5,4 +5,6 @@ def route_after_validator(state: dict) -> str:
 
 
 def route_after_gate(state: dict) -> str:
-    return "responder"
+    plan = state.get("plan", {}) or {}
+    missing_args = plan.get("missing_args", []) or []
+    return "validator" if missing_args else "responder"

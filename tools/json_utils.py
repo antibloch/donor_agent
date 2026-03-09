@@ -96,18 +96,41 @@ def _compact_json(obj: Any, max_chars: int = 900) -> str:
     return s
 
 def _extract_tool_error(payload: Any) -> Any | None:
-    if isinstance(payload, dict) and payload.get("ok") is False:
-        return payload.get("error") or payload.get("result") or payload
+    if isinstance(payload, dict):
+        if payload.get("ok") is False:
+            return payload.get("error") or payload.get("result") or payload
 
-    # ✅ NEW: detect raw API-level failure pattern (success: false)
-    if payload.get("success") is False:
-        return payload.get("message") or payload.get("error") or payload
+        if payload.get("success") is False:
+            return (
+                payload.get("error")
+                or payload.get("message")
+                or payload.get("result")
+                or payload
+            )
 
-    # ✅ NEW: detect falsely-wrapped failures {"ok": True, "result": {"success": false, ...}}
-    result = payload.get("result")
-    if isinstance(result, dict) and result.get("success") is False:
-        return result.get("message") or result.get("error") or result
-    
+        message = payload.get("message")
+        if isinstance(message, str):
+            lower = message.lower()
+            message_error_markers = (
+                "request failed",
+                "client error",
+                "server error",
+                "unauthorized",
+                "forbidden",
+                "invalid",
+                "missing",
+                "exception",
+                "error:",
+            )
+            if any(marker in lower for marker in message_error_markers):
+                return message
+
+        nested_result = payload.get("result")
+        if nested_result is not None:
+            nested_err = _extract_tool_error(nested_result)
+            if nested_err is not None:
+                return nested_err
+
     if isinstance(payload, list):
         text_blocks = []
         for item in payload:
