@@ -7,6 +7,7 @@ DONATION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhO
 headers = {
     "Authorization": f"Bearer {DONATION_TOKEN}"
 }
+xApiKey = "giverr_ai_live_9f3b7c6e2d4a8f1c5e7b9a2c6d1f4e8b3c7a9d2e6f1b4c8a3d7e2f6c9b1a4e8"
 
 def verify_user_password(password: str = None):
     import bcrypt
@@ -24,81 +25,84 @@ PASSWORD = "Google@123"
 @tool
 def check_wallet_balance():
     """
-    Fetch the wallet details for the authenticated user.  
-    Returns: 
-        dict:
-            - success (bool): Indicates whether the request was successful
-            - message (str): Response message from the API 
-            - wallet (dict | None):
-                - _id (str): Wallet ID
-                - user (str): Associated user ID
-                - balance (float): Available balance
-                - lockedBalance (float): Locked amount 
-                - isDeleted (bool): Deletion status
-                - isActive (bool): Wallet active status
-                - createdAt (str): Creation timestamp (ISO format)
+    Retrieve the current wallet balance of the authenticated user.
 
-        If the wallet is not found:
-            - success (bool): False
-            - message (str): Error message
+    Use this tool when the user:
+    - asks for their wallet balance
+    - wants to check available funds
+    - asks if they have enough balance to donate
+
+    Returns:
+        dict:
+            success (bool): Whether the request succeeded.
+            balance (float | None): Available wallet balance.
+            lockedBalance (float | None): Amount currently locked.
+            message (str): Status message.
     """
     try:
-        response = requests.get(f"{BASE_URL}/api/v1/wallet/balance", headers=headers)
+        response = requests.get(
+            f"{BASE_URL}/api/v1/wallet/balance",
+            headers=headers
+        )
 
-        response.raise_for_status() 
+        response.raise_for_status()
         data = response.json()
-        
+
         if not data.get("success"):
             return {
                 "success": False,
-                "message": "Failed to fetch wallet balance",
-                "wallet": None,
-            } 
+                "balance": None,
+                "lockedBalance": None,
+                "message": "Unable to fetch wallet balance."
+            }
 
-        wallet = data.get("wallet")
-
-        # Clean wallet data
-        if wallet:
-            wallet.pop("__v", None)
-            wallet.pop("transactionsHistory",None)
+        wallet = data.get("wallet", {})
 
         return {
             "success": True,
-            "message": "Wallet fetched successfully",
-            "wallet": wallet,
+            "balance": wallet.get("balance"),
+            "lockedBalance": wallet.get("lockedBalance"),
+            "message": "Wallet balance retrieved successfully."
+        }
+
+    except requests.exceptions.RequestException as e:
+        return {
+            "success": False,
+            "balance": None,
+            "lockedBalance": None,
+            "message": f"Request failed: {str(e)}"
         }
 
     except Exception as e:
         return {
             "success": False,
-            "message": f"Error fetching wallet balance: {str(e)}",
-            "wallet": None,
+            "balance": None,
+            "lockedBalance": None,
+            "message": f"Unexpected error: {str(e)}"
         }
 
 
 @tool
-def get_payment_methods():
+def list_saved_payment_methods():
     """
-    Retrieve available payment methods for the authenticated mock user.
-    
+    Retrieve the user's saved payment methods.
+
+    Use this tool when the user:
+    - asks to see their saved cards
+    - wants to choose a payment method for a donation
+    - asks if they have any stored payment methods
+
     Returns:
         dict:
-            - success (bool): Indicates if the request was successful
-            - data (dict):
-                - success (bool): Internal operation status
-                - message (str): Operation result message
-                - count (int): Number of payment methods returned 
-                - data (list): List of payment method objects, each including:
-                    - last4 (str): Last four digits of the card
-                    - type (int): Payment method type identifier
-                    - createdAt (str): Creation timestamp (ISO 8601 format)
-                    - brand (str): Card brand (e.g., visa)
-                    - expiryDate (str): Card expiry date (YYYY-MM-DD)
-                    - uid (str): Unique payment method identifier
-                    - country (str): Issuing country code (ISO 2-letter)
-                    
-        If retrieval fails:
-            - error (str): Error message explaining the issue. 
+            success (bool)
+            payment_methods (list): List of saved payment methods
+                - uid (str): Payment method ID
+                - brand (str): Card brand (e.g., Visa, Mastercard)
+                - last4 (str): Last four digits of the card
+                - expiryDate (str): Card expiry date
+                - country (str): Issuing country
+            count (int): Number of saved payment methods
+            message (str)
     """
     try:
         response = requests.get(
@@ -106,38 +110,59 @@ def get_payment_methods():
             headers=headers
         )
 
-        response.raise_for_status() 
+        response.raise_for_status()
         data = response.json()
+
+        methods = data.get("data", {}).get("data", [])
+
+        cleaned_methods = []
+        for m in methods:
+            cleaned_methods.append({
+                "uid": m.get("uid"),
+                "brand": m.get("brand"),
+                "last4": m.get("last4"),
+                "expiryDate": m.get("expiryDate"),
+                "country": m.get("country")
+            })
 
         return {
             "success": True,
-            "data": data
+            "payment_methods": cleaned_methods,
+            "count": len(cleaned_methods),
+            "message": "Saved payment methods retrieved successfully."
         }
 
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
-            "error": f"Request failed: {str(e)}"
+            "payment_methods": [],
+            "count": 0,
+            "message": f"Request failed: {str(e)}"
         }
 
     except Exception as e:
         return {
             "success": False,
-            "error": f"Unexpected error: {str(e)}"
+            "payment_methods": [],
+            "count": 0,
+            "message": f"Unexpected error: {str(e)}"
         }
 
 @tool
-def add_payment_method():
+def create_payment_method_url():
     """
-    Generate a hosted payment method page URL for the authenticated user.
-                                                                                                                                                                                                                                                                                                                                                                                                                                                             
+    Generate a hosted URL where the user can add a new payment method.
+
+    Use this tool when the user:
+    - wants to add a new card or payment method
+    - asks to save a payment method
+    - cannot find a payment method to use for donation
+
     Returns:
         dict:
-            - success (bool): Indicates if the request was successful
-            - data (dict): 
-                - success (bool): Internal operation status
-                - message (str): Operation result message
-                - url (str): Hosted payment page URL where user can add new payment methods
+            success (bool)
+            url (str | None): Hosted URL for adding a payment method
+            message (str)
     """
     try:
         response = requests.get(
@@ -145,53 +170,63 @@ def add_payment_method():
             headers=headers
         )
 
-        response.raise_for_status()  # Raise exception for HTTP errors
+        response.raise_for_status()
         data = response.json()
+
+        # Extract only relevant info
+        url = data.get("data", {}).get("url")
 
         return {
             "success": True,
-            "data": data
+            "url": url,
+            "message": "Payment method URL generated successfully."
         }
 
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
-            "error": f"Request failed: {str(e)}"
+            "url": None,
+            "message": f"Request failed: {str(e)}"
         }
 
     except Exception as e:
         return {
             "success": False,
-            "error": f"Unexpected error: {str(e)}"
+            "url": None,
+            "message": f"Unexpected error: {str(e)}"
         }
 @tool
-def list_charities_by_country(country_code: str):
+def list_charities_in_country(country_code: str):
     """
-    Retrieve a list of charities available in the specified country.
-    
+    Retrieve a list of charities operating in the specified country.
+
+    Use this tool when the user:
+    - wants to see charities in a specific country
+    - asks for donation options by country
+    - wants to select a charity for donation
+
     Args:
-        country_code (str): The country for which to fetch charities for e.g., (PK). You should ask the user for it. 
-    
+        country_code (str): 2-letter ISO country code (e.g., 'PK')
+
     Returns:
-        dict: 
-            - success (bool): Indicates if the request was successful
-            - charities (list[dict]): List of charity objects, each containing:
+        dict:
+            success (bool)
+            charities (list): List of charity objects
                 - _id (str): Charity ID
                 - name (str): Charity name
                 - email (str): Contact email
-                - phone (str): Contact phone number
-                - description (str): Charity description
-                - address (dict): Charity address with fields:
-                    - street (str), city (str), state (str), country (str), countryCode (str), postalCode (str), latitude (float), longitude (float)
-                - verificationStatus (str): Approval status
-                - CountryAvailability (list[dict]): List of countries where the charity operates
-                - website (str): Charity website URL 
-                - other fields like paymentCustomerId, registrationNumber, walletUid, partOfGiver, isDeleted, isSuspended, user, createdAt, updatedAt
+                - phone (str): Contact phone
+                - description (str)
+                - address (dict): street, city, state, country, postalCode
+                - verificationStatus (str)
+                - website (str)
+            message (str)
     """
     params = {
         "page": 1,
         "limit": 10,
     }
+
     try:
         response = requests.get(
             f"{BASE_URL}/api/v1/donations/charities/{country_code}",
@@ -199,389 +234,441 @@ def list_charities_by_country(country_code: str):
             params=params
         )
 
-        response.raise_for_status()  
+        response.raise_for_status()
         data = response.json()
         charities = data.get("charities", [])
 
-        # Clean charities data
-        if charities:
-            charities.pop("documents", None)
-            charities.pop("logo",None)
-            charities.pop("isLikedByMe",None)
-            charities.pop("walletUid",None)
-            charities.pop("__v",None)
+        cleaned_charities = []
+        for c in charities:
+            cleaned_charities.append({
+                "_id": c.get("_id"),
+                "name": c.get("name"),
+                "email": c.get("email"),
+                "phone": c.get("phone"),
+                "description": c.get("description"),
+                "address": {
+                    "street": c.get("address", {}).get("street"),
+                    "city": c.get("address", {}).get("city"),
+                    "state": c.get("address", {}).get("state"),
+                    "country": c.get("address", {}).get("country"),
+                    "postalCode": c.get("address", {}).get("postalCode"),
+                },
+                "verificationStatus": c.get("verificationStatus"),
+                "website": c.get("website")
+            })
 
         return {
             "success": True,
-            "charities": charities,
+            "charities": cleaned_charities,
+            "message": f"{len(cleaned_charities)} charities found in {country_code}."
         }
 
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
-            "error": f"Request failed: {str(e)}"
+            "charities": [],
+            "message": f"Request failed: {str(e)}"
         }
 
     except Exception as e:
         return {
             "success": False,
-            "error": f"Unexpected error: {str(e)}"
+            "charities": [],
+            "message": f"Unexpected error: {str(e)}"
         }
     
 @tool
-def get_charity_donation_products(charityID: str):
+def list_charity_products(charity_id: str):
     """
-    Retrieve the information regarding donation products for a specific charity.
+    Retrieve active donation products for a specific charity.
+
+    Use this tool when the user:
+    - wants to see donation products for a charity
+    - asks what they can donate to a selected charity
+    - wants product details like price, quantity, and impact
+
     Args:
-        charityID (str): The unique identifier of the charity whose products 
-                         are to be fetched. You should get it from list_charities_by_country() tool.
+        charity_id (str): ID of the charity (from list_charities_in_country)
 
     Returns:
         dict:
-            - success (bool): Indicates whether the request was successful.
-            - data (list[dict]): List of product objects, each containing:
-                - _id (str): Product ID.
-                - partnerProd (str): Partner product reference ID. 
-                - name (str): Product name. 
-                - description (str): Product description.
-                - pricePerUnit (int | float): Cost per unit of the product.
-                - category (dict): Product category details:
-                    - _id (str): Category ID.
-                    - name (str): Category name.
-                - charity (dict): Charity information:
-                    - _id (str): Charity ID.
-                    - name (str): Charity name.
-                    - registrationNumber (str): Charity registration number.
-                    - logo (str): Path/URL to charity logo.
-                - partner (dict):
-                    - _id (str): Partner ID.
-                - minimumDonationQuantity (int): Minimum allowed donation quantity.
-                - maximumDonationQuantity (int): Maximum allowed donation quantity.
-                - availableQuantity (int): Total available quantity.
-                - remainingQuantity (int): Remaining quantity available.
-                - impactLife (int): Impact metric (e.g., number of lives impacted). 
-                - location (dict):
-                    - _id (str): Location ID.
-                    - state (str)
-                    - city (str)
-                    - country (str)
-                - createdAt (str): ISO timestamp of product creation.
-                - updatedAt (str): ISO timestamp of last update.
-                
+            success (bool)
+            products (list): List of donation products
+                - _id (str): Product ID
+                - name (str)
+                - description (str)
+                - pricePerUnit (float)
+                - minimumDonationQuantity (int)
+                - maximumDonationQuantity (int)
+                - availableQuantity (int)
+                - remainingQuantity (int)
+                - isActive (bool)
+            totalProducts (int)
+            message (str)
     """
-    params = {
-        "page": 1,
-        "limit": 10,
+    params = {"page": 1, "limit": 50}
+    headers = {
+        'xApiKey':xApiKey
     }
     try:
+        if charity_id is None:
+            return {
+            "success": False,
+            "campaigns": [],
+            "pagination": {},
+            "message": f"No charity specified."
+            }
         response = requests.get(
-            f"{BASE_URL}/api/v1/donors/get-charity-products/{charityID}",
+            f"{BASE_URL}/api/v3/agent/charities/{charity_id}/donation-products",
             headers=headers,
             params=params
         )
         response.raise_for_status()
-
         data = response.json()
-        products = data.get("products", data.get("data", []))
 
-        if isinstance(products, list):
-            for product in products:
-                product.pop("images", None)
-                category = product.get("category")
-                if isinstance(category, dict):
-                    category.pop("color", None)
-                charity = product.get("charity")
-                if isinstance(charity, dict):
-                    charity.pop("address", None)
-                    charity.pop("logo", None)
+        items = data.get("data", {}).get("items", [])
+        cleaned_products = []
+
+        for item in items:
+            images = item.get("images", [])
+            primary_image = None
+            for img in images:
+                if img.get("isPrimary"):
+                    primary_image = img.get("url")
+                    break
+
+            cleaned_products.append({
+                "_id": item.get("_id"),
+                "name": item.get("name"),
+                "description": item.get("description"),
+                "pricePerUnit": item.get("pricePerUnit"),
+                "minimumDonationQuantity": item.get("minimumDonationQuantity"),
+                "maximumDonationQuantity": item.get("maximumDonationQuantity"),
+                "availableQuantity": item.get("availableQuantity"),
+                "remainingQuantity": item.get("remainingQuantity"),
+                "isActive": item.get("isActive"),
+            })
 
         return {
             "success": True,
-            "products": products,
+            "products": cleaned_products,
+            "totalProducts": len(cleaned_products),
+            "message": f"{len(cleaned_products)} products found for charity {charity_id}."
         }
 
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
-            "error": f"Request failed: {str(e)}"
+            "products": [],
+            "totalProducts": 0,
+            "message": f"Request failed: {str(e)}"
         }
 
     except Exception as e:
         return {
             "success": False,
-            "error": f"Unexpected error: {str(e)}"
+            "products": [],
+            "totalProducts": 0,
+            "message": f"Unexpected error: {str(e)}"
         }
-
-@tool
-def get_all_charities_with_grants():
-    """
-    Retrieve a paginated list of all charities along with their associated grants.
     
+@tool
+def list_charity_grants(charity_id: str):
+    """
+    Retrieve all grants for a specific charity.
+
+    Use this tool when the user:
+        - wants to see grants for a charity
+        - asks what grants they can donate to a selected charity
+        - grants details such as raised amount, title, etc.
+
+    Args:
+        charity_id (str): ID of the charity (from list_charities_in_country)
+
     Returns:
         dict:
-            - success (bool): Indicates whether the request was successful. 
-            - message (str): Response message from the server.
-            - data (list[dict]): List of charity objects, each containing:
-                
-                - charity (dict): Charity details:
-                    - _id (str): Charity ID.
-                    - email (str): Charity email address.
-                    - name (str): Charity name.
-                    - registrationNumber (str): Charity registration number. 
-                    - logo (str): Path/URL to charity logo.
-                    - address (dict):
-                        - street (str)
-                        - city (str)
-                        - state (str)
-                        - country (str)
-                        - countryCode (str)
-                        - postalCode (str)
-                        - latitude (float)
-                        - longitude (float)
-                    
-                - grants (list[dict]): List of grant objects associated with the charity:
-                    - _id (str): Grant ID.
-                    - profile (str): Reference ID of the charity profile.
-                    - profileModel (str): Profile model type (e.g., "CharityOrganization").
-                    - title (str): Grant title.
-                    - description (str): Grant description.
-                    - expectedAmount (int | float): Target funding amount. 
-                    - raisedAmount (int | float): Amount raised so far.
-                    - status (str): Grant status (e.g., Started, Suspended, Completed, Pending, In Progress).
-                    - location (dict):
-                        - city (str)
-                        - state (str)
-                        - country (str)
-                        - countryCode (str)
-                        - latitude (float)
-                        - longitude (float)
-                    - createdAt (str): ISO timestamp when grant was created.
-                    - updatedAt (str): ISO timestamp when grant was last updated.
-            
-            - totalItems (int): Total number of charities.
-            - totalPages (int): Total number of pages.
-            - currentPage (int): Current page number.
-            - hasNext (bool): Whether a next page exists.
-            - hasPrev (bool): Whether a previous page exists.
+            success (bool)
+            grants (list): List of grant objects
+                - _id (str): Grant ID
+                - title (str)
+                - description (str)
+                - expectedAmount (float)
+                - raisedAmount (float)
+                - status (str)
+                - location (dict): { city, state, country, countryCode, latitude, longitude }
+                - charityId (str): Reference to the charity
+                - createdAt (str)
+                - updatedAt (str)
+            totalGrants (int)
+            message (str)
     """
     try:
+        headers = {
+            'xApiKey':xApiKey
+        }
+        if charity_id is None:
+            return {
+            "success": False,
+            "campaigns": [],
+            "pagination": {},
+            "message": f"No charity specified."
+            }
         response = requests.get(
-            f"{BASE_URL}/api/v3/donors/all-charities",
-            headers=headers
+            f"{BASE_URL}/api/v3/agent/grants",
+            headers=headers,
+            params={"charityId": charity_id}
         )
-
-        response.raise_for_status()  
+        response.raise_for_status()
         data = response.json()
+
+        grants_list = data.get("data", {}).get("items", [])
+        cleaned_grants = []
+
+        for g in grants_list:
+            location = g.get("location", {})
+            cleaned_grants.append({
+                "_id": g.get("_id"),
+                "title": g.get("title"),
+                "description": g.get("description"),
+                "expectedAmount": g.get("expectedAmount"),
+                "raisedAmount": g.get("raisedAmount"),
+                "status": g.get("status"),
+                "location": {
+                    "city": location.get("city"),
+                    "state": location.get("state"),
+                    "country": location.get("country"),
+                    "countryCode": location.get("countryCode"),
+                    "latitude": location.get("latitude"),
+                    "longitude": location.get("longitude")
+                },
+                "charityId": g.get("profile"),
+                "createdAt": g.get("createdAt"),
+                "updatedAt": g.get("updatedAt")
+            })
 
         return {
             "success": True,
-            "data": data
+            "grants": cleaned_grants,
+            "totalGrants": len(cleaned_grants),
+            "message": f"{len(cleaned_grants)} grants found for charity {charity_id}."
         }
 
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
-            "error": f"Request failed: {str(e)}"
+            "grants": [],
+            "totalGrants": 0,
+            "message": f"Request failed: {str(e)}"
         }
 
     except Exception as e:
         return {
             "success": False,
-            "error": f"Unexpected error: {str(e)}"
+            "grants": [],
+            "totalGrants": 0,
+            "message": f"Unexpected error: {str(e)}"
         }
 
 @tool
-def get_all_active_campaigns():
+def list_charity_active_campaigns(charity_id: str):
     """
-    Retrieve a paginated list of all active campaigns.
+    Retrieve all active campaigns, for a specific charity.
+
+    Use this tool when the user:
+        - wants to see active campaigns for a charity
+        - asks what campaigns they can donate to a selected charity
+        - campaign details such as raised amount, title, etc.
+        - asks which donation types are valid for a selected campaign
+
+    Args:
+        charity_id (str): ID of the charity (from list_charities_in_country)
 
     Returns:
         dict:
-            - success (bool): Indicates whether the request was successful.
-            - message (str): Response message from the server.
-            
-            - data (list[dict]): List of active campaign objects, each containing:
-                - _id (str): Campaign ID.
-                - title (str): Campaign title.
-                - description (str): Campaign description (may contain HTML).
-                - logo (str): Path/URL to campaign logo image.
-                - backgroundImage (str): Path/URL to campaign background image.
-                - goalSettings (bool): Whether goal tracking is enabled.
-                - goalAmount (int | float): Target fundraising amount. 
-                - receivedAmount (int | float): Amount raised so far.
-                - meterOption (str): Indicates if progress meter is shown ("Yes"/"No").
-                - isFeatured (bool): Whether the campaign is marked as featured.
-                - isCauseCampaign (bool): Whether it is a cause-based campaign.
-                - isP2P (bool): Whether it is a peer-to-peer campaign.
-                - showToDonors (bool): Whether the campaign is visible to donors.
-                - isEnabled (bool): Whether the campaign is currently active.
-                - milestones (list[dict]): List of campaign milestones:
-                    - _id (str): Milestone ID.
-                    - title (str): Milestone title.
-                    - description (str): Milestone description.
-                    - checked (bool): Whether milestone is completed.
-                - donationTypes (list[dict], optional): Donation type options (if applicable):
-                    - _id (str): Donation type ID.
-                    - name (str): Donation type name.
-                    - createdBy (str): Creator profile ID.
-                    - createdByModel (str): Creator model type.
-                    - isDeleted (bool): Whether donation type is deleted.
-                    - createdAt (str): ISO timestamp.
-                    - updatedAt (str): ISO timestamp.
-                - charity (dict, optional): Associated charity details (if campaign belongs to a charity):
-                    - name (str): Charity name.
-                    - logo (str): Charity logo.
-                    - country (str): Charity country.
-                - donor (dict, optional): Donor details (for donor-created campaigns):
-                    - _id (str): Donor ID. 
-                    - firstName (str): Donor first name.
-                    - lastName (str): Donor last name.
-                    - profile (str): Profile image path.
-                - job (dict): Campaign category/location details:
-                    - category (str): Campaign category.
-                    - country (str): Country where campaign is focused. 
-                - numberOfUniqueDonors (int): Total unique donors for this campaign.
-                - createdAt (str): ISO timestamp when campaign was created.
-                - updatedAt (str): ISO timestamp when campaign was last updated.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    
-            - featuredCampaigns (list[dict]): List of featured campaign objects 
-              (same structure as items inside `data`).
-            - pagination (dict): Pagination details:
-                - currentPage (int): Current page number.
-                - totalPages (int): Total number of pages.
-                - totalItems (int): Total number of campaigns.
-                - itemsPerPage (int): Number of items per page.
-                - hasNextPage (bool): Whether a next page exists.
-                - hasPrevPage (bool): Whether a previous page exists.
+            - success (bool)
+            - campaigns (list): List of active campaign objects (flattened)
+            - pagination (dict): { page, limit, total, hasMore }
+            - message (str)
     """
-    headers = {
-        "xApiKey":"eee8bae8b2db4915b9e544a7abbe4e8ced48814b52d7853bcc8c2253b35fd0bb:7c6cded935b7fc97542366898ba45c27"
-    }
     try:
+        headers = {
+            "xApiKey": xApiKey
+        }
+        
+        # Add charityID as a query param if provided
+        params = {"page": 1, "limit": 10}
+        if charity_id is None:
+            return {
+            "success": False,
+            "campaigns": [],
+            "pagination": {},
+            "message": f"No charity specified."
+            }
+        params["charityId"] = charity_id
+
         response = requests.get(
             f"{BASE_URL}/api/v3/agent/campaigns/active",
-            headers=headers
-        )
-
-        response.raise_for_status()  
-        data = response.json()
-
-        return {
-            "success": True,
-            "data": data
-        }
-
-    except requests.exceptions.RequestException as e:
-        return {
-            "success": False,
-            "error": f"Request failed: {str(e)}"
-        }
-
-    except Exception as e:
-        return {
-            "success": False,
-            "error": f"Unexpected error: {str(e)}"
-        }
-
-
-@tool 
-def get_donation_types_campaign():
-    """
-    Retrieve a paginated list of available campaign donation types.
-    
-    This endpoint returns donation type categories (e.g., chanda, fitra, hadya, 
-    sadaqah) created by charities. These types are used to classify donations 
-    within campaigns.
-    
-    Returns:
-        dict:
-            - success (bool): Indicates whether the request was successful.
-            - message (str): Response message from the server.
-            
-            - data (list[dict]): List of donation type objects:
-                - _id (str): Unique donation type ID.
-                - createdBy (str): ID of the profile (e.g., charity) that created the donation type.
-                - createdByModel (str): Model type of the creator (e.g., "CharityOrganization").
-                - name (str): Name of the donation type (e.g., "chanda", "fitra").
-                - isDeleted (bool): Whether the donation type has been soft-deleted.
-                - createdAt (str): ISO timestamp when the donation type was created.
-                - updatedAt (str): ISO timestamp when the donation type was last updated.
-                - __v (int): Internal version key (used by database versioning, typically MongoDB).
-
-            - pagination (dict): Pagination details:
-                - currentPage (int): Current page number.
-                - totalPages (int): Total number of pages.
-                - totalItems (int): Total number of donation types.
-                - itemsPerPage (int): Number of items per page.
-                - hasNextPage (bool): Whether a next page exists.
-                - hasPrevPage (bool): Whether a previous page exists.
-    """
-    params = {
-        "page": 1,
-        "limit": 50,
-    }
-    try:
-        response = requests.get(
-            f"{BASE_URL}/api/v3/donors/campaign/donation-types",
             headers=headers,
             params=params
         )
+        response.raise_for_status()
+        data = response.json().get("data", {})
 
-        response.raise_for_status()  
-        data = response.json()
+        campaigns_list = data.get("items", [])
+        cleaned_campaigns = []
+
+        for c in campaigns_list:
+            milestones = [
+                {"_id": m.get("_id"), "title": m.get("title"),
+                 "description": m.get("description"), "checked": m.get("checked", False)}
+                for m in c.get("milestones", [])
+            ]
+
+            donation_types = [
+                {"_id": dt.get("_id"), "name": dt.get("name")}
+                for dt in c.get("donationTypes", [])
+            ]
+
+            charity = c.get("charity")
+            charity_info = {
+                "_id": charity.get("_id"),
+                "name": charity.get("name"),
+                "logo": charity.get("logo"),
+                "country": charity.get("country"),
+                "countryCode": charity.get("countryCode")
+            } if charity else None
+
+            cleaned_campaigns.append({
+                "_id": c.get("_id"),
+                "title": c.get("title"),
+                "description": c.get("description"),
+                "logo": c.get("logo"),
+                "backgroundImage": c.get("backgroundImage"),
+                "goalSettings": c.get("goalSettings"),
+                "goalAmount": c.get("goalAmount"),
+                "receivedAmount": c.get("receivedAmount"),
+                "meterOption": c.get("meterOption"),
+                "isFeatured": c.get("isFeatured"),
+                "isCauseCampaign": c.get("isCauseCampaign"),
+                "isP2P": c.get("isP2P"),
+                "showToDonors": c.get("showToDonors"),
+                "isEnabled": c.get("isEnabled"),
+                "milestones": milestones,
+                "donationTypes": donation_types,
+                "charity": charity_info,
+                "job": c.get("job", {}),
+                "numberOfUniqueDonors": c.get("numberOfUniqueDonors", 0),
+                "createdAt": c.get("createdAt"),
+                "updatedAt": c.get("updatedAt")
+            })
+
+        pagination = data.get("pagination", {})
 
         return {
             "success": True,
-            "data": data
+            "campaigns": cleaned_campaigns,
+            "pagination": pagination,
+            "message": f"{len(cleaned_campaigns)} active campaigns retrieved."
         }
 
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
-            "error": f"Request failed: {str(e)}"
+            "campaigns": [],
+            "pagination": {},
+            "message": f"Request failed: {str(e)}"
         }
-
     except Exception as e:
         return {
             "success": False,
-            "error": f"Unexpected error: {str(e)}"
+            "campaigns": [],
+            "pagination": {},
+            "message": f"Unexpected error: {str(e)}"
         }
 
-@tool 
+
+# @tool
+# def list_campaign_donation_types():
+#     """
+#     Retrieve all donation types available for campaigns.
+
+#     Use this tool when the user:
+#         - wants to see available donation types for campaigns
+#         - asks about categories like chanda, fitra, hadya, sadaqah for campaigns
+#         - is preparing to donate campaign and needs to select a type
+
+#     Returns:
+#         dict:
+#             - success (bool)
+#             - donation_types (list): List of donation type objects
+#                 - _id (str)
+#                 - name (str)
+#                 - createdBy (str)
+#                 - createdByModel (str)
+#                 - isDeleted (bool)
+#                 - createdAt (str)
+#                 - updatedAt (str)
+#             - pagination (dict): { currentPage, totalPages, totalItems, itemsPerPage, hasNextPage, hasPrevPage }
+#             - message (str)
+#     """
+#     params = {
+#         "page": 1,
+#         "limit": 50
+#     }
+#     try:
+#         response = requests.get(
+#             f"{BASE_URL}/api/v3/donors/campaign/donation-types",
+#             headers=headers,
+#             params=params
+#         )
+#         response.raise_for_status()
+#         data = response.json()
+
+#         return {
+#             "success": True,
+#             "message": "Donation types retrieved successfully",
+#             "data": data
+#         }
+
+#     except requests.exceptions.RequestException as e:
+#         return {
+#             "success": False,
+#             "message": f"Request failed: {str(e)}",
+#             "data": []
+#         }
+
+#     except Exception as e:
+#         return {
+#             "success": False,
+#             "message": f"Unexpected error: {str(e)}",
+#             "data": []
+#         }
+
+@tool
 def get_transaction_history():
     """
-    Retrieve a paginated list of the user's last 30 wallet transactions.
-    This endpoint returns all financial transactions associated with the 
-    authenticated user's wallet, including donations, withdrawals, refunds, 
-    and other balance movements. 
-    
+    Retrieve the last 30 wallet transactions for the authenticated user.
+
+    Use this tool when the user:
+        - wants to see their recent wallet activity
+        - asks for donation, withdrawal, or refund history
+        - needs transaction details like amount, type, or status
+
     Returns:
         dict:
-            - success (bool): Indicates whether the request was successful.
-            - message (str): Response message from the server.
-
-            - data (list[dict]): List of transaction objects:
-                - _id (str): Unique transaction ID.
-                - user (str): User ID associated with the transaction.
-                - wallet (str): Wallet ID linked to the transaction.
-                - amount (int | float): Transaction amount.
-                - description (str): Description of the transaction 
-                  (e.g., donation reference or withdrawal details).
-                - type (str): Transaction type 
-                  (e.g., "deposit", "withdrawal").
-                - status (str): Current transaction status 
-                  (e.g., "pending", "completed", "refunded", "failed").
-                - isDeleted (bool): Whether the transaction is soft-deleted.
-                - createdAt (str): ISO timestamp when the transaction was created.
-                - updatedAt (str): ISO timestamp when the transaction was last updated.
-                - __v (int): Internal version key (used for database versioning, typically MongoDB).
-
-            - pagination (dict): Pagination details:
-                - currentPage (int): Current page number.
-                - totalPages (int): Total number of pages.
-                - totalItems (int): Total number of transactions.
-                - itemsPerPage (int): Number of items per page.
-                - hasNextPage (bool): Whether a next page exists.
-                - hasPrevPage (bool): Whether a previous page exists.
+            - success (bool)
+            - transactions (list): List of transaction objects
+                - _id (str)
+                - wallet (str)
+                - amount (float)
+                - description (str)
+                - type (str): "deposit", "withdrawal", etc.
+                - status (str): "pending", "completed", "refunded", "failed"
+                - isDeleted (bool)
+                - createdAt (str)
+                - updatedAt (str)
+            - pagination (dict): { currentPage, totalPages, totalItems, itemsPerPage, hasNextPage, hasPrevPage }
+            - message (str)
     """
     params = {
         "page": 1,
@@ -595,29 +682,31 @@ def get_transaction_history():
             headers=headers,
             params=params
         )
-
-        response.raise_for_status() 
+        response.raise_for_status()
         data = response.json()
 
         return {
             "success": True,
             "message": data.get("message", "Transaction history fetched successfully"),
-            "data": data.get("data", []),
+            "transactions": data.get("data", []),
             "pagination": data.get("pagination", {})
         }
 
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
-            "error": f"Request failed: {str(e)}"
+            "message": f"Request failed: {str(e)}",
+            "transactions": [],
+            "pagination": {}
         }
 
     except Exception as e:
         return {
             "success": False,
-            "error": f"Unexpected error: {str(e)}"
+            "message": f"Unexpected error: {str(e)}",
+            "transactions": [],
+            "pagination": {}
         }
-
 # ----------------------------
 # POST APIs
 # ----------------------------
@@ -626,32 +715,27 @@ def fund_wallet(amount: float, paymentMethodId: str, password: str):
     """
     Fund a user's wallet using a selected payment method.
 
-    This tool sends a funding request to the wallet service using the
-    provided paymentMethodId and amount. It does not perform local
-    wallet or card validation logic; validation is handled by the backend API.
+    Use this tool when the user:
+        - wants to add money to their wallet
+        - asks for wallet balance top-up
+        - needs confirmation of successful funding
 
     Args:
-        amount (float): The amount to fund into the wallet. 
-            Must be greater than zero.
-        paymentMethodId (str): Unique identifier of the selected
-            payment method (card) to be charged.
-        password (str): The user's account password for transaction authorization.
+        amount (float): Amount to add to the wallet. Must be > 0. (Ask from user)
+        paymentMethodId (str): ID of the selected payment method (card) (from list_saved_payment_methods)
+        password (str): User's account password for transaction authorization. (Ask from user)
 
     Returns:
-        dict: A dictionary containing: 
-            - success (bool): Indicates if the request was successful.
-            - message (str): Confirmation message.
+        dict:
+            - success (bool)
+            - message (str): Confirmation or error message.
             - data (dict):
-                - paymentRequestUid (str): Unique identifier of the payment request.
-                - customerId (str): Unique customer identifier.
-                - walletUid (str): Unique wallet identifier.
-                - newBalance (float): Updated wallet balance after funding.
-
-        If the request fails:
-            - success (bool): False
-            - message (str): Error description (e.g., missing fields,
-              invalid payment method, limit exceeded).
+                - paymentRequestUid (str): Unique payment request ID.
+                - customerId (str): Customer identifier.
+                - walletUid (str): Wallet identifier.
+                - newBalance (float): Wallet balance after funding.
     """
+    # Verify password before initiating transaction
     auth = verify_user_password(password)
     if not auth["success"]:
         return {
@@ -659,6 +743,7 @@ def fund_wallet(amount: float, paymentMethodId: str, password: str):
             "message": f"Transaction Denied: {auth['message']}",
             "data": {}
         }
+
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/payment-apis/fund-wallet",
@@ -668,8 +753,7 @@ def fund_wallet(amount: float, paymentMethodId: str, password: str):
                 "paymentMethodId": paymentMethodId
             }
         )
-
-        response.raise_for_status()  # Raise HTTP errors
+        response.raise_for_status()
         data = response.json()
 
         return {
@@ -693,47 +777,51 @@ def fund_wallet(amount: float, paymentMethodId: str, password: str):
         }
 
 @tool
-def product_donation(charityId: str, partners: list, categories: list, country: str, countryCode: str, products: list, password: str):
+def product_donation(
+    charityId: str, 
+    partners: list, 
+    categories: list, 
+    country: str, 
+    countryCode: str, 
+    products: list, 
+    password: str
+):
     """
     Create a product donation for a specific charity.
-    
-    This tool sends a product-based donation request to the donation service.
-    It does not perform local validation of IDs, pricing, or quantities.
-    All validation logic is handled by the backend API.
- 
+
+    Use this tool when the user:
+        - wants to donate products to a charity
+
     Args:
         charityId (str): Unique identifier of the charity.
         partners (list): List of partner IDs involved in the donation.
         categories (list): List of category IDs related to the donation.
-        country (str): Country name for the delivery address.
+        country (str): Country name for delivery.
         countryCode (str): ISO country code (e.g., PK).
-        products (list): List of product objects. Each product must contain:
+        products (list): List of product objects. Each must include:
             - partner (str): Partner ID
             - charityProd (str): Charity product ID
             - partnerProd (str): Partner product ID
             - category (str): Category ID
-            - charityProdPrice (float): Product price
-            - quantity (int): Quantity of the product
-        password (str): The user's account password for transaction authorization.
-        
-    Returns:
-        dict: A dictionary containing:
-            - success (bool): Indicates if the request was successful.
-            - message (str): Confirmation or error message.
-            - data (dict): Donation details returned by backend.
+            - charityProdPrice (float): Price per product
+            - quantity (int): Quantity to donate
+        password (str): User password for transaction authorization.
 
-        If the request fails:
-            - success (bool): False 
-            - message (str): Error description (e.g., invalid IDs,
-              insufficient balance, validation failure).
+    Returns:
+        dict:
+            - success (bool)
+            - message (str): Confirmation or error message.
+            - data (dict): Donation details returned by the backend.
     """
+    # Verify password before donation
     auth = verify_user_password(password)
     if not auth['success']:
         return {
-            "success":False,
-            "message":f'Transaction Denied: {auth["message"]}',
-            "data":{}
+            "success": False,
+            "message": f'Transaction Denied: {auth["message"]}',
+            "data": {}
         }
+
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/donations/donate",
@@ -749,8 +837,7 @@ def product_donation(charityId: str, partners: list, categories: list, country: 
                 "products": products
             }
         )
-
-        response.raise_for_status()  # Raise HTTP errors
+        response.raise_for_status()
         data = response.json()
 
         return {
@@ -772,72 +859,69 @@ def product_donation(charityId: str, partners: list, categories: list, country: 
             "message": f"Unexpected error: {str(e)}",
             "data": {}
         }
+@tool
+def product_donation_on_behalf(
+    charityId: str, 
+    partners: list, 
+    categories: list, 
+    country: str, 
+    countryCode: str, 
+    products: list, 
+    password: str,
+    identity: str,
+    fullName: str,
+    type: str
+):
+    pass
+
 
 @tool
-def campaign_donation(campaignId: str, amount: float, donationTypeId: str, password: str, campaignType: str = 'CharityOrganization'):
+def campaign_donation(
+    campaignId: str,
+    amount: float,
+    donationType: str,
+    donationTypeId: str,
+    password: str,
+    campaignType: str = 'CharityOrganization'
+):
     """
     Make a monetary donation to a specific campaign.
-    
-    This tool sends a donation request to the backend service for a given campaign.
-    All validation (IDs, amounts, donor balance, etc.) is handled by the backend API.
-    The donation can be of any valid amount specified by the user.
-    
+
+    Use this tool when the user:
+        - wants to donate money to a campaign
+        - has already seen valid donation types in prior interaction
+
     Args:
-        campaignId (str): Unique identifier of the campaign to donate to.
+        campaignId (str): Unique ID of the campaign.
         amount (float): Donation amount.
-        donationTypeId (str): ID of the donation type to be used.
-        password (str): The user's account password for transaction authorization.
+        donationType (str): Donation type chosen by the user (e.g., chanda, fitra).
+        donationTypeId (str): Donation type ID corresponding to the selected donationType.
+        password (str): User password for transaction authorization.
         campaignType (str, optional): Type of campaign. Default is 'CharityOrganization'.
-        
+
     Returns:
-        dict: Dictionary containing the result of the donation.
-
-        Success response:
-            - success (bool): True if donation was successful.
-            - message (str): Confirmation message from the backend.
-            - data (dict):
-                - donation (dict): Donation record details:
-                    - _id (str): Internal donation record ID.
-                    - donationId (str): Human-readable donation reference ID.
-                    - campaignId (str): Campaign ID for which the donation was made.
-                    - childCampaignId (str | None): Child campaign ID if applicable.
-                    - charityId (str): Charity ID receiving the donation.
-                    - donorId (str): Donor's user ID.
-                    - donorTransactionId (str): Associated donor transaction ID.
-                    - charityTransactionId (str): Associated charity transaction ID.
-                    - donationType (str): Donation type ID.
-                    - donationSource (str): Source of donation (e.g., "Internal").
-                    - amount (float): Donated amount.
-                    - createdAt (str): ISO timestamp when donation was created.
-                    - updatedAt (str): ISO timestamp when donation was last updated.
-                    - __v (int): Internal version key (MongoDB or DB versioning).
-                - receiptUrl (str): URL/path to the donation receipt PDF.
-
-        Failure response:
-            - success (bool): False
-            - message (str): Error description (e.g., invalid IDs, insufficient balance, validation failure).
-
+        dict:
+            - success (bool)
+            - message (str): Confirmation or error message.
+            - data (dict): Donation details if successful.
     """
+    # Verify user password
     auth = verify_user_password(password)
     if not auth["success"]:
-        return {
-            "success":False,
-            "message":f"Transaction Denied: {auth['message']}",
-            'data':{}
-        }
+        return {"success": False, "message": f"Transaction Denied: {auth['message']}", "data": {}}
+
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/donors/campaign/donate",
             headers=headers,
             json={
-                "compaignId": campaignId,  
+                "compaignId": campaignId,
                 "amount": amount,
                 "campaignType": campaignType,
                 "donationTypeId": donationTypeId
             }
         )
-
-        response.raise_for_status()  # Raise HTTP errors
+        response.raise_for_status()
         data = response.json()
 
         return {
@@ -847,52 +931,45 @@ def campaign_donation(campaignId: str, amount: float, donationTypeId: str, passw
         }
 
     except requests.exceptions.RequestException as e:
-        return {
-            "success": False,
-            "message": f"Request failed: {str(e)}",
-            "data": {}
-        }
-
+        return {"success": False, "message": f"Request failed: {str(e)}", "data": {}}
     except Exception as e:
-        return {
-            "success": False,
-            "message": f"Unexpected error: {str(e)}",
-            "data": {}
-        }
-
+        return {"success": False, "message": f"Unexpected error: {str(e)}", "data": {}}
+    
 @tool
 def grant_donation(charityId: str, amount: float, grantId: str, password: str):
     """
-    Create a grant donation for a specific charity.
-    
-    This tool sends a monetary donation request for a specific grant
-    to the donation service.
-    It does not perform local validation of IDs or balance checks.
-    All validation logic is handled by the backend API. 
+    Make a monetary donation to a specific grant for a charity.
+
+    Use this tool when the user:
+        - wants to donate to a specific grant
+        - has already seen available grants for a charity
+        - wants to contribute a specific amount toward a grant
 
     Args:
-        charityId (str): Unique identifier of the charity.
-        amount (float): Donation amount to contribute toward the grant.
-        grantId (str): Unique identifier of the grant being funded.
-        password (str): The user's account password for transaction authorization.
+        charityId (str): Unique ID of the charity. (from list_charity_grants)
+        amount (float): Amount to donate toward the grant. (Ask user for it)
+        grantId (str): Unique ID of the grant being funded. (from list_charity_grants)
+        password (str): User password for transaction authorization. (Ask user for it)
 
     Returns:
-        dict: A dictionary containing:
-            - success (bool): Indicates if the request was successful.
-            - message (str): Confirmation or error message. 
+        dict:
+            - success (bool)
+            - message (str): Confirmation or error message.
+            - data (dict): Grant donation details if successful.
 
-        If the request fails:
-            - success (bool): False
-            - message (str): Error description (e.g., invalid IDs,
-            insufficient balance, validation failure).
+    Notes:
+        - Validation of IDs, amounts, and balance is handled by the backend.
+        - Agent can rely on prior tool responses to verify grant selection without extra API calls.
     """
+    # Verify user password
     auth = verify_user_password(password)
     if not auth["success"]:
         return {
-            "success":False,
-            "message":f"Transaction Denied: {auth['message']}",
-            "data":{}
+            "success": False,
+            "message": f"Transaction Denied: {auth['message']}",
+            "data": {}
         }
+
     try:
         response = requests.post(
             f"{BASE_URL}/api/v3/donors/donate-grant",
@@ -908,7 +985,7 @@ def grant_donation(charityId: str, amount: float, grantId: str, password: str):
             }
         )
 
-        response.raise_for_status()  # Raise HTTP errors
+        response.raise_for_status()
         data = response.json()
 
         return {
@@ -967,7 +1044,7 @@ metadata_transaction = {
                     "- The response includes masked card details (e.g., last4) and metadata only.\n"
                     "- If success is False, handle the error field and avoid assuming payment methods exist."
                 )
-    },
+    }, 
     "add_payment_method": {
         "domain": "finance",
         "type": "read",
@@ -1013,7 +1090,7 @@ metadata_transaction = {
                     "- Always ensure the user is authenticated before calling this tool.\n"
                     "- Each transaction object contains sensitive financial data; handle responses securely.\n"
                     "- If success is False, surface the error message and do not assume transaction data is available."
-                )
+                ) 
     },
     "fund_wallet": {
         "domain": "finance",
