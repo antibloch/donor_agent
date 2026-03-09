@@ -1,4 +1,4 @@
-import os
+
 import requests
 from langchain_core.tools import tool
 from tools.tool_helpers import _ok, _fail
@@ -14,7 +14,7 @@ X_API_KEY = "giverr_ai_live_9f3b7c6e2d4a8f1c5e7b9a2c6d1f4e8b3c7a9d2e6f1b4c8a3d7e
 _USER_ID_RAW = "695803a95d120db61afaf03e"
 
 # Donor profile ObjectId — needed for get_my_bid_history endpoint
-DONOR_PROFILE_ID = "PENDING"  # ask dev for donorProfile _id for demo account
+DONOR_PROFILE_ID = "695803a95d120db61afaf03e"
 
 
 # ── X-USER-ID ENCRYPTION ──────────────────────────────────
@@ -23,7 +23,7 @@ DONOR_PROFILE_ID = "PENDING"  # ask dev for donorProfile _id for demo account
 # If dev provides a different secret key, update ENCRYPTION_SECRET below.
 
 import hashlib
-import hmac
+
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 import secrets
@@ -415,7 +415,7 @@ def place_bid(auction_id: str, amount: float, password: str):
                 response_text=response.text[:2000]
             )
         return _ok(
-            response.json(),
+            response.json().get("data", response.json()),
             endpoint=endpoint,
             http_status=response.status_code,
             auction_id=auction_id
