@@ -20,6 +20,9 @@ import dotenv
 dotenv.load_dotenv()
 DEBUG_MESSAGES = int(dotenv.get_key(dotenv.find_dotenv(), "DEBUG_MESSAGES") or "0")
 DO_SELECTION = (dotenv.get_key(dotenv.find_dotenv(), "DO_SELECTION") or "0").strip().lower() in ("1", "true", "yes", "on")
+SHOW_PLANNER_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_PLANNER_INPUT") or "0")
+SHOW_RESPONDER_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_RESPONDER_INPUT") or "0")
+SHOW_GATE_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_INPUT") or "0")
 
 def make_planner_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
@@ -87,7 +90,7 @@ def make_planner_node(tools_by_name: dict):
         {state.get("messages", [])[-1].content if state.get("messages") else ""}
         """
 
-        if DEBUG_MESSAGES == 1:
+        if DEBUG_MESSAGES == 1 and SHOW_PLANNER_INPUT == 1:
             rich_print("\n" + "="*80)
             rich_print("PLANNER INPUT (DO_SELECTION={DO_SELECTION})")
             rich_print("="*80)
@@ -266,7 +269,7 @@ Assume the user may be a confused or first-time donor who needs clear guidance.
 OUTPUT RULES (STRICT):
 - If in Conversation History, there is mention of 'Invalid password' or a similar auth failure (AFTER only last USER message), your FINAL answer MUST be exactly: "Please enter password" (without quotes).
 - After getting password, use the conversation history to determine course of response.
-- Always show the amount in USD and treat the value as whole (no decimal point)
+- Always show the money in USD.
 - Do NOT reveal your chain-of-thought, reasoning, internal steps, or analysis.
 - Do NOT describe tool usage steps.
 - Do NOT output any code blocks or code snippets.
@@ -301,12 +304,11 @@ Now write the final answer based strictly on the Conversation History below, inc
         transcript = format_history_for_responder(state.get("messages", []))
         final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{transcript}")]
 
-        if DEBUG_MESSAGES == 1:
+        if DEBUG_MESSAGES == 1 and SHOW_RESPONDER_INPUT == 1:
             rich_print("\n" + "="*80)
             rich_print("RESPONDER INVOKE MESSAGES")
             rich_print("="*80)
             for i, m in enumerate(final_prompt):
-                rich_print(f"\n--- final_prompt[{i}] ---")
                 rich_print(format_msg(m))   # ← now exact match to original
             rich_print("="*80)
 
@@ -329,29 +331,31 @@ def make_gate_node(
     """
     It sees, on every react step:
 
-original round history
+    original round history
 
-cached outputs
+    cached outputs
 
-attempted repairs so far
+    attempted repairs so far
 
-errors already fixed
+    errors already fixed
 
-errors still unresolved
+    errors still unresolved
 
-and then decides:
+    and then decides:
 
-which error to prioritize next
+    which error to prioritize next
 
-whether to do a direct fix or prerequisite step
+    whether to do a direct fix or prerequisite step
 
-whether success should mark that error fixed
+    whether success should mark that error fixed
 
-So this is now genuinely reactive in both:
+    So this is now genuinely reactive in both:
 
-error-order selection
+    error-order selection
 
-repair-step selection"""
+    repair-step selection
+    """
+
     model = make_model(temperature=0.0)
 
     def _strip_code_fences(text: str) -> str:
@@ -774,7 +778,7 @@ RULES:
 7. If no safe automatic repair is possible, set `done`: true.
 """.strip()
 
-            if DEBUG_MESSAGES == 1:
+            if DEBUG_MESSAGES == 1 and SHOW_GATE_INPUT == 1:
                 rich_print("\n" + "=" * 80)
                 rich_print(f"AGENTIC GATE PROMPT STEP {react_idx + 1}")
                 rich_print("=" * 80)
