@@ -46,7 +46,12 @@ class AgentState(TypedDict, total=False):
 def _should_wrap_as_password(messages: Sequence[BaseMessage]) -> bool:
     for msg in reversed(messages or []):
         if isinstance(msg, AIMessage):
-            return (msg.content or "").strip() == "Please enter password"
+            content = (msg.content or "").strip().lower()
+            if content == "please enter password":
+                return True
+            if "your password" in content and ("enter" in content or "add" in content):
+                return True
+            return False
     return False
 
 async def build_graph():

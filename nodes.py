@@ -5,7 +5,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMe
 from rich import print as rich_print
 
 from llm import make_model
-from tools.json_utils import _parse_plan, _compact_json          
+from tools.json_utils import _parse_plan, _compact_json, _safe_json_loads, _extract_tool_error         
 from history_formatters import (
     format_history_for_planner,
     format_history_for_gate,
@@ -262,6 +262,31 @@ def make_responder_node():
     model = make_model(temperature=0.0)
 
     def responder(state: dict) -> Dict:
+        messages = list(state.get("messages", []) or [])
+        latest_user_idx = None
+        latest_user_content = ""
+        for i in range(len(messages) - 1, -1, -1):
+            if isinstance(messages[i], HumanMessage):
+                latest_user_idx = i
+                latest_user_content = (messages[i].content or "").strip()
+                break
+
+        if latest_user_idx is not None and latest_user_content.lower().startswith("password:"):
+            fresh_tool_success = False
+            for m in messages[latest_user_idx + 1:]:
+                if not isinstance(m, ToolMessage):
+                    continue
+                payload = _safe_json_loads((m.content or "").strip())
+                if payload is not None and _extract_tool_error(payload) is None:
+                    fresh_tool_success = True
+                    break
+
+            if not fresh_tool_success:
+                return {
+                    "messages": [AIMessage(content="Please enter password")],
+                    "final_answer": "Please enter password",
+                }
+
         system_prompt = """
 You are a donor-assisting AI agent on a donation website that produces FINAL, USER-FACING answers.
 Assume the user may be a confused or first-time donor who needs clear guidance.
@@ -301,7 +326,7 @@ RECOMMENDATION STYLE:
 Now write the final answer based strictly on the Conversation History below, including any `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]` entries.
 """
 
-        transcript = format_history_for_responder(state.get("messages", []))
+        transcript = format_history_for_responder(messages)
         final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{transcript}")]
 
         if DEBUG_MESSAGES == 1 and SHOW_RESPONDER_INPUT == 1:
