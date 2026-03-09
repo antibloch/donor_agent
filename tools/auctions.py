@@ -79,22 +79,57 @@ def _user_headers() -> dict:
 @tool
 def get_active_auctions():
     """
-    Fetch all currently active auctions.
-    Returns a paginated list of auctions.
-    Returns:
-        dict:
-            - success (bool): Whether the request was successful.
-            - auctions (list[dict]): List of auction objects, each containing:
-                - _id (str): Auction ID.
-                - title (str): Auction title.
-                - description (str): Auction description.
-                - minBidAmount (float): Minimum bid amount.
-                - incrementType (str): Fixed or Percentage.
-                - incrementValue (float): Increment value.
-                - startTimeStamp (str): Auction start time (ISO format).
-                - endTimeStamp (str): Auction end time (ISO format).
-            - pagination (dict): Pagination details.
+    PURPOSE:
+    Fetch all currently active auctions available on the platform.
+
+    MUST_CALL_FIRST:
+    - When the user wants to browse, explore, or list auctions before taking any action.
+    - Before calling get_auction_details or place_bid when no auction _id is known.
+
+    DEFAULT_CHAIN:
+    - get_active_auctions -> get_auction_details -> place_bid
+
+    WHEN TO USE:
+    - User says: 'show auctions', 'active auctions', 'list auctions',
+      'what auctions are there', 'any auctions', 'browse auctions'
+    - auction _id is not yet known and is needed for a downstream tool
+
+    DO NOT USE WHEN:
+    - Auction list is already cached in chat history from this turn — reuse it instead.
+    - User is asking about bid history, wallet balance, or donation categories.
+
+    REQUIRES (Intuitive Schema):
+    - No arguments required.
+
+    REQUIRES (Detailed Schema):
+    - No parameters.
+
+    RETURNS (Intuitive Schema):
+    - List of active auctions with titles, minimum bids, increments, and end times.
+
+    RETURNS (Detailed Schema):
+    - result.auctions -> list of auction objects, each containing:
+        _id (str): Auction ID — required for get_auction_details and place_bid.
+        title (str): Auction title.
+        description (str): Auction description.
+        minBidAmount (float): Minimum allowed bid.
+        incrementType (str): Fixed or Percentage.
+        incrementValue (float): Bid increment value.
+        startTimeStamp (str): Auction start time (ISO format).
+        endTimeStamp (str): Auction end time (ISO format).
+    - result.pagination -> currentPage, totalPages, totalItems, hasNext, hasPrev.
+
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - Output of this tool supplies auction _id for get_auction_details and place_bid.
+    - If planning before execution, planner should use placeholder:
+      "<AUCTION_ID_FROM_GET_ACTIVE_AUCTIONS>"
+    - NEVER pass a display number like 1 or 2 — always use the exact _id string.
+
+    DO NOT STOP HERE WHEN:
+    - User wants full details of a specific auction — call get_auction_details next.
+    - User wants to place a bid — resolve _id first, then call place_bid.
     """
+
     endpoint = f"{AGENT_BASE_PATH}/auctions/list"
     params = {"page": 1, "limit": 10}
     try:
@@ -127,28 +162,60 @@ def get_active_auctions():
 @tool
 def get_auction_details(auction_id: str):
     """
-    Retrieve full details of a single auction by its ID.
-    Args:
-        auction_id (str): MongoDB ObjectId of the auction.
-                          Must be an exact _id from get_active_auctions.
-                          NEVER pass a display number like 1 or 2.
-                          NEVER guess or invent an auction_id.
-                          If no auctions are in history, call get_active_auctions first.
-    Returns:
-        dict:
-            - success (bool): Whether the request was successful.
-            - auction (dict): Full auction object containing:
-                - _id (str): Auction ID.
-                - title (str): Auction title.
-                - description (str): Auction description.
-                - condition (str): Item condition.
-                - minBidAmount (float): Minimum bid amount.
-                - incrementType (str): Fixed or Percentage.
-                - incrementValue (float): Increment value.
-                - reservePrice (float): Reserve price.
-                - startTimeStamp (str): ISO timestamp.
-                - endTimeStamp (str): ISO timestamp.
+    PURPOSE:
+    Retrieve full details of a single auction by its MongoDB ObjectId.
+
+    MUST_CALL_FIRST:
+    - get_active_auctions must be called first to obtain a valid auction _id.
+
+    DEFAULT_CHAIN:
+    - get_active_auctions -> get_auction_details -> place_bid
+
+    WHEN TO USE:
+    - User asks for details, description, condition, reserve price, or increment
+      info about a specific auction.
+    - User references 'the first auction', 'auction 1', or any auction by position —
+      resolve the _id from get_active_auctions history first, then call this tool.
+
+    DO NOT USE WHEN:
+    - auction_id is not yet known — call get_active_auctions first.
+    - User only wants a list of auctions — use get_active_auctions instead.
+    - No auctions exist in the DB — inform user rather than guessing an ID.
+    - NEVER pass a display number like 1 or 2 as auction_id.
+    - NEVER guess or invent an auction_id.
+
+    REQUIRES (Intuitive Schema):
+    - Exact auction _id from get_active_auctions output.
+
+    REQUIRES (Detailed Schema):
+    - auction_id (str): MongoDB ObjectId of the auction.
+                        Must be an exact _id from get_active_auctions.
+                        NEVER a display number. NEVER guessed.
+
+    RETURNS (Intuitive Schema):
+    - Full auction object including condition, reserve price, and increment rules.
+
+    RETURNS (Detailed Schema):
+    - result contains:
+        _id (str): Auction ID.
+        title (str): Auction title.
+        description (str): Auction description.
+        condition (str): Item condition (e.g. New, Used).
+        minBidAmount (float): Minimum allowed bid.
+        incrementType (str): Fixed or Percentage.
+        incrementValue (float): Bid increment value.
+        reservePrice (float): Minimum price seller will accept.
+        startTimeStamp (str): Auction start time (ISO format).
+        endTimeStamp (str): Auction end time (ISO format).
+
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - Output of this tool informs the user before they call place_bid.
+    - Planner placeholder: "<AUCTION_ID_FROM_GET_ACTIVE_AUCTIONS>"
+
+    DO NOT STOP HERE WHEN:
+    - User wants to place a bid after viewing details — call place_bid next.
     """
+
     auction_id = (auction_id or "").strip()
     if not auction_id:
         return _fail("auction_id is required.")
@@ -182,23 +249,53 @@ def get_auction_details(auction_id: str):
 @tool
 def get_my_bid_history():
     """
-    ALWAYS call this tool when user says: 'my bids', 'bid history', 'show my bids',
-    'what have I bid on', 'my auction activity', 'am I winning'.
-    Do NOT call check_wallet_balance instead of this tool for bid history requests.
+    PURPOSE:
+    Retrieve all bids placed by the authenticated donor across all auctions.
 
-    Retrieve all bids placed by the authenticated donor.
-    Returns:
-        dict:
-            - success (bool): Whether the request was successful.
-            - bids (list[dict]): List of bid objects, each containing:
-                - auctionId (str): Auction ID.
-                - title (str): Auction title.
-                - bidAmount (float): Amount bid.
-                - status (str): Pending, Won, or Lost.
-                - startTimeStamp (str): Auction start time (ISO format).
-                - endTimeStamp (str): Auction end time (ISO format).
-            - totalBids (int): Total number of bids.
+    MUST_CALL_FIRST:
+    - This is a standalone tool. No prerequisite tool required.
+
+    DEFAULT_CHAIN:
+    - get_my_bid_history (standalone)
+
+    WHEN TO USE:
+    - ALWAYS call this tool when user says any of:
+      'my bids', 'bid history', 'show my bids', 'what have I bid on',
+      'my auction activity', 'am I winning', 'show bid history'.
+    - This is the ONLY correct tool for bid history.
+    - Do NOT substitute check_wallet_balance or any other tool for this request.
+
+    DO NOT USE WHEN:
+    - User wants to list all available auctions — use get_active_auctions instead.
+    - User wants to place a new bid — use place_bid instead.
+    - NEVER replace this tool with check_wallet_balance for bid history requests.
+
+    REQUIRES (Intuitive Schema):
+    - No arguments required. Donor identity is handled server-side.
+
+    REQUIRES (Detailed Schema):
+    - No parameters.
+
+    RETURNS (Intuitive Schema):
+    - List of all bids placed by the donor with status and amounts.
+
+    RETURNS (Detailed Schema):
+    - result.bids -> list of bid objects, each containing:
+        auctionId (str): Auction ID the bid was placed on.
+        title (str): Auction title.
+        bidAmount (float): Amount bid.
+        status (str): Bid status — Pending, Won, or Lost.
+        startTimeStamp (str): Auction start time (ISO format).
+        endTimeStamp (str): Auction end time (ISO format).
+    - result.totalBids (int): Total number of bids placed.
+
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - This is typically a terminal tool — no chaining required.
+
+    DO NOT STOP HERE WHEN:
+    - User wants to place a new bid after reviewing history — call place_bid next.
     """
+
     endpoint = f"{AGENT_BASE_PATH}/user/{DONOR_PROFILE_ID}/bids"
     try:
         response = requests.get(
@@ -228,20 +325,63 @@ def get_my_bid_history():
 @tool
 def place_bid(auction_id: str, amount: float, password: str):
     """
+    PURPOSE:
     Place a bid on an active auction on behalf of the authenticated donor.
-    Args:
-        auction_id (str): Exact _id of the auction to bid on.
-                          Must come from get_active_auctions output.
-                          NEVER pass a display number. NEVER guess an ID.
-        amount (float): Bid amount. Must be greater than zero.
-                        Must be explicitly stated by user — never assumed.
-        password (str): User's account password for transaction authorization.
-                        Mandatory — add to missing_args if not provided.
-    Returns:
-        dict:
-            - success (bool): Whether the bid was placed successfully.
-            - message (str): Confirmation or error message.
-            - data (dict): Bid details including _id, amount, status.
+
+    MUST_CALL_FIRST:
+    - get_active_auctions must have been called to obtain a valid auction _id.
+    - User must have explicitly stated both the bid amount AND their password.
+
+    DEFAULT_CHAIN:
+    - get_active_auctions -> (optionally get_auction_details) -> place_bid
+
+    WHEN TO USE:
+    - User explicitly says they want to place a bid AND has provided:
+        1. A specific auction reference (resolvable to an exact _id)
+        2. A specific bid amount (explicitly stated, never assumed)
+        3. Their account password (explicitly typed by user in this message)
+    - ALL THREE must be present before scheduling this tool.
+
+    DO NOT USE WHEN:
+    - auction_id is missing or unresolved — add 'auction_id' to missing_args.
+    - amount is missing or ambiguous — add 'amount' to missing_args.
+    - password has NOT been explicitly provided by the user in their message —
+      add 'password' to missing_args and ask the user for it first.
+    - NEVER use placeholder values like <PASSWORD>, 'userpass', or any invented value for password.
+    - NEVER pass a display number like 1 or 2 as auction_id.
+    - NEVER guess or invent an auction_id.
+    - User is only browsing or asking about auctions.
+    - A successful bid already exists in this turn's history.
+
+    REQUIRES (Intuitive Schema):
+    - Exact auction _id, explicit bid amount, and user's account password.
+
+    REQUIRES (Detailed Schema):
+    - auction_id (str): Exact MongoDB ObjectId from get_active_auctions output.
+                        NEVER a display number. NEVER guessed or invented.
+    - amount (float): Bid amount explicitly stated by the user. Must be > 0.
+                      NEVER assumed or inferred.
+    - password (str): User's account password for transaction authorization.
+                      MANDATORY — if NOT explicitly provided in user's message,
+                      add 'password' to missing_args and do NOT schedule this tool.
+                      NEVER use <PASSWORD>, 'userpass', or any invented placeholder.
+
+    RETURNS (Intuitive Schema):
+    - Confirmation of bid placement with bid ID and status.
+
+    RETURNS (Detailed Schema):
+    - result contains:
+        _id (str): Bid record ID.
+        amount (float): Bid amount placed.
+        status (str): Bid status — Pending after successful placement.
+        message (str): Confirmation or error message from server.
+
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - After placing a bid, user may want to check bid history — call get_my_bid_history.
+    - Planner placeholder for auction_id: "<AUCTION_ID_FROM_GET_ACTIVE_AUCTIONS>"
+
+    DO NOT STOP HERE WHEN:
+    - User wants to check if their bid is winning — call get_my_bid_history next.
     """
     auction_id = (auction_id or "").strip()
     if not auction_id:
@@ -291,16 +431,48 @@ def place_bid(auction_id: str, amount: float, password: str):
 @tool
 def get_donation_categories():
     """
-    Fetch all available donation categories.
-    Call this FIRST when user wants to browse or filter charities by cause/category.
-    This is a standalone lookup — does NOT require Python_REPL.
-    Returns:
-        dict:
-            - success (bool): Whether the request was successful.
-            - categories (list[dict]): List of category objects, each containing:
-                - _id (str): Category ID — pass to get_charities_by_donation_type.
-                - name (str): Category display name.
-                - description (str): Short description.
+    PURPOSE:
+    Fetch all available donation types/categories on the platform.
+
+    MUST_CALL_FIRST:
+    - Always call this before get_charities_by_donation_type.
+    - Required to obtain valid donation_type _id values for downstream tools.
+
+    DEFAULT_CHAIN:
+    - get_donation_categories -> get_charities_by_donation_type
+
+    WHEN TO USE:
+    - User says: 'show categories', 'donation categories', 'what categories are there',
+      'show donation categories', 'browse causes', 'find charities by cause',
+      'what types of donations', 'filter charities', 'charities by type'.
+    - donation_type _id is not yet known and is needed for get_charities_by_donation_type.
+
+    DO NOT USE WHEN:
+    - Donation category _ids are already present in chat history — reuse them instead.
+    - User is asking to list charities directly — this only returns categories.
+
+    REQUIRES (Intuitive Schema):
+    - No arguments required.
+
+    REQUIRES (Detailed Schema):
+    - No parameters.
+
+    RETURNS (Intuitive Schema):
+    - List of donation categories with names and IDs.
+
+    RETURNS (Detailed Schema):
+    - result.categories -> list of category objects, each containing:
+        _id (str): Category ID — required for get_charities_by_donation_type.
+        name (str): Category display name (e.g. chanda, fitra, hadya, saqdah).
+        description (str): Short description of the category.
+
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - Output of this tool supplies donation_type_id for get_charities_by_donation_type.
+    - Planner placeholder: "<DONATION_TYPE_ID_FROM_GET_DONATION_CATEGORIES>"
+    - NEVER guess a category _id — only use values returned by this tool.
+
+    DO NOT STOP HERE WHEN:
+    - User wants to see charities for a specific category — call get_charities_by_donation_type next.
     """
     endpoint = f"{AGENT_BASE_PATH}/donation-categories"
     try:
@@ -332,31 +504,60 @@ def get_donation_categories():
 @tool
 def get_charities_by_donation_type(donation_type_id: str, country_code: str = "PK"):
     """
-    IMPORTANT: Only call this tool when user has named a SPECIFIC category
-    (e.g. 'chanda', 'fitra', 'hadya', 'saqdah').
-    If user has NOT specified which category, do NOT call this tool.
-    Instead add 'category_name' to missing_args and ask which category they want.
-    NEVER call this for all categories at once.
+    PURPOSE:
+    Fetch all charities accepting a specific donation type/category.
 
-    Fetch all charities working in a specific donation category/type.
-    Requires exact donation type _id from get_donation_categories.
-    This is a standalone lookup — does NOT require Python_REPL.
-    Args:
-        donation_type_id (str): Exact _id from get_donation_categories.
-                                NEVER guess this value.
-                                Only use _ids returned by get_donation_categories.
-        country_code (str): ISO country code to filter by. Default: PK.
-    Returns:
-        dict:
-            - success (bool): Whether the request was successful.
-            - charities (list[dict]): List of charity objects, each containing:
-                - _id (str): Charity ID.
-                - name (str): Charity name.
-                - description (str): Charity description.
-                - email (str): Contact email.
-                - phone (str): Contact phone.
-                - website (str): Charity website URL.
+    MUST_CALL_FIRST:
+    - get_donation_categories must be called first to obtain a valid donation_type_id.
+
+    DEFAULT_CHAIN:
+    - get_donation_categories -> get_charities_by_donation_type
+
+    WHEN TO USE:
+    - User wants to see charities for a SPECIFIC named category
+      (e.g. 'chanda', 'fitra', 'hadya', 'saqdah').
+    - donation_type_id is already known from get_donation_categories output.
+    - User selects a category by number (e.g. 'category 2') — resolve the _id
+      from prior get_donation_categories output, then call this tool.
+
+    DO NOT USE WHEN:
+    - User has NOT named or selected a specific category — add 'category_name'
+      to missing_args and ask the user which category they want first.
+    - NEVER call for ALL categories at once.
+    - NEVER guess or invent a donation_type_id.
+    - NEVER call before get_donation_categories has been called in this session.
+
+    REQUIRES (Intuitive Schema):
+    - Exact donation_type_id from get_donation_categories and optional country code.
+
+    REQUIRES (Detailed Schema):
+    - donation_type_id (str): Exact _id from get_donation_categories output.
+                              NEVER guessed. NEVER invented.
+    - country_code (str): ISO country code to filter charities by country.
+                          Defaults to 'PK' if not specified by user.
+
+    RETURNS (Intuitive Schema):
+    - List of charities accepting the selected donation type in the specified country.
+
+    RETURNS (Detailed Schema):
+    - result.charities -> list of charity objects, each containing:
+        _id (str): Charity ID.
+        name (str): Charity name.
+        description (str): Charity description.
+        email (str): Contact email.
+        phone (str): Contact phone.
+        website (str): Charity website URL.
+
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - This is typically a terminal tool in the donation category chain.
+    - Planner placeholder for donation_type_id:
+      "<DONATION_TYPE_ID_FROM_GET_DONATION_CATEGORIES>"
+
+    DO NOT STOP HERE WHEN:
+    - User wants more details about a specific charity from the results —
+      pass the charity _id to charity_details tool.
     """
+    
     donation_type_id = (donation_type_id or "").strip()
     if not donation_type_id:
         return _fail("donation_type_id is required.")
@@ -611,391 +812,3 @@ if __name__ == "__main__":
     print("Auction Tool Tests Finished")
     print("==============================\n")
 
-
-# import requests
-# from pydantic import BaseModel, Field
-# from langchain_core.tools import StructuredTool
-# from .tool_helpers import _ok, _fail, _get
-
-
-
-# AUCTION_BASE_URL = "http://localhost:3000"
-# MOCK_USER_ID = "usr_mujtaba"
-
-
-
-
-
-# def build_get_wallet_balance_tool() -> StructuredTool:
-#     def get_wallet_balance() -> str:
-#         try:
-#             out = _get(f"{AUCTION_BASE_URL}/wallet/{MOCK_USER_ID}")
-#             if out["status"] >= 400:
-#                 return _fail(f"HTTP {out['status']}: {out['json']}")
-#             return _ok(out["json"])
-#         except requests.RequestException as e:
-#             return _fail(str(e))
-
-#     class WalletInput(BaseModel):
-#         pass
-
-#     return StructuredTool.from_function(
-#         func=get_wallet_balance,
-#         name="get_wallet_balance",
-#         description=(
-#             "Fetch the current wallet balance for the authenticated user.\n"
-#             "Returns: balance, lockedBalance, availableBalance."
-#         ),
-#         args_schema=WalletInput,
-#     )
-
-
-# def build_get_active_auctions_tool() -> StructuredTool:
-#     def get_active_auctions() -> str:
-#         try:
-#             out = _get(f"{AUCTION_BASE_URL}/auctions/active")
-#             if out["status"] >= 400:
-#                 return _fail(f"HTTP {out['status']}: {out['json']}")
-#             return _ok(out["json"])
-#         except requests.RequestException as e:
-#             return _fail(str(e))
-
-#     class AuctionsInput(BaseModel):
-#         pass
-
-#     return StructuredTool.from_function(
-#         func=get_active_auctions,
-#         name="get_active_auctions",
-#         description=(
-#             "Fetch all currently active auctions.\n"
-#             "Returns: list of auctions with _id, title, minBidAmount, "
-#             "currentHighestBid, endTimeStamp, incrementType, incrementValue."
-#         ),
-#         args_schema=AuctionsInput,
-#     )
-
-
-# def build_get_auction_details_tool() -> StructuredTool:
-#     def get_auction_details(auction_id: str) -> str:
-#         aid = (auction_id or "").strip()
-#         if not aid:
-#             return _fail("auction_id is required.")
-#         try:
-#             out = _get(f"{AUCTION_BASE_URL}/auctions/{aid}")
-#             if out["status"] >= 400:
-#                 return _fail(f"HTTP {out['status']}: {out['json']}")
-#             return _ok(out["json"])
-#         except requests.RequestException as e:
-#             return _fail(str(e))
-
-#     class AuctionDetailsInput(BaseModel):
-#         auction_id: str = Field(..., description="The unique ID of the auction.")
-
-#     return StructuredTool.from_function(
-#         func=get_auction_details,
-#         name="get_auction_details",
-#         description=(
-#             "Retrieve full details of a single auction by its ID.\n"
-#             "Returns: full auction object including currentHighestBid, totalBids, incrementType, incrementValue."
-#         ),
-#         args_schema=AuctionDetailsInput,
-#     )
-
-
-# def build_get_auction_bids_tool() -> StructuredTool:
-#     def get_auction_bids(auction_id: str) -> str:
-#         aid = (auction_id or "").strip()
-#         if not aid:
-#             return _fail("auction_id is required.")
-#         try:
-#             out = _get(f"{AUCTION_BASE_URL}/auctions/{aid}/bids")
-#             if out["status"] >= 400:
-#                 return _fail(f"HTTP {out['status']}: {out['json']}")
-#             return _ok(out["json"])
-#         except requests.RequestException as e:
-#             return _fail(str(e))
-
-#     class AuctionBidsInput(BaseModel):
-#         auction_id: str = Field(..., description="The unique ID of the auction.")
-
-#     return StructuredTool.from_function(
-#         func=get_auction_bids,
-#         name="get_auction_bids",
-#         description=(
-#             "Retrieve all bids for a specific auction including the highest bid.\n"
-#             "Returns: totalBids, highestBid (amount, status, profile), bids list."
-#         ),
-#         args_schema=AuctionBidsInput,
-#     )
-
-
-# def build_get_auction_items_tool() -> StructuredTool:
-#     def get_auction_items(auction_id: str) -> str:
-#         aid = (auction_id or "").strip()
-#         if not aid:
-#             return _fail("auction_id is required.")
-#         try:
-#             out = _get(f"{AUCTION_BASE_URL}/auctions/{aid}/items")
-#             if out["status"] >= 400:
-#                 return _fail(f"HTTP {out['status']}: {out['json']}")
-#             return _ok(out["json"])
-#         except requests.RequestException as e:
-#             return _fail(str(e))
-
-#     class AuctionItemsInput(BaseModel):
-#         auction_id: str = Field(..., description="The unique ID of the auction.")
-
-#     return StructuredTool.from_function(
-#         func=get_auction_items,
-#         name="get_auction_items",
-#         description=(
-#             "Retrieve all items listed under a specific auction.\n"
-#             "Returns: totalItems, items list with name, description, condition."
-#         ),
-#         args_schema=AuctionItemsInput,
-#     )
-
-
-# def build_get_my_bid_history_tool() -> StructuredTool:
-#     def get_my_bid_history() -> str:
-#         try:
-#             out = _get(f"{AUCTION_BASE_URL}/users/{MOCK_USER_ID}/bids")
-#             if out["status"] >= 400:
-#                 return _fail(f"HTTP {out['status']}: {out['json']}")
-#             return _ok(out["json"])
-#         except requests.RequestException as e:
-#             return _fail(str(e))
-
-#     class BidHistoryInput(BaseModel):
-#         pass
-
-#     return StructuredTool.from_function(
-#         func=get_my_bid_history,
-#         name="get_my_bid_history",
-#         description=(
-#             "Retrieve the authenticated user's full bid history across all auctions.\n"
-#             "Returns: totalBids, bids list with amount, status (Leading/Outbid/Won/Lost), "
-#             "auctionTitle, auctionStatus."
-#         ),
-#         args_schema=BidHistoryInput,
-#     )
-
-
-# def build_place_bid_tool() -> StructuredTool:
-#     def place_bid(auction_id: str, amount: float) -> str:
-#         aid = (auction_id or "").strip()
-#         if not aid:
-#             return _fail("auction_id is required.")
-#         if not amount or amount <= 0:
-#             return _fail("amount must be a positive number.")
-#         try:
-#             r = requests.post(
-#                 f"{AUCTION_BASE_URL}/auction/bid",
-#                 json={"user_id": MOCK_USER_ID, "auction_id": aid, "amount": amount},
-#                 timeout=5,
-#             )
-#             if not r.text.strip():
-#                 return _fail("Empty response from server.")
-#             data = r.json()
-#             if not data.get("success"):
-#                 return _fail(data.get("message", "Bid failed."), details=data)
-#             return _ok(data)
-#         except requests.exceptions.ConnectionError:
-#             return _fail("Could not connect to auction server.")
-#         except requests.exceptions.Timeout:
-#             return _fail("Auction server timed out.")
-#         except Exception as e:
-#             return _fail(str(e))
-
-#     class PlaceBidInput(BaseModel):
-#         auction_id: str = Field(..., description="The unique ID of the auction to bid on.")
-#         amount: float = Field(..., description="The bid amount in USD.", gt=0)
-
-#     return StructuredTool.from_function(
-#         func=place_bid,
-#         name="place_bid",
-#         description=(
-#             "Place a bid on an active auction on behalf of the authenticated user.\n"
-#             "Server validates: auction status, minimum bid, increment rules, config limit, wallet balance.\n"
-#             "On success: bid amount is locked in wallet. If outbid, amount is auto-released.\n"
-#             "Returns: bidId, auctionTitle, amount, nextMinimumBid, newLockedBalance, availableBalance."
-#         ),
-#         args_schema=PlaceBidInput,
-#     )
-
-
-# def build_finalize_ended_auctions_tool() -> StructuredTool:
-#     def finalize_ended_auctions() -> str:
-#         try:
-#             r = requests.post(f"{AUCTION_BASE_URL}/auction/finalize", timeout=10)
-#             if not r.text.strip():
-#                 return _fail("Empty response from server.")
-#             data = r.json()
-#             return _ok(data)
-#         except requests.RequestException as e:
-#             return _fail(str(e))
-
-#     class FinalizeInput(BaseModel):
-#         pass
-
-#     return StructuredTool.from_function(
-#         func=finalize_ended_auctions,
-#         name="finalize_ended_auctions",
-#         description=(
-#             "Finalize all auctions that have ended.\n"
-#             "Deducts winning bid from winner wallet and releases locked funds for all other bidders.\n"
-#             "Returns: success message."
-#         ),
-#         args_schema=FinalizeInput,
-#     )
-
-# def build_get_donation_categories_tool() -> StructuredTool:
-#     def get_donation_categories() -> str:
-#         try:
-#             out = _get(f"{AUCTION_BASE_URL}/donation-categories")
-#             if out["status"] >= 400:
-#                 return _fail(f"HTTP {out['status']}: {out['json']}")
-#             return _ok(out["json"])
-#         except requests.RequestException as e:
-#             return _fail(str(e))
-
-#     class DonationCategoriesInput(BaseModel):
-#         pass
-
-#     return StructuredTool.from_function(
-#         func=get_donation_categories,
-#         name="get_donation_categories",
-#         description=(
-#             "Fetch all available donation categories (e.g. Emergency Funds, "
-#             "Water Projects, Gaza Relief, Food Aid, Education, Healthcare).\n"
-#             "Call this FIRST when user wants to browse or filter charities by cause/category.\n"
-#             "Returns: list of categories with _id, name, description, icon."
-#         ),
-#         args_schema=DonationCategoriesInput,
-#     )
-
-# #get tools added for finding charities by donation type.
-# def build_get_charities_by_category_tool() -> StructuredTool:
-#     def get_charities_by_category(category_id: str) -> str:
-#         cid = (category_id or "").strip()
-#         if not cid:
-#             return _fail("category_id is required.")
-#         try:
-#             out = _get(f"{AUCTION_BASE_URL}/charities/by-category/{cid}")
-#             if out["status"] >= 400:
-#                 return _fail(f"HTTP {out['status']}: {out['json']}")
-#             return _ok(out["json"])
-#         except requests.RequestException as e:
-#             return _fail(str(e))
-
-#     class CharitiesByCategoryInput(BaseModel):
-#         category_id: str = Field(
-#             ...,
-#             description="Exact _id of the donation category (e.g. cat_emergency, cat_water, cat_gaza)."
-#         )
-
-#     return StructuredTool.from_function(
-#         func=get_charities_by_category,
-#         name="get_charities_by_category",
-#         description=(
-#             "Fetch all charities actively working in a specific donation category.\n"
-#             "Requires exact category _id from get_donation_categories.\n"
-#             "Returns: list of charities with name, description, website, phone, email."
-#         ),
-#         args_schema=CharitiesByCategoryInput,
-#     )
-
-
-
-
-# #=======================Adding Meta Data for Tool Guidance=======================
-
-
-# metadata_auctions = {
-#     "Python_REPL": {
-#         "domain": "utility",
-#         "type": "compute",
-#         "when_to_use": "When arithmetic, transformation, parsing, or quick one-off computations are needed.",
-#         "do_not_use": "Do not use for external web/page fetches or tool discovery.",
-#         "supports_pagination": False,
-#         "requires_auth": False,
-#         "example_usage": "tool_name=Python_REPL",
-#         "hint": (
-#                     "- Python_REPL must NEVER have empty args.\n"
-#                     "- Python_REPL argument format: {{ \"input\": \"<python code that performs analysis, whose final line of code is ONLY print statement that prints the final numeric result>\" }}"
-#                 )
-#     },
-#     "get_charity_stats": {
-#         "domain": "charity",
-#         "type": "stats",
-#         "when_to_use": "When user asks for donor counts, impact metrics, rankings, blogs, products, addresses, or any numeric summary per charity",
-#         "do_not_use": "Never use for wallet, bids, payments, or auctions -- those belong to transaction/auction tools",
-#         "supports_pagination": False,
-#         "requires_auth": False,
-#         "example_usage": "tool_name=charity_donor_count",
-#         "hint": "none"
-#     },
-#     "fetch_url": {
-#         "domain": "web",
-#         "type": "action",
-#         "when_to_use": "When a specific URL is already known and you need page content.",
-#         "do_not_use": "Do not use when you need discovery/search over unknown URLs.",
-#         "supports_pagination": False,
-#         "requires_auth": False,
-#         "example_usage": "tool_name=fetch_url",
-#         "hint": "none"
-#     },
-#     "fetch_urls": {
-#         "domain": "web",
-#         "type": "paginate",
-#         "when_to_use": "When multiple known URLs should be fetched in one operation.",
-#         "do_not_use": "Do not use for keyword search/discovery over the open web.",
-#         "supports_pagination": True,
-#         "requires_auth": False,
-#         "example_usage": "tool_name=fetch_urls",
-#         "hint": "none"
-#     },
-#     "get_donation_categories": {
-#         "domain": "charity",
-#         "type": "lookup",
-#         "when_to_use": (
-#             "ALWAYS call this first when user says anything like: "
-#             "'show categories', 'donation categories', 'what categories', "
-#             "'show donation categories', 'browse causes', 'find charities by cause/type'. "
-#             "This is a standalone tool — it does NOT require Python_REPL."
-#         ),
-#         "do_not_use": (
-#             "Do not call again if category _ids are already in chat history from a prior call."
-#         ),
-#         "supports_pagination": False,
-#         "requires_auth": False,
-#         "example_usage": "no args required",
-#         "hint": (
-#             "Returns _id values like cat_emergency, cat_water, cat_gaza, "
-#             "cat_food_aid, cat_education, cat_healthcare. "
-#             "Pass the exact _id to get_charities_by_category. "
-#             "No synthesis step needed — this is a direct lookup."
-#         ),
-#     },
-
-#     "get_charities_by_category": {
-#         "domain": "charity",
-#         "type": "lookup",
-#         "when_to_use": (
-#             "Call this when user wants charities in a specific cause/category "
-#             "AND the exact category _id is already known from get_donation_categories output. "
-#             "This is a standalone tool — it does NOT require Python_REPL."
-#         ),
-#         "do_not_use": (
-#             "Never call with a guessed _id. "
-#             "Only use _ids returned by get_donation_categories."
-#         ),
-#         "supports_pagination": False,
-#         "requires_auth": False,
-#         "example_usage": 'category_id="cat_water"',
-#         "hint": (
-#             "Two-step flow: get_donation_categories first, then this tool. "
-#             "No synthesis step needed — this is a direct lookup."
-#         ),
-#     },
-# }

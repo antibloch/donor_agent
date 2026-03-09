@@ -859,20 +859,20 @@ def product_donation(
             "message": f"Unexpected error: {str(e)}",
             "data": {}
         }
-@tool
-def product_donation_on_behalf(
-    charityId: str, 
-    partners: list, 
-    categories: list, 
-    country: str, 
-    countryCode: str, 
-    products: list, 
-    password: str,
-    identity: str,
-    fullName: str,
-    type: str
-):
-    pass
+# @tool
+# def product_donation_on_behalf(
+#     charityId: str, 
+#     partners: list, 
+#     categories: list, 
+#     country: str, 
+#     countryCode: str, 
+#     products: list, 
+#     password: str,
+#     identity: str,
+#     fullName: str,
+#     type: str
+# ):
+#     pass
 
 
 @tool
