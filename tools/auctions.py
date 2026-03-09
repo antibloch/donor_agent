@@ -9,44 +9,11 @@ BASE_URL = "https://giverr-api.verior.co"
 AGENT_BASE_PATH = "/api/v3/agent"
 
 X_API_KEY = "giverr_ai_live_9f3b7c6e2d4a8f1c5e7b9a2c6d1f4e8b3c7a9d2e6f1b4c8a3d7e2f6c9b1a4e8"
-
-# userId from JWT — used as the value to encrypt for X-USER-ID
-_USER_ID_RAW = "695803a95d120db61afaf03e"
+BEARER_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhOTVkMTIwZGI2MWFmYWYwM2UiLCJyb2xlIjoiRG9ub3IiLCJwcm9maWxlVHlwZSI6IkRvbm9yIiwiaWF0IjoxNzcxNDg1NzYyLCJleHAiOjQ5MjcyNDU3NjJ9.9bTr--7-iHIemenKrFRYL3uTDx9auCY98GvYa0NnaOg"
 
 # Donor profile ObjectId — needed for get_my_bid_history endpoint
 DONOR_PROFILE_ID = "695803a95d120db61afaf03e"
 
-
-# ── X-USER-ID ENCRYPTION ──────────────────────────────────
-# Using AES-256-CBC encryption with a derived key.
-# Format matches Postman collection pattern: encryptedData:iv (both hex-encoded)
-# If dev provides a different secret key, update ENCRYPTION_SECRET below.
-
-import hashlib
-
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import pad
-import secrets
-
-ENCRYPTION_SECRET = "giverr_ai_live_9f3b7c6e2d4a8f1c5e7b9a2c6d1f4e8b3c7a9d2e6f1b4c8a3d7e2f6c9b1a4e8"
-
-
-def _encrypt_user_id(user_id: str) -> str:
-    """
-    Encrypts userId using AES-256-CBC.
-    Returns: "encryptedHex:ivHex" format as expected by X-USER-ID header.
-    """
-    # Derive a 32-byte key from the secret using SHA-256
-    key = hashlib.sha256(ENCRYPTION_SECRET.encode("utf-8")).digest()
-    # Generate a random 16-byte IV
-    iv = secrets.token_bytes(16)
-    cipher = AES.new(key, AES.MODE_CBC, iv)
-    encrypted = cipher.encrypt(pad(user_id.encode("utf-8"), AES.block_size))
-    return f"{encrypted.hex()}:{iv.hex()}"
-
-
-# Pre-compute once at module load — reused across all requests
-_X_USER_ID = _encrypt_user_id(_USER_ID_RAW)
 
 
 # ── HEADERS ───────────────────────────────────────────────
@@ -62,15 +29,12 @@ def _api_headers() -> dict:
 
 
 def _user_headers() -> dict:
-    """User-scoped endpoints — X-API-KEY + X-USER-ID required."""
-    if not X_API_KEY:
-        raise ValueError("X-API-KEY is required.")
-    if not _X_USER_ID:
-        raise ValueError("X-USER-ID is required.")
+    """User-scoped endpoints — Bearer token required."""
+    if not BEARER_TOKEN:
+        raise ValueError("BEARER_TOKEN is required.")
     return {
         "Content-Type": "application/json",
-        "X-API-KEY": X_API_KEY,
-        "X-USER-ID": _X_USER_ID,
+        "Authorization": f"Bearer {BEARER_TOKEN}",
     }
 
 
