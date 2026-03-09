@@ -29,12 +29,11 @@ from nodes import (
 from routing import route_after_validator, route_after_gate
 from rich.console import Console
 from rich import print as rich_print
-from rich.markdown import Markdown  # <-- Add this
-from rich.panel import Panel        # <-- Add this (optional but recommended)
+from rich.markdown import Markdown  
+from rich.panel import Panel        
 import dotenv
-
 dotenv.load_dotenv()
-GATE_REPAIR_LIMIT = int(os.getenv("GATE_REPAIR_LIMIT", "1"))
+GATE_MAX_REACT_STEPS = int(os.getenv("GATE_MAX_REACT_STEPS", "1"))
 
 
 class AgentState(TypedDict, total=False):
@@ -62,7 +61,7 @@ async def build_graph():
     workflow.add_node("planner", make_planner_node(tools_by_name))
     workflow.add_node("validator", make_validator_node(tools_by_name))
     workflow.add_node("executor", make_executor_node(tools_by_name))
-    workflow.add_node("gate", make_gate_node(tools_by_name, max_repairs=GATE_REPAIR_LIMIT))
+    workflow.add_node("gate", make_gate_node(tools_by_name, max_react_steps=GATE_MAX_REACT_STEPS))
     workflow.add_node("responder", make_responder_node())
 
     workflow.set_entry_point("planner")

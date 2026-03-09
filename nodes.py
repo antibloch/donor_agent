@@ -326,162 +326,617 @@ Now write the final answer based strictly on the Conversation History below, inc
     return responder
 
 
-def make_gate_node(tools_by_name: dict, max_repairs: int = 1):
+
+
+
+
+def make_gate_node(
+    tools_by_name: dict,
+    max_react_steps: int = 4,
+):
+    """
+    It sees, on every react step:
+
+original round history
+
+cached outputs
+
+attempted repairs so far
+
+errors already fixed
+
+errors still unresolved
+
+and then decides:
+
+which error to prioritize next
+
+whether to do a direct fix or prerequisite step
+
+whether success should mark that error fixed
+
+So this is now genuinely reactive in both:
+
+error-order selection
+
+repair-step selection"""
     model = make_model(temperature=0.0)
 
-    def _sanitize_repair_plan(raw_plan: Dict[str, Any]) -> Dict[str, Any]:
-        steps_in = raw_plan.get("steps", []) if isinstance(raw_plan, dict) else []
-        missing_in = raw_plan.get("missing_args", []) if isinstance(raw_plan, dict) else []
-        valid_steps = []
-        for step in steps_in if isinstance(steps_in, list) else []:
-            if not isinstance(step, dict):
-                continue
-            tool_name = step.get("tool")
-            args = step.get("args", {})
-            if tool_name not in tools_by_name:
-                continue
-            if not isinstance(args, dict):
-                continue
-            valid_steps.append({"tool": tool_name, "args": args})
-        return {
-            "steps": valid_steps,
-            "missing_args": missing_in if isinstance(missing_in, list) else [],
-        }
+    def _strip_code_fences(text: str) -> str:
+        text = (text or "").strip()
+        if text.startswith("```"):
+            lines = text.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            return "\n".join(lines).strip()
+        return text
 
-    def gate_node(state: dict) -> Dict:
-        attempts = int(state.get("repair_attempts") or 0)
-        if attempts >= max_repairs:
+    def _load_json_object(text: str) -> Dict[str, Any]:
+        text = _strip_code_fences(text)
+        if not text:
+            return {}
+        try:
+            obj = json.loads(text)
+            return obj if isinstance(obj, dict) else {}
+        except Exception:
+            pass
+
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            try:
+                obj = json.loads(text[start:end + 1])
+                return obj if isinstance(obj, dict) else {}
+            except Exception:
+                return {}
+        return {}
+
+    def _sanitize_step(raw_obj: Dict[str, Any]) -> Dict[str, Any] | None:
+        if not isinstance(raw_obj, dict):
+            return None
+
+        step = raw_obj.get("step")
+        if not isinstance(step, dict):
+            return None
+
+        tool_name = step.get("tool")
+        args = step.get("args", {})
+
+        if tool_name not in tools_by_name:
+            return None
+        if not isinstance(args, dict):
+            return None
+
+        return {"tool": tool_name, "args": args}
+
+    def _sanitize_decision(
+        raw_obj: Dict[str, Any],
+        valid_error_ids: set[str],
+    ) -> Dict[str, Any]:
+        if not isinstance(raw_obj, dict):
             return {
-                "messages": [AIMessage(content="System Note: Repair limit reached. Proceeding to final response.")],
-                "plan": {"steps": [], "missing_args": []},
+                "target_error_id": None,
+                "step": None,
+                "mark_target_fixed_if_success": False,
+                "done": True,
+                "reason": "Invalid JSON returned by repair model.",
+                "missing_args": [],
             }
 
-        messages = list(state.get("messages", []) or [])
-        recent_errors = detect_recent_tool_errors(messages)
-        if not recent_errors:
-            return {"plan": {"steps": [], "missing_args": []}}
+        target_error_id = raw_obj.get("target_error_id")
+        if target_error_id not in valid_error_ids:
+            target_error_id = None
 
-        history = format_history_for_gate(messages)
-        cache = build_cached_tool_outputs(messages)
+        step = _sanitize_step(raw_obj)
+        done = bool(raw_obj.get("done", False))
+        reason = str(raw_obj.get("reason", "")).strip()
+        mark_target_fixed_if_success = bool(raw_obj.get("mark_target_fixed_if_success", False))
 
-        tool_context = build_tool_context(tools_by_name)
-        valid_tool_names = list(tools_by_name.keys())
-
-        errors_block = "\n".join(
-            f"{i+1}. tool: {err['tool']}\n   call_id: {err.get('tool_call_id', '')}\n   error: {err['error']}"
-            for i, err in enumerate(recent_errors)
-        )
-
-        prompt = f"""
-You are an EXPERT TOOL-REPAIR AGENT. Your sole job is to fix ALL tool failures listed below with MAXIMUM precision and correctness.
-
-
-Available tools:
-{tool_context}
-
-Valid tool names (must match EXACTLY):
-{valid_tool_names}
-
-Detected tool errors (most recent first):
-{errors_block}
-
-Cached recent tool outputs (USE THIS DATA EXACTLY — do NOT invent values):
-{cache}
-
-Conversation history may include cached successful tool traces labeled as `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]`.
-Treat `CACHED_SUCCESS[...]` entries as trustworthy reusable prior results when constructing repairs.
-
-CRITICAL INSTRUCTIONS — FOLLOW STRICTLY:
-
-1. Output ONLY valid JSON in this exact format, nothing else:
-{{
-"steps": [
-    {{"tool": "tool_name", "args": {{"arg_name": "value"}}}}
-],
-"missing_args": []
-}}
-1.1 REQUIRED COVERAGE:
-- You MUST return at least {len(recent_errors)} repair step(s): one step per detected error entry above, in the same order.
-- Do not merge multiple errors into a single step.
-
-2. For Python_REPL repairs (the most common case):
-- ALWAYS start with proper imports: `import statistics`
-- Extract the REAL data from the "Cached recent tool outputs" section above and hard-code it into variables.
-- Use the CORRECT statistical function:
-        • median → statistics.median(your_list)
-        • mean   → statistics.mean(your_list)
-        • sum, min, max, etc. → built-in functions
-- The code must END with ONE clean `print(…)` statement that outputs ONLY the final numeric result (no lists, no extra text).
-- NEVER print the sorted list. NEVER use `sorted()` alone for median.
-- Avoid leading indentation on lines unless inside a block (IndentationError risk).
-
-3. Concrete good example for a median repair:
-{{
-"steps": [
-    {{
-    "tool": "Python_REPL",
-    "args": {{
-        "input": "import statistics\\ndonor_counts = [4, 2, 7, 5, 3]\\nprint(statistics.median(donor_counts))"
-    }}
-    }}
-],
-"missing_args": []
-}}
-
-4. Think step-by-step about the error and the cached data, then output ONLY the JSON fix.
-
-Conversation History (current round only; may include `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]`):
-{history}
-"""
-
-        if DEBUG_MESSAGES == 1:
-            rich_print("\n" + "="*80)
-            rich_print("GATE INPUT")
-            rich_print("="*80)
-            rich_print(prompt)
-            rich_print("="*80)
-
-        resp = model.invoke([HumanMessage(content=prompt)])
-
-        if DEBUG_MESSAGES == 1:
-            rich_print("\n" + "="*80)
-            rich_print("GATE RAW OUTPUT")
-            rich_print("="*80)
-            rich_print(resp.content)
-            rich_print("="*80)
-
-        repair_plan = _sanitize_repair_plan(_parse_plan(resp.content))
-
-        required_steps = len(recent_errors)
-        if len(repair_plan.get("steps", [])) < required_steps:
-            repair_shortfall_prompt = f"""
-Your previous output did not satisfy REQUIRED COVERAGE.
-
-Detected errors count: {required_steps}
-Returned steps count: {len(repair_plan.get("steps", []))}
-
-Return corrected JSON now.
-Rules:
-- Output ONLY JSON.
-- Include at least {required_steps} steps.
-- Keep one repair step per detected error, in the same order.
-- Use only valid tool names.
-
-Detected tool errors (most recent first):
-{errors_block}
-"""
-            retry_resp = model.invoke([HumanMessage(content=repair_shortfall_prompt)])
-            retry_plan = _sanitize_repair_plan(_parse_plan(retry_resp.content))
-            if len(retry_plan.get("steps", [])) >= len(repair_plan.get("steps", [])):
-                repair_plan = retry_plan
+        raw_missing_args = raw_obj.get("missing_args", [])
+        missing_args = []
+        if isinstance(raw_missing_args, list):
+            for item in raw_missing_args:
+                if isinstance(item, str):
+                    missing_args.append(item)
 
         return {
-            "plan": repair_plan,
-            "repair_attempts": attempts + 1,
-            "last_tool_error": recent_errors[0],
-            "messages": [
-                AIMessage(content=f"System Note: Detected {len(recent_errors)} tool error(s). Attempting automatic repair.")
-            ],
+            "target_error_id": target_error_id,
+            "step": step,
+            "mark_target_fixed_if_success": mark_target_fixed_if_success,
+            "done": done,
+            "reason": reason,
+            "missing_args": missing_args,
+        }
+
+    def _get_tool_arg_names(tool) -> set[str] | None:
+        try:
+            schema = None
+
+            if hasattr(tool, "args_schema") and tool.args_schema is not None:
+                schema = tool.args_schema
+            elif hasattr(tool, "get_input_schema"):
+                schema = tool.get_input_schema()
+
+            if schema is None:
+                return None
+
+            if hasattr(schema, "model_fields"):   # pydantic v2
+                return set(schema.model_fields.keys())
+
+            if hasattr(schema, "__fields__"):     # pydantic v1
+                return set(schema.__fields__.keys())
+
+            if hasattr(schema, "schema"):
+                raw = schema.schema()
+                props = raw.get("properties", {})
+                if isinstance(props, dict):
+                    return set(props.keys())
+        except Exception:
+            return None
+
+        return None
+
+    def _filter_args_for_tool(tool, raw_args: dict) -> dict:
+        args = dict(raw_args or {})
+        args.pop("tool_name", None)
+
+        allowed = _get_tool_arg_names(tool)
+        if allowed is None:
+            return args
+
+        return {k: v for k, v in args.items() if k in allowed}
+
+    def _normalize_python_query(query: str) -> str:
+        q = (query or "").strip()
+        try:
+            q = q.encode("utf-8").decode("unicode_escape")
+        except Exception:
+            pass
+        q = "\n".join(line.rstrip() for line in q.splitlines())
+        q = "\n".join(line for line in q.splitlines() if line.strip())
+        return q.strip()
+
+    def _step_signature(step: Dict[str, Any]) -> str:
+        tool_name = step.get("tool", "")
+        args = dict(step.get("args", {}) or {})
+
+        if tool_name == "Python_REPL" and "query" in args:
+            args["query"] = _normalize_python_query(str(args["query"]))
+
+        try:
+            return json.dumps(
+                {"tool": tool_name, "args": args},
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+        except Exception:
+            return str({"tool": tool_name, "args": args})
+
+    def _error_args_from_tool_message(err: Dict[str, Any]) -> dict:
+        tool_message = err.get("tool_message")
+        if not isinstance(tool_message, str):
+            return {}
+
+        try:
+            parsed = json.loads(tool_message)
+            if isinstance(parsed, dict):
+                maybe_args = parsed.get("args", {})
+                if isinstance(maybe_args, dict):
+                    if err.get("tool") == "Python_REPL" and "query" in maybe_args:
+                        maybe_args = dict(maybe_args)
+                        maybe_args["query"] = _normalize_python_query(str(maybe_args["query"]))
+                    return maybe_args
+        except Exception:
+            return {}
+        return {}
+
+    def _tool_expects_structured_input(tool) -> bool:
+        try:
+            if hasattr(tool, "args_schema") and tool.args_schema is not None:
+                return True
+            if hasattr(tool, "get_input_schema"):
+                schema = tool.get_input_schema()
+                if schema is not None:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    async def _invoke_tool(tool, raw_args: dict):
+        raw_args = dict(raw_args or {})
+        structured = _tool_expects_structured_input(tool)
+
+        if hasattr(tool, "ainvoke"):
+            if structured:
+                return await tool.ainvoke(raw_args)
+            if not raw_args:
+                return await tool.ainvoke("")
+            if len(raw_args) == 1:
+                return await tool.ainvoke(next(iter(raw_args.values())))
+            return await tool.ainvoke(raw_args)
+
+        if structured:
+            return tool.invoke(raw_args)
+
+        if not raw_args:
+            return tool.invoke("")
+        if len(raw_args) == 1:
+            return tool.invoke(next(iter(raw_args.values())))
+        return tool.invoke(raw_args)
+
+    def _looks_like_error_text(s: str) -> bool:
+        if not s:
+            return False
+        error_markers = (
+            "Traceback (most recent call last):",
+            "IndentationError",
+            "SyntaxError",
+            "NameError",
+            "KeyError",
+            "TypeError",
+            "ValueError",
+            "Exception",
+            "ERROR",
+            "Error:",
+            "Invalid",
+            "missing",
+        )
+        return any(marker in s for marker in error_markers)
+
+    def _normalize_result(tool_name: str, result):
+        if result is None:
+            return {"ok": True, "result": None}
+
+        if isinstance(result, str):
+            s = result.strip()
+
+            if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+                try:
+                    parsed = json.loads(s)
+                    if isinstance(parsed, dict) and parsed.get("ok") is False:
+                        return {
+                            "ok": False,
+                            "error": str(parsed.get("error", "Unknown error")),
+                        }
+                    return {"ok": True, "result": parsed}
+                except json.JSONDecodeError:
+                    pass
+
+            if _looks_like_error_text(s):
+                return {"ok": False, "error": s}
+
+            return {"ok": True, "result": s}
+
+        if isinstance(result, (dict, list, int, float, bool)):
+            if isinstance(result, dict) and result.get("ok") is False:
+                return {
+                    "ok": False,
+                    "error": str(result.get("error", "Unknown error")),
+                }
+            return {"ok": True, "result": result}
+
+        return {"ok": True, "result": str(result)}
+
+    def _mk_tool_call(tool_name: str, args: dict, tool_call_id: str) -> dict:
+        return {
+            "name": tool_name,
+            "args": args or {},
+            "id": tool_call_id,
+            "type": "tool_call",
+        }
+
+    def _format_attempt_log(attempt_log: List[Dict[str, Any]]) -> str:
+        if not attempt_log:
+            return "[]"
+
+        rows = []
+        for row in attempt_log:
+            rows.append({
+                "react_step": row["react_step"],
+                "target_error_id": row["target_error_id"],
+                "tool": row["tool"],
+                "args": row["args"],
+                "ok": row["ok"],
+                "output": row["output"],
+            })
+        return json.dumps(rows, ensure_ascii=False, indent=2)
+
+    def _serialize_errors_for_prompt(errors: List[Dict[str, Any]]) -> str:
+        rows = []
+        for err in errors:
+            rows.append({
+                "error_id": err["error_id"],
+                "tool": err.get("tool"),
+                "tool_call_id": err.get("tool_call_id"),
+                "error": err.get("error"),
+                "tool_message": err.get("tool_message"),
+            })
+        return json.dumps(rows, ensure_ascii=False, indent=2)
+
+    async def gate_node(state: dict) -> Dict:
+        base_messages = list(state.get("messages", []) or [])
+        raw_original_errors = detect_recent_tool_errors(base_messages)
+
+        if not raw_original_errors:
+            return {
+                "plan": {"steps": [], "missing_args": []},
+                "messages": [],
+                "last_tool_error": None,
+            }
+
+        # Freeze original round history for LLM-visible history.
+        llm_visible_messages: List[BaseMessage] = list(base_messages)
+
+        emitted_messages: List[BaseMessage] = []
+        seen_step_signatures: set[str] = set()
+        missing_args: List[str] = []
+        gate_notes: List[str] = []
+        attempt_log: List[Dict[str, Any]] = []
+
+        original_errors: List[Dict[str, Any]] = []
+        for idx, err in enumerate(raw_original_errors, start=1):
+            enriched = dict(err)
+            enriched["error_id"] = f"E{idx}"
+            original_errors.append(enriched)
+
+        fixed_error_ids: set[str] = set()
+
+        def _current_unresolved_errors() -> List[Dict[str, Any]]:
+            return [err for err in original_errors if err["error_id"] not in fixed_error_ids]
+
+        def _current_fixed_errors() -> List[Dict[str, Any]]:
+            return [err for err in original_errors if err["error_id"] in fixed_error_ids]
+
+        for react_idx in range(max_react_steps):
+            unresolved_errors = _current_unresolved_errors()
+            fixed_errors = _current_fixed_errors()
+
+            if not unresolved_errors:
+                break
+
+            gate_history = format_history_for_gate(llm_visible_messages)
+            cache = build_cached_tool_outputs(base_messages + emitted_messages)
+            tool_context = build_tool_context(tools_by_name)
+            valid_tool_names = sorted(list(tools_by_name.keys()))
+            valid_error_ids = {err["error_id"] for err in unresolved_errors}
+
+            react_prompt = f"""
+You are AGENTIC_GATE, a repair executor for a tool-using LangGraph pipeline.
+
+Your job is to reactively choose:
+1. which unresolved error to work on next
+2. which repair step to try next
+
+You must make that choice based on:
+- original round history
+- cached outputs
+- attempted repairs so far
+- errors already fixed
+- errors still unresolved
+
+VERY IMPORTANT:
+- Tool descriptions contain usage policy, dependency rules, and ordering constraints.
+- You must obey tool dependency rules.
+- Prefer repairing missing prerequisites before retrying downstream tools.
+- Reuse grounded values from cached successful outputs.
+- Do NOT invent ids, names, urls, passwords, numeric values, or other arguments not present in history/cache.
+- Return exactly ONE next repair action or mark done.
+
+SELF-CONTAINMENT RULE:
+- Any repaired step must be executable on its own.
+- Do NOT reference implicit variables from previous tool outputs.
+- If a computation tool needs prior tool output, pass grounded required data through valid tool arguments only.
+- If that is not possible for the tool schema, do not emit that repair step.
+
+SCHEMA RULE:
+- Output only arguments that belong to the target tool's real schema.
+- Do not include bookkeeping/debug fields such as `tool_name`.
+
+INTENT-PRESERVATION RULE:
+- Preserve the original latest user request.
+- Do not switch to a different statistic, easier computation, or different dataset.
+
+CURRENT ROUND HISTORY:
+{gate_history}
+
+CACHED TOOL OUTPUTS:
+{cache}
+
+So far errors fixed:
+{_serialize_errors_for_prompt(fixed_errors)}
+
+Errors still unresolved:
+{_serialize_errors_for_prompt(unresolved_errors)}
+
+ALREADY ATTEMPTED REPAIR STEPS THIS GATE RUN:
+{_format_attempt_log(attempt_log)}
+
+AVAILABLE TOOLS:
+{tool_context}
+
+VALID TOOL NAMES:
+{valid_tool_names}
+
+VALID UNRESOLVED ERROR IDS:
+{sorted(list(valid_error_ids))}
+
+OUTPUT JSON ONLY:
+{{
+  "target_error_id": "E1" | "E2" | null,
+  "step": {{"tool": "tool_name", "args": {{"arg_name": "value"}}}} | null,
+  "mark_target_fixed_if_success": true | false,
+  "done": true | false,
+  "reason": "one short evidence-based reason for why this unresolved error should be worked on next and why this repair step is appropriate",
+  "missing_args": []
+}}
+
+RULES:
+1. You choose which unresolved error to address next.
+2. Return at most ONE repair step.
+3. If the chosen target error is downstream and prerequisites are missing, you may choose a prerequisite repair step first.
+4. If your chosen repair step directly fixes the chosen error, set `mark_target_fixed_if_success` to true.
+5. If your chosen repair step is only a prerequisite and does not yet directly fix the chosen error, set `mark_target_fixed_if_success` to false.
+6. Do not repeat an identical or semantically equivalent repair step already attempted in this gate run.
+7. If no safe automatic repair is possible, set `done`: true.
+""".strip()
+
+            if DEBUG_MESSAGES == 1:
+                rich_print("\n" + "=" * 80)
+                rich_print(f"AGENTIC GATE PROMPT STEP {react_idx + 1}")
+                rich_print("=" * 80)
+                rich_print(react_prompt)
+                rich_print("=" * 80)
+
+            resp = model.invoke([HumanMessage(content=react_prompt)])
+            raw_text = (resp.content or "").strip()
+            raw_obj = _load_json_object(raw_text)
+
+            if DEBUG_MESSAGES == 1:
+                rich_print("\n" + "=" * 80)
+                rich_print(f"AGENTIC GATE REACT STEP {react_idx + 1}")
+                rich_print("=" * 80)
+                rich_print(raw_text if raw_text else "[EMPTY MODEL OUTPUT]")
+                rich_print("=" * 80)
+
+            if not raw_text:
+                gate_notes.append("Repair model returned empty output.")
+                break
+
+            if not isinstance(raw_obj, dict) or not raw_obj:
+                gate_notes.append("Repair model returned invalid JSON.")
+                break
+
+            decision = _sanitize_decision(raw_obj, valid_error_ids=valid_error_ids)
+
+            target_error_id = decision["target_error_id"]
+            step = decision["step"]
+            done = decision["done"]
+            reason = decision["reason"]
+            mark_target_fixed_if_success = decision["mark_target_fixed_if_success"]
+
+            for item in decision["missing_args"]:
+                if item not in missing_args:
+                    missing_args.append(item)
+
+            if done and step is None:
+                gate_notes.append(reason or "Repair model stopped.")
+                break
+
+            if target_error_id is None:
+                gate_notes.append(
+                    reason or "Repair model did not choose a valid unresolved error."
+                )
+                break
+
+            target_error = next(
+                (err for err in unresolved_errors if err["error_id"] == target_error_id),
+                None,
+            )
+            if target_error is None:
+                gate_notes.append(
+                    f"Repair model selected invalid target error id `{target_error_id}`."
+                )
+                break
+
+            if step is None:
+                gate_notes.append(
+                    reason or f"No safe repair step returned for target error `{target_error_id}`."
+                )
+                break
+
+            tool_name = step["tool"]
+            tool = tools_by_name[tool_name]
+            raw_args = _filter_args_for_tool(tool, step.get("args", {}) or {})
+            normalized_step = {"tool": tool_name, "args": raw_args}
+            sig = _step_signature(normalized_step)
+
+            if sig in seen_step_signatures:
+                gate_notes.append(
+                    f"Skipped duplicate repair step for `{tool_name}` targeting `{target_error_id}`."
+                )
+                break
+
+            seen_step_signatures.add(sig)
+
+            tool_call_id = str(uuid4())
+
+            ai_tool_call_msg = AIMessage(
+                content="",
+                tool_calls=[_mk_tool_call(tool_name, raw_args, tool_call_id)],
+            )
+            emitted_messages.append(ai_tool_call_msg)
+
+            try:
+                result = await _invoke_tool(tool, raw_args)
+                payload = _normalize_result(tool_name, result)
+            except Exception as e:
+                payload = {
+                    "ok": False,
+                    "error": str(e),
+                    "tool": tool_name,
+                    "args": raw_args,
+                }
+
+            tool_msg = ToolMessage(
+                content=json.dumps(payload, ensure_ascii=False, default=str),
+                name=tool_name,
+                tool_call_id=tool_call_id,
+            )
+            emitted_messages.append(tool_msg)
+
+            attempt_log.append({
+                "react_step": react_idx + 1,
+                "target_error_id": target_error_id,
+                "tool": tool_name,
+                "args": raw_args,
+                "ok": bool(payload.get("ok", False)),
+                "output": payload.get("result") if payload.get("ok") else payload.get("error"),
+            })
+
+            if payload.get("ok") is False:
+                gate_notes.append(
+                    f"Repair step `{tool_name}` for `{target_error_id}` failed: {payload.get('error', 'Unknown error')}"
+                )
+            else:
+                # Direct repair succeeds if model explicitly says so,
+                # or if the repair step tool matches the target error tool.
+                direct_fix = (
+                    mark_target_fixed_if_success
+                    or tool_name == target_error.get("tool")
+                )
+
+                if direct_fix:
+                    fixed_error_ids.add(target_error_id)
+                    gate_notes.append(
+                        f"Repair step `{tool_name}` succeeded and marked `{target_error_id}` fixed."
+                    )
+                else:
+                    gate_notes.append(
+                        f"Repair step `{tool_name}` succeeded as prerequisite work for `{target_error_id}`."
+                    )
+
+            if done:
+                break
+
+        unresolved_errors = _current_unresolved_errors()
+
+        note = (
+            "System Note: Agentic gate finished with unresolved tool error(s)."
+            if unresolved_errors
+            else "System Note: Agentic gate completed repair pass."
+        )
+
+        if gate_notes:
+            note += " " + " | ".join(gate_notes[:4])
+
+        emitted_messages.append(AIMessage(content=note))
+
+        return {
+            "plan": {"steps": [], "missing_args": missing_args},
+            "messages": emitted_messages,
+            "last_tool_error": unresolved_errors[0] if unresolved_errors else None,
         }
 
     return gate_node
