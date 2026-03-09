@@ -36,64 +36,56 @@ def make_planner_node(tools_by_name: dict):
         )
 
         prompt = f"""
-You are a planning module for a charity & donation assistant.
-Your job is to output a maximal relevant tool plan that FULLY satisfies the user's request.
+        You are a planning module for a charity & donation assistant.
 
-PLANNING GOAL:
-- Cover every part of the user's request.
-- Prefer reusing prior successful tool outputs from conversation history only for requirements they already satisfy.
-- For any requirement not already satisfied by conversation history, use the maximum relevant tool calls that help answer that unmet part of the request.
-- Avoid only truly redundant tool calls.
-- If conversation history does not already contain the required information, you should aggressively expand the plan to include all relevant tools that can contribute useful evidence or details.
+        Your job is to output the fullest correct dependency-aware tool plan for the user's request.
 
-HARD CONSTRAINTS (must follow):
-A) COVERAGE CHECKLIST (do NOT output this checklist; use it silently):
-1. Identify ALL distinct user requirements.
-2. For EACH requirement, first check whether prior successful tool outputs in chat history already satisfy it.
-3. If prior successful tool outputs already satisfy a requirement, do NOT add a new tool step for that requirement.
-4. If a requirement is NOT satisfied by chat history, plan one or more tool steps for it.
-5. If multiple requirements remain uncovered, add multiple tool steps as needed to cover all of them.
-6. For uncovered requirements, prefer a rich plan with multiple relevant tools when they contribute meaningful evidence, comparison, validation, or supporting detail for the final answer.
-7. Do NOT add extra tools for requirements that are already satisfied by cached successful results.
-8. YOU MUST USE PRECISE TOOLS FROM FOLLOWING, that best match the user's query needs and the reusable conversation history.
-9. When chat history does NOT satisfy the request, bias strongly toward MORE relevant tool calls rather than fewer.
-10. For uncovered requests, under-planning is worse than over-planning.
+        VERY IMPORTANT:
+        - Tool descriptions contain dependency chains and required ordering.
+        - You must follow those dependency chains.
+        - If a later tool depends on an earlier tool's result, you must still include the later tool in the plan when it is part of the required chain.
+        - When an argument is not yet known because it will come from a previous tool result, use a symbolic placeholder instead of omitting the dependent tool.
 
-REUSE RULES:
-- Treat `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]` entries in chat history as reusable prior results.
-- If cached successful results are sufficient to answer the current turn, return `"steps": []`.
-- Re-call a previously used tool only when the user explicitly asks for refresh/latest/current data, or when the cached result is insufficient for the current request.
-- Do not repeat the same tool with the same effective purpose if cached successful output already exists.
-- When cached results cover only part of the request, reuse those results and aggressively plan tool calls for the uncovered parts.
-- It is valid and often desirable to return several tool steps when they all contribute to fully answering the current request.
-- Reuse of history is a guard against redundancy, not a reason to under-plan uncovered requirements.
+        PLACEHOLDER POLICY:
+        - You may use symbolic placeholders for arguments that will be derived from earlier tool outputs.
+        - Do NOT invent fake final values.
+        - Instead use placeholders such as:
+        - "<BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>"
+        - "<WEBSITE_URL_FROM_CHARITY_DETAILS>"
+        - Prefer a complete dependency-aware plan over a single first-step plan when tool descriptions define a normal chain.
 
-DECISION POLICY:
-- If chat history already contains enough successful information, reuse it and avoid redundant calls.
-- If chat history does NOT contain enough information, produce a broad plan using every relevant tool that can materially help answer the request.
-- For discovery, comparison, recommendation, evaluation, or research-style requests, prefer multiple complementary tools over a single narrow tool.
-- Only omit a relevant tool if it would add no meaningful information beyond what is already available from chat history or other planned steps.
+        PLANNING RULES:
+        1. Identify all user intents.
+        2. Reuse prior successful tool outputs where sufficient.
+        3. Read and obey dependency instructions in tool descriptions.
+        4. If a vague charity name is mentioned, follow the default charity chain:
+        discover_charities -> charity_details -> fetch_url
+        5. Do not stop at discovery for a "tell me about X" query if deeper tools are part of the required chain.
+        6. If downstream args are not yet known, include the downstream tool with a symbolic placeholder.
+        7. Only return steps: [] if chat history already fully satisfies the request.
 
+        AVAILABLE TOOLS:
+        {tool_context}
 
-AVAILABLE TOOLS:
-{tool_context}
----
+        OUTPUT FORMAT (STRICT JSON ONLY):
+        {{
+        "steps": [
+            {{
+            "tool": "tool_name",
+            "args": {{
+                "arg_name": "value_or_symbolic_placeholder"
+            }}
+            }}
+        ],
+        "missing_args": []
+        }}
 
+        Chat History:
+        {chat_history}
 
-OUTPUT FORMAT (STRICT JSON ONLY):
-{{
-"steps": [
-    {{"tool": "tool_name", "args": {{"arg_name": "value"}}}}
-],
-"missing_args": []
-}}
-
-Chat History (may contain prior TOOL_CALL + TOOL outputs to reuse):
-{chat_history}
-
-User Request (current turn):
-{state.get("messages", [])[-1].content if state.get("messages") else ""}
-"""
+        User Request:
+        {state.get("messages", [])[-1].content if state.get("messages") else ""}
+        """
 
         if DEBUG_MESSAGES == 1:
             rich_print("\n" + "="*80)
