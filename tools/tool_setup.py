@@ -30,17 +30,16 @@ async def setup_tools():
         # transactions tools
         check_wallet_balance, 
         fund_wallet, 
-        get_payment_methods, 
-        add_payment_method, 
-        list_charities_by_country, 
-        get_charity_donation_products,
-        get_all_charities_with_grants, 
+        list_saved_payment_methods, 
+        create_payment_method_url, 
+        list_charities_in_country,
+        list_charity_products, 
         product_donation, 
-        get_all_active_campaigns, 
+        list_charity_active_campaigns,
+        campaign_donation,
+        list_charity_grants, 
         grant_donation, 
         get_transaction_history, 
-        get_donation_types_campaign, 
-        campaign_donation,
 
         #auction tools
         # auction tools
