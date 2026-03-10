@@ -931,6 +931,13 @@ VERY IMPORTANT:
 - Do NOT invent ids, names, urls, passwords, numeric values, or other arguments not present in history/cache.
 - Return exactly ONE next repair action or mark done.
 
+COMPLEX ARGUMENT ASSEMBLY RULE:
+- When a failed tool requires structured arguments (lists, nested objects), you MUST actively extract concrete values from CACHED TOOL OUTPUTS to build those arguments.
+- Do NOT pass empty lists, empty objects, or zero values as a shortcut to satisfy type validation. An empty list is not a valid repair — it will fail at the API level.
+- Walk through the cached outputs field by field. Match the user's original request (e.g., product name, campaign title) to items in the cached data to select the correct records.
+- For list-of-object arguments (e.g., products: [{{"partner": "...", "charityProd": "..."}}]), construct each object by extracting real field values (_id, pricePerUnit, category, partner, etc.) from the cached tool output that returned those records.
+- If the cached data does not contain a required field value and no other available tool can provide it, add that field name to missing_args and set done: true. Do NOT substitute a placeholder, empty value, or guess.
+
 SELF-CONTAINMENT RULE:
 - Any repaired step must be executable on its own.
 - Do NOT reference implicit variables from previous tool outputs.
@@ -987,6 +994,7 @@ RULES:
 5. If your chosen repair step is only a prerequisite and does not yet directly fix the chosen error, set `mark_target_fixed_if_success` to false.
 6. Do not repeat an identical or semantically equivalent repair step already attempted in this gate run.
 7. If no safe automatic repair is possible, set `done`: true.
+8. NEVER pass empty lists or empty objects for arguments that require real data. If the original error was caused by placeholder strings, the repair MUST replace them with actual values from cached outputs, not with empty containers.
 """.strip()
             
             if DEBUG_MESSAGES == 1 and (SHOW_GATE_HISTORY == 1 or 
