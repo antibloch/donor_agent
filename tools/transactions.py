@@ -249,15 +249,7 @@ def create_payment_method_url():
 
         response.raise_for_status()
         data = response.json()
-
-        # Extract only relevant info
-        url = data.get("data", {}).get("url")
-
-        return {
-            "success": True,
-            "url": url,
-            "message": "Payment method URL generated successfully."
-        }
+        return data
 
     except requests.exceptions.RequestException as e:
         return {
@@ -1465,5 +1457,6 @@ metadata_transaction = {
     }
 
 }
+
 
 
