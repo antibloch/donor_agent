@@ -4,15 +4,18 @@ from typing import Dict, List, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from rich import print as rich_print
 
-from llm import make_model
-from tools.json_utils import _parse_plan, _compact_json, _safe_json_loads, _extract_tool_error         
+from llm import make_model       
 from history_formatters import (
     format_history_for_planner,
     format_history_for_gate,
     build_cached_tool_outputs,
     format_history_for_responder,
     detect_recent_tool_errors,
-    format_msg,          
+    format_msg, 
+    _parse_plan, 
+    _compact_json, 
+    _safe_json_loads, 
+    _extract_tool_error           
 )
 from tools.tool_setup import build_tool_context
 

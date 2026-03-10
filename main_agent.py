@@ -16,9 +16,8 @@ from langgraph.graph import StateGraph, END
 
 from tools.tool_setup import setup_tools, build_tool_context
 from llm import make_model
-from tools.json_utils import _parse_plan
 from tools.tool_patcher import patch_tool_descriptions
-from history_formatters import format_history_for_responder
+from history_formatters import format_history_for_responder, _parse_plan
 from nodes import (
     make_planner_node,
     make_validator_node,
