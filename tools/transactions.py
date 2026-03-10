@@ -25,19 +25,44 @@ PASSWORD = "Google@123"
 @tool
 def check_wallet_balance():
     """
-    Retrieve the current wallet balance of the authenticated user.
+        PURPOSE:
+        Retrieve the current wallet balance of the authenticated user.
 
-    Use this tool when the user:
-    - asks for their wallet balance
-    - wants to check available funds
-    - asks if they have enough balance to donate
+        MUST_CALL_FIRST:
+        - when user asks about their wallet balance or available funds
+        - before performing financial actions if balance verification is required
 
-    Returns:
-        dict:
-            success (bool): Whether the request succeeded.
-            balance (float | None): Available wallet balance.
-            lockedBalance (float | None): Amount currently locked.
-            message (str): Status message.
+        DEFAULT_CHAIN:
+        - check_wallet_balance -> donation_or_transaction_tool
+
+        WHEN TO USE:
+        - user asks for their wallet balance
+        - user wants to check available funds
+        - user asks whether they have enough balance to donate
+        - balance verification is needed before a financial transaction
+
+        REQUIRES (Intuitive Schema):
+        - no arguments required (uses authenticated user context)
+
+        REQUIRES (Detailed Schema):
+            - none (wallet is resolved from authenticated session)
+
+        RETURNS (Intuitive Schema):
+        - user's wallet balance and locked balance
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates whether the request succeeded
+            - balance (float | None): available wallet balance
+            - lockedBalance (float | None): amount currently locked and not available
+            - message (str): status or informational message
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - balance can be used to verify whether user has enough funds before donation or transaction
+        - planner may compare donation amount with balance before proceeding
+
+        DO NOT STOP HERE WHEN:
+        - user intends to perform a donation or transaction
+        - further financial actions are requested
     """
     try:
         response = requests.get(
@@ -85,24 +110,50 @@ def check_wallet_balance():
 @tool
 def list_saved_payment_methods():
     """
-    Retrieve the user's saved payment methods.
+        PURPOSE:
+        Retrieve the authenticated user's saved payment methods (e.g., stored cards) for use in transactions.
 
-    Use this tool when the user:
-    - asks to see their saved cards
-    - wants to choose a payment method for a donation
-    - asks if they have any stored payment methods
+        MUST_CALL_FIRST:
+        - before asking the user to choose a stored payment method for funding the wallet.
+        - when verifying whether the user has any saved payment options
 
-    Returns:
-        dict:
-            success (bool)
-            payment_methods (list): List of saved payment methods
-                - uid (str): Payment method ID
-                - brand (str): Card brand (e.g., Visa, Mastercard)
-                - last4 (str): Last four digits of the card
-                - expiryDate (str): Card expiry date
-                - country (str): Issuing country
-            count (int): Number of saved payment methods
-            message (str)
+        DEFAULT_CHAIN:
+        - list_saved_payment_methods -> select_payment_method -> funds_wallet
+
+        WHEN TO USE:
+        - user asks to see their saved cards
+        - user wants to choose a payment method for funding the wallet
+        - user asks if they have any stored payment methods
+        - a payment method is required for completing a transaction
+
+        REQUIRES (Intuitive Schema):
+        - no arguments required (uses authenticated user context)
+
+        REQUIRES (Detailed Schema):
+            - none (payment methods are retrieved from the authenticated user profile)
+
+        RETURNS (Intuitive Schema):
+        - list of user's saved payment methods including card brand and masked number
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates whether the request was successful
+            - payment_methods (list) -> each item contains:
+                uid (str): payment method identifier
+                brand (str): card brand (e.g., Visa, Mastercard)
+                last4 (str): last four digits of the card
+                expiryDate (str): card expiration date
+                country (str): issuing country
+            - count (int): total number of saved payment methods
+            - message (str): status or informational message
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - uid should be used as the payment_method_id for payment or donation tools
+        - if planning before execution, planner should use placeholder:
+        "<SELECTED_PAYMENT_METHOD_UID_FROM_LIST_SAVED_PAYMENT_METHODS>"
+
+        DO NOT STOP HERE WHEN:
+        - user intends to complete a donation or financial transaction
+        - a payment method selection is required for the next step
     """
     try:
         response = requests.get(
@@ -151,18 +202,44 @@ def list_saved_payment_methods():
 @tool
 def create_payment_method_url():
     """
-    Generate a hosted URL where the user can add a new payment method.
+        PURPOSE:
+        Generate a hosted URL that allows the authenticated user to securely add a new payment method.
 
-    Use this tool when the user:
-    - wants to add a new card or payment method
-    - asks to save a payment method
-    - cannot find a payment method to use for donation
+        MUST_CALL_FIRST:
+        - after confirming that the user has no suitable saved payment methods
+        - when the user explicitly wants to add or save a new payment method
 
-    Returns:
-        dict:
-            success (bool)
-            url (str | None): Hosted URL for adding a payment method
-            message (str)
+        DEFAULT_CHAIN:
+        - list_saved_payment_methods -> create_payment_method_url -> user_adds_payment_method -> list_saved_payment_methods
+
+        WHEN TO USE:
+        - user wants to add a new card or payment method
+        - user asks how to save a payment method
+        - user cannot find an existing payment method to use for wallet funding
+        - user needs to register a new card before completing a transaction
+
+        REQUIRES (Intuitive Schema):
+        - no arguments required (uses authenticated user context)
+
+        REQUIRES (Detailed Schema):
+            - none (URL is generated for the authenticated user session)
+
+        RETURNS (Intuitive Schema):
+        - secure hosted URL where the user can add a new payment method
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates whether the request was successful
+            - url (str | None): hosted URL for adding a new payment method
+            - message (str): status or informational message
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - after the user adds a payment method via the URL, list_saved_payment_methods should be called again to retrieve the newly added method
+        - planner placeholder if needed:
+        "<USER_ADDS_PAYMENT_METHOD_VIA_HOSTED_URL>"
+
+        DO NOT STOP HERE WHEN:
+        - user still needs to fund the wallet or complete a donation
+        - newly added payment methods must be fetched before proceeding
     """
     try:
         response = requests.get(
@@ -198,29 +275,59 @@ def create_payment_method_url():
 @tool
 def list_charities_in_country(country_code: str):
     """
-    Retrieve a list of charities operating in the specified country.
+        PURPOSE:
+        Retrieve a list of charities operating in a specified country.
 
-    Use this tool when the user:
-    - wants to see charities in a specific country
-    - asks for donation options by country
-    - wants to select a charity for donation
+        MUST_CALL_FIRST:
+        - when the user wants to discover charities within a specific country
+        - before selecting a charity for donation when the charity_id is not known
 
-    Args:
-        country_code (str): 2-letter ISO country code (e.g., 'PK')
+        DEFAULT_CHAIN:
+        - list_charities_in_country -> charity_details -> donation_products / grants / campaigns
 
-    Returns:
-        dict:
-            success (bool)
-            charities (list): List of charity objects
-                - _id (str): Charity ID
-                - name (str): Charity name
-                - email (str): Contact email
-                - phone (str): Contact phone
-                - description (str)
-                - address (dict): street, city, state, country, postalCode
-                - verificationStatus (str)
-                - website (str)
-            message (str)
+        WHEN TO USE:
+        - user asks to see charities in a specific country
+        - user wants donation options available in a country
+        - user wants to select a charity for donation
+        - charity_id is not yet known but country context is provided
+
+        REQUIRES (Intuitive Schema):
+        - country_code (str): 2-letter ISO country code (e.g., PK)
+
+        REQUIRES (Detailed Schema):
+            - country_code (str): ISO 3166-1 alpha-2 country code identifying the country
+              where charities operate
+
+        RETURNS (Intuitive Schema):
+        - list of charities operating in the specified country including id and name
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates whether the request was successful
+            - charities (list) -> each item contains:
+                _id (str): charity identifier
+                name (str): charity name
+                email (str): contact email
+                phone (str): contact phone
+                description (str)
+                address (dict):
+                    street (str)
+                    city (str)
+                    state (str)
+                    country (str)
+                    postalCode (str)
+                verificationStatus (str)
+                website (str)
+            - message (str): status or informational message
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - _id should be used as charity_id for subsequent tools such as:
+          get_charity_donation_products, get_charity_grants, or get_charity_campaigns
+        - if planning before execution, planner should use placeholder:
+        "<SELECTED_CHARITY_ID_FROM_LIST_CHARITIES_IN_COUNTRY>"
+
+        DO NOT STOP HERE WHEN:
+        - user wants details about a specific charity
+        - user intends to view donation options such as products, grants, or campaigns
     """
     params = {
         "page": 1,
@@ -351,13 +458,6 @@ def list_charity_products(charity_id: str):
         cleaned_products = []
 
         for item in items:
-            images = item.get("images", [])
-            primary_image = None
-            for img in images:
-                if img.get("isPrimary"):
-                    primary_image = img.get("url")
-                    break
-
             cleaned_products.append({
                 "_id": item.get("_id"),
                 "name": item.get("name"),
@@ -736,28 +836,60 @@ def list_charity_active_campaigns(charity_id: str):
 @tool
 def get_transaction_history():
     """
-    Retrieve the last 30 wallet transactions for the authenticated user.
+        PURPOSE:
+        Retrieve the most recent wallet transaction history for the authenticated user.
 
-    Use this tool when the user:
-        - wants to see their recent wallet activity
-        - asks for donation, withdrawal, or refund history
-        - needs transaction details like amount, type, or status
+        MUST_CALL_FIRST:
+        - when the user asks about their wallet activity or past transactions
+        - when transaction history is required for verification or support
 
-    Returns:
-        dict:
-            - success (bool)
-            - transactions (list): List of transaction objects
-                - _id (str)
-                - wallet (str)
-                - amount (float)
-                - description (str)
-                - type (str): "deposit", "withdrawal", etc.
-                - status (str): "pending", "completed", "refunded", "failed"
-                - isDeleted (bool)
-                - createdAt (str)
-                - updatedAt (str)
-            - pagination (dict): { currentPage, totalPages, totalItems, itemsPerPage, hasNextPage, hasPrevPage }
-            - message (str)
+        DEFAULT_CHAIN:
+        - get_transaction_history -> transaction_details_or_support_action
+
+        WHEN TO USE:
+        - user wants to see their recent wallet activity
+        - user asks for donation, withdrawal, deposit, or refund history
+        - user needs transaction details like amount, type, or status
+        - user wants to track a previous financial action
+
+        REQUIRES (Intuitive Schema):
+        - no arguments required (uses authenticated user context)
+
+        REQUIRES (Detailed Schema):
+            - none (transactions are retrieved from the authenticated user's wallet)
+
+        RETURNS (Intuitive Schema):
+        - recent wallet transactions including amount, type, and status
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates whether the request was successful
+            - transactions (list) -> each item contains:
+                _id (str): transaction identifier
+                wallet (str): wallet identifier associated with the transaction
+                amount (float): transaction amount
+                description (str): description of the transaction
+                type (str): transaction type (e.g., "deposit", "withdrawal", "donation")
+                status (str): transaction status (e.g., "pending", "completed", "refunded", "failed")
+                isDeleted (bool): indicates whether the transaction has been deleted
+                createdAt (str): timestamp when the transaction was created
+                updatedAt (str): timestamp when the transaction was last updated
+            - pagination (dict):
+                currentPage (int)
+                totalPages (int)
+                totalItems (int)
+                itemsPerPage (int)
+                hasNextPage (bool)
+                hasPrevPage (bool)
+            - message (str): status or informational message
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - transaction _id can be used for support, dispute, or transaction detail tools
+        - if planning before execution, planner should use placeholder:
+        "<SELECTED_TRANSACTION_ID_FROM_TRANSACTION_HISTORY>"
+
+        DO NOT STOP HERE WHEN:
+        - user requests deeper details about a specific transaction
+        - follow-up actions such as refunds, support, or verification are required
     """
     params = {
         "page": 1,
@@ -802,27 +934,52 @@ def get_transaction_history():
 @tool
 def fund_wallet(amount: float, paymentMethodId: str, password: str):
     """
-    Fund a user's wallet using a selected payment method.
+        PURPOSE:
+        Fund the authenticated user's wallet using a selected payment method and confirm the updated balance.
 
-    Use this tool when the user:
-        - wants to add money to their wallet
-        - asks for wallet balance top-up
-        - needs confirmation of successful funding
+        MUST_CALL_FIRST:
+        - after obtaining a valid paymentMethodId from list_saved_payment_methods
+        - after verifying the user's password for transaction authorization
 
-    Args:
-        amount (float): Amount to add to the wallet. Must be > 0. (Ask from user)
-        paymentMethodId (str): ID of the selected payment method (card) (from list_saved_payment_methods)
-        password (str): User's account password for transaction authorization. (Ask from user)
+        DEFAULT_CHAIN:
+        - list_saved_payment_methods -> fund_wallet -> check_wallet_balance
 
-    Returns:
-        dict:
-            - success (bool)
-            - message (str): Confirmation or error message.
+        WHEN TO USE:
+        - user wants to add money to their wallet
+        - user asks for wallet top-up
+        - user needs confirmation of successful funding and updated balance
+
+        REQUIRES (Intuitive Schema):
+        - amount (float): amount to add to wallet
+        - paymentMethodId (str): selected payment method identifier
+        - password (str): user password for authorization
+
+        REQUIRES (Detailed Schema):
+            - amount (float): must be greater than 0, obtained from user input
+            - paymentMethodId (str): ID of the selected payment method (from list_saved_payment_methods)
+            - password (str): authenticated user's account password for transaction authorization
+
+        RETURNS (Intuitive Schema):
+        - success status and updated wallet balance
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates whether the funding succeeded
+            - message (str): confirmation or error message
             - data (dict):
-                - paymentRequestUid (str): Unique payment request ID.
-                - customerId (str): Customer identifier.
-                - walletUid (str): Wallet identifier.
-                - newBalance (float): Wallet balance after funding.
+                paymentRequestUid (str): unique identifier for the payment request
+                customerId (str): customer identifier
+                walletUid (str): wallet identifier
+                newBalance (float): wallet balance after funding
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - newBalance can be used for verifying whether the user has sufficient funds for donations
+        - paymentRequestUid may be used for transaction tracking
+        - planner placeholder if needed:
+        "<PAYMENT_REQUEST_UID_FROM_FUND_WALLET>"
+
+        DO NOT STOP HERE WHEN:
+        - user wants to perform a donation or other transaction immediately after funding
+        - wallet balance verification is required before the next financial action
     """
     # Verify password before initiating transaction
     auth = verify_user_password(password)
@@ -876,31 +1033,61 @@ def product_donation(
     password: str
 ):
     """
-    Create a product donation for a specific charity.
+        PURPOSE:
+        Create a product donation for a specific charity using selected products and partners.
 
-    Use this tool when the user:
-        - wants to donate products to a charity
+        MUST_CALL_FIRST:
+        - after obtaining charityId from list_charities_in_country or discover_charities
+        - after selecting products and verifying user password for transaction authorization
 
-    Args:
-        charityId (str): Unique identifier of the charity.
-        partners (list): List of partner IDs involved in the donation.
-        categories (list): List of category IDs related to the donation.
-        country (str): Country name for delivery.
-        countryCode (str): ISO country code (e.g., PK).
-        products (list): List of product objects. Each must include:
-            - partner (str): Partner ID
-            - charityProd (str): Charity product ID
-            - partnerProd (str): Partner product ID
-            - category (str): Category ID
-            - charityProdPrice (float): Price per product
-            - quantity (int): Quantity to donate
-        password (str): User password for transaction authorization.
+        DEFAULT_CHAIN:
+        - discover_charities -> get_charity_donation_products -> product_donation -> get_transaction_history
 
-    Returns:
-        dict:
-            - success (bool)
-            - message (str): Confirmation or error message.
-            - data (dict): Donation details returned by the backend.
+        WHEN TO USE:
+        - user wants to donate products to a specific charity
+        - user has selected products, partners, and categories for donation
+        - user requires confirmation of the donation transaction
+
+        REQUIRES (Intuitive Schema):
+        - charityId (str): selected charity identifier
+        - partners (list): partner IDs involved in donation
+        - categories (list): category IDs related to the donation
+        - country (str): delivery country name
+        - countryCode (str): 2-letter ISO country code
+        - products (list): products to donate including quantity and price
+        - password (str): user password for authorization
+
+        REQUIRES (Detailed Schema):
+            - charityId (str): unique identifier of the charity
+            - partners (list[str]): list of partner IDs participating in the donation
+            - categories (list[str]): list of category IDs for the donation
+            - country (str): name of the country for product delivery
+            - countryCode (str): ISO 3166-1 alpha-2 country code
+            - products (list[dict]) -> each item must contain:
+                partner (str): partner ID
+                charityProd (str): charity product ID
+                partnerProd (str): partner product ID
+                category (str): category ID
+                charityProdPrice (float): price per product
+                quantity (int): number of units to donate
+            - password (str): authenticated user's password for transaction authorization
+
+        RETURNS (Intuitive Schema):
+        - success status and confirmation of the product donation
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates whether the donation was successfully created
+            - message (str): confirmation or error message
+            - data (dict): donation details returned by the backend
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - transaction details in data can be used to track the donation
+        - planner placeholder if needed:
+        "<PRODUCT_DONATION_TRANSACTION_ID>"
+
+        DO NOT STOP HERE WHEN:
+        - user wants to donate additional products or verify donation history
+        - follow-up actions such as receipts or notifications are required
     """
     # Verify password before donation
     auth = verify_user_password(password)
@@ -952,31 +1139,56 @@ def product_donation(
 def campaign_donation(
     campaignId: str,
     amount: float,
-    donationType: str,
     donationTypeId: str,
     password: str,
     campaignType: str = 'CharityOrganization'
 ):
     """
-    Make a monetary donation to a specific campaign.
+        PURPOSE:
+        Make a monetary donation to a specific campaign and confirm the donation details.
 
-    Use this tool when the user:
-        - wants to donate money to a campaign
-        - has already seen valid donation types in prior interaction
+        MUST_CALL_FIRST:
+        - after obtaining campaignId and valid donationTypeId from list_charity_active_campaigns
+        - after verifying the user's password for transaction authorization
 
-    Args:
-        campaignId (str): Unique ID of the campaign.
-        amount (float): Donation amount.
-        donationType (str): Donation type chosen by the user (e.g., chanda, fitra).
-        donationTypeId (str): Donation type ID corresponding to the selected donationType.
-        password (str): User password for transaction authorization.
-        campaignType (str, optional): Type of campaign. Default is 'CharityOrganization'.
+        DEFAULT_CHAIN:
+        - list_charity_active_campaigns -> campaign_donation -> get_transaction_history
 
-    Returns:
-        dict:
-            - success (bool)
-            - message (str): Confirmation or error message.
-            - data (dict): Donation details if successful.
+        WHEN TO USE:
+        - user wants to donate money to a specific campaign
+        - user has already seen valid donation types for the campaign
+        - user requires confirmation of the donation transaction
+
+        REQUIRES (Intuitive Schema):
+        - campaignId (str): campaign identifier
+        - amount (float): donation amount
+        - donationTypeId (str): selected donation type ID
+        - password (str): user password for authorization
+        - campaignType (str, optional): type of campaign (default 'CharityOrganization')
+
+        REQUIRES (Detailed Schema):
+            - campaignId (str): unique identifier of the campaign
+            - amount (float): monetary amount to donate
+            - donationTypeId (str): ID of the selected donation type
+            - password (str): authenticated user's password for transaction authorization
+            - campaignType (str, optional): campaign type; default is 'CharityOrganization'
+
+        RETURNS (Intuitive Schema):
+        - success status and confirmation of the monetary donation
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates whether the donation was successfully processed
+            - message (str): confirmation or error message
+            - data (dict): donation details returned by the backend if successful
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - data can be used to track the donation or generate a receipt
+        - planner placeholder if needed:
+        "<CAMPAIGN_DONATION_TRANSACTION_ID>"
+
+        DO NOT STOP HERE WHEN:
+        - user wants to make additional donations or check donation history
+        - follow-up actions such as receipt generation or reporting are required
     """
     # Verify user password
     auth = verify_user_password(password)
@@ -1011,28 +1223,51 @@ def campaign_donation(
 @tool
 def grant_donation(charityId: str, amount: float, grantId: str, password: str):
     """
-    Make a monetary donation to a specific grant for a charity.
+        PURPOSE:
+        Make a monetary donation to a specific grant for a charity and return donation details.
 
-    Use this tool when the user:
-        - wants to donate to a specific grant
-        - has already seen available grants for a charity
-        - wants to contribute a specific amount toward a grant
+        MUST_CALL_FIRST:
+        - after obtaining charityId and grantId from list_charity_grants
+        - after verifying the user's password for transaction authorization
 
-    Args:
-        charityId (str): Unique ID of the charity. (from list_charity_grants)
-        amount (float): Amount to donate toward the grant. (Ask user for it)
-        grantId (str): Unique ID of the grant being funded. (from list_charity_grants)
-        password (str): User password for transaction authorization. (Ask user for it)
+        DEFAULT_CHAIN:
+        - list_charity_grants -> grant_donation -> get_transaction_history
 
-    Returns:
-        dict:
-            - success (bool)
-            - message (str): Confirmation or error message.
-            - data (dict): Grant donation details if successful.
+        WHEN TO USE:
+        - user wants to donate to a specific grant
+        - user has already seen available grants for a charity
+        - user wants to contribute a specific monetary amount toward a grant
+        - user requires confirmation of the donation transaction
 
-    Notes:
-        - Validation of IDs, amounts, and balance is handled by the backend.
-        - Agent can rely on prior tool responses to verify grant selection without extra API calls.
+        REQUIRES (Intuitive Schema):
+        - charityId (str): selected charity identifier
+        - grantId (str): selected grant identifier
+        - amount (float): donation amount
+        - password (str): user password for authorization
+
+        REQUIRES (Detailed Schema):
+            - charityId (str): unique identifier of the charity (from get_charity_grants)
+            - grantId (str): unique identifier of the grant (from get_charity_grants)
+            - amount (float): monetary amount to donate toward the grant
+            - password (str): authenticated user's password for transaction authorization
+
+        RETURNS (Intuitive Schema):
+        - success status and confirmation of the grant donation
+
+        RETURNS (Detailed Schema):
+            - success (bool): indicates whether the donation was successfully processed
+            - message (str): confirmation or error message
+            - data (dict): grant donation details returned by the backend if successful
+
+        CHAIN_OUTPUT_FOR_NEXT_TOOL:
+        - data can be used to track the grant donation or generate a receipt
+        - planner placeholder if needed:
+        "<GRANT_DONATION_TRANSACTION_ID>"
+
+        DO NOT STOP HERE WHEN:
+        - user wants to donate to additional grants
+        - follow-up actions such as receipt generation or reporting are required
+
     """
     # Verify user password
     auth = verify_user_password(password)
