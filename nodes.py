@@ -3,6 +3,7 @@ from uuid import uuid4
 from typing import Dict, List, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from rich import print as rich_print
+import re
 
 from llm import make_model       
 from history_formatters import (
@@ -237,6 +238,88 @@ def make_executor_node(tools_by_name: dict):
     def _mk_tool_call(tool_name: str, args: dict, tool_call_id: str) -> dict:
         return {"name": tool_name, "args": args or {}, "id": tool_call_id, "type": "tool_call"}
 
+    # Placeholder resolution
+    _PLACEHOLDER_RE = re.compile(r"^<[A-Z_]+>$")
+
+    def _has_placeholders(args: dict) -> bool:
+        """Check if any arg value is a symbolic placeholder like <FOO_BAR>."""
+        for v in (args or {}).values():
+            if isinstance(v, str) and _PLACEHOLDER_RE.match(v.strip()):
+                return True
+        return False
+
+    def _extract_resolvable_values(payload: dict) -> dict:
+        """
+        Walk a successful tool output and collect candidate ID-like values
+        that could resolve placeholders.  Returns a dict like:
+          {"charity_id": "6957c...", "auction_id": "abc123", ...}
+        """
+        candidates = {}
+        result = payload.get("result", payload) if isinstance(payload, dict) else payload
+
+        # Unwrap double envelope
+        if isinstance(result, dict) and "result" in result:
+            result = result["result"]
+
+        if not isinstance(result, dict):
+            return candidates
+
+        # Direct _id at top level
+        if "_id" in result and isinstance(result["_id"], str):
+            candidates["_id"] = result["_id"]
+
+        # Look inside common list fields (items, auctions, charities, bids, etc.)
+        for key, val in result.items():
+            if isinstance(val, list) and len(val) > 0 and isinstance(val[0], dict):
+                first = val[0]
+                if "_id" in first and isinstance(first["_id"], str):
+                    candidates[key] = first["_id"]
+                    # Also store as the most likely resolution target
+                    if not candidates.get("_id"):
+                        candidates["_id"] = first["_id"]
+
+        return candidates
+
+    def _resolve_placeholders(steps: list, step_index: int, prior_outputs: list) -> dict:
+        """
+        For the step at step_index, try to resolve any placeholder args using
+        values extracted from prior successful tool outputs.
+        Returns the resolved args dict (or original if nothing to resolve).
+        """
+        step = steps[step_index]
+        args = dict(step.get("args", {}) or {})
+
+        if not _has_placeholders(args):
+            return args
+
+        # Collect all resolvable values from prior outputs, latest first
+        all_candidates = {}
+        for prior_payload in reversed(prior_outputs):
+            if isinstance(prior_payload, dict) and prior_payload.get("ok") is True:
+                extracted = _extract_resolvable_values(prior_payload)
+                for k, v in extracted.items():
+                    if k not in all_candidates:
+                        all_candidates[k] = v
+
+        if not all_candidates:
+            return args
+
+        # The primary resolution value — the first _id found
+        primary_id = all_candidates.get("_id")
+
+        resolved = {}
+        for arg_name, arg_val in args.items():
+            if isinstance(arg_val, str) and _PLACEHOLDER_RE.match(arg_val.strip()):
+                # Try to resolve: use primary_id for any ID-like placeholder
+                if primary_id:
+                    resolved[arg_name] = primary_id
+                else:
+                    resolved[arg_name] = arg_val  # keep placeholder, will fail downstream
+            else:
+                resolved[arg_name] = arg_val
+
+        return resolved
+
     async def executor_node(state: dict) -> Dict:
         plan = state.get("plan", {})
         steps = plan.get("steps", [])
@@ -244,13 +327,19 @@ def make_executor_node(tools_by_name: dict):
             return {}
 
         messages: List[BaseMessage] = []
-        for step in steps:
+        prior_outputs: list = []  # Collect normalized payloads from completed steps
+
+        for idx, step in enumerate(steps):
             tool_name = step.get("tool")
             raw_args = dict(step.get("args", {}) or {})
 
             if tool_name not in tools_by_name:
                 messages.append(AIMessage(content=f"System Note: Tool '{tool_name}' not found. Skipping."))
+                prior_outputs.append(None)
                 continue
+
+            # Resolve placeholders from prior outputs
+            raw_args = _resolve_placeholders(steps, idx, prior_outputs)
 
             tool = tools_by_name[tool_name]
             tool_call_id = str(uuid4())
@@ -258,10 +347,8 @@ def make_executor_node(tools_by_name: dict):
             messages.append(AIMessage(content="", tool_calls=[_mk_tool_call(tool_name, raw_args, tool_call_id)]))
 
             try:
-                # This is the key change: we now await the invocation
                 result = await _invoke_tool(tool, raw_args)
                 payload = _normalize_result(tool_name, result)
-
             except Exception as e:
                 error_msg = str(e)
                 payload = {
@@ -271,6 +358,8 @@ def make_executor_node(tools_by_name: dict):
                     "args": raw_args
                 }
 
+            prior_outputs.append(payload)
+
             messages.append(ToolMessage(
                 content=json.dumps(payload, ensure_ascii=False, default=str),
                 name=tool_name,
@@ -279,7 +368,7 @@ def make_executor_node(tools_by_name: dict):
 
             if DEBUG_MESSAGES == 1:
                 preview = payload.get("result") if payload.get("ok") else payload.get("error")
-                preview_s = _compact_json(preview, max_chars=200)   # ← FIXED
+                preview_s = _compact_json(preview, max_chars=200)
                 rich_print(f"[EXECUTOR] {tool_name} done ok={payload.get('ok')} args={raw_args} preview={preview_s}")
 
         return {"messages": messages}
