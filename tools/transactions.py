@@ -428,7 +428,7 @@ def list_charity_products(charity_id: str):
     """
     params = {"page": 1, "limit": 50}
     headers = {
-        'xApiKey':xApiKey
+        'X-API-KEY':xApiKey
     }
     try:
         if charity_id is None:
@@ -506,7 +506,7 @@ def list_charity_grants(charity_id: str):
         - charity_id (str): unique identifier of the charity
 
         REQUIRES (Detailed Schema):
-            - charity_id (str): ID of the charity, obtained from list_charities_in_country or discover_charities
+        - charity_id (str): ID of the charity, obtained from list_charities_in_country or discover_charities
 
         RETURNS (Intuitive Schema):
         - list of grants for the charity including id, title, and status
@@ -544,7 +544,7 @@ def list_charity_grants(charity_id: str):
     """
     try:
         headers = {
-            'xApiKey':xApiKey
+            'X-API-KEY':xApiKey
         }
         if charity_id is None:
             return {
@@ -673,7 +673,7 @@ def list_charity_active_campaigns(charity_id: str):
     """
     try:
         headers = {
-            "xApiKey": xApiKey
+            "X-API-KEY": xApiKey
         }
         
         # Add charityID as a query param if provided
