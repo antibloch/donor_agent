@@ -23,9 +23,22 @@ import dotenv
 dotenv.load_dotenv()
 DEBUG_MESSAGES = int(dotenv.get_key(dotenv.find_dotenv(), "DEBUG_MESSAGES") or "0")
 DO_SELECTION = (dotenv.get_key(dotenv.find_dotenv(), "DO_SELECTION") or "0").strip().lower() in ("1", "true", "yes", "on")
-SHOW_PLANNER_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_PLANNER_INPUT") or "0")
-SHOW_RESPONDER_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_RESPONDER_INPUT") or "0")
+SHOW_PLANNER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_PLANNER_HISTORY") or "0")
+SHOW_PLANNER_TOOL_CONTEXT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_PLANNER_TOOL_CONTEXT") or "0")
+SHOW_RESPONDER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_RESPONDER_HISTORY") or "0")
 SHOW_GATE_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_INPUT") or "0")
+TRUNCATION_LIMIT_PLANNER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_PLANNER_HISTORY") or "10000")
+TRUNCATION_LIMIT_PLANNER_TOOL = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_PLANNER_TOOL") or "1000")
+TRUNCATION_LIMIT_RESPONDER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_RESPONDER_HISTORY") or "10000")
+TRUNCATION_LIMIT_GATE_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_GATE_HISTORY") or "10000")
+SHOW_GATE_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_HISTORY") or "0")
+SHOW_GATE_CACHED_TOOL_OUTPUTS = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_CACHED_TOOL_OUTPUTS") or "0")
+SHOW_GATE_FIXED_ERRORS = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_FIXED_ERRORS") or "0")
+SHOW_GATE_UNRESOLVED_ERRORS = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_UNRESOLVED_ERRORS") or "0")
+SHOW_GATE_ATTEMPTED_REPAIRS = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_ATTEMPTED_REPAIRS") or "0")
+SHOW_GATE_UNRESOLVED_ERROR_IDS = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_UNRESOLVED_ERROR_IDS") or "0")
+SHOW_GATE_TOOL_OUTPUTS = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_TOOL_OUTPUTS") or "0")
+TRUNCATION_LIMIT_GATE_TOOL_OUTPUT = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_GATE_TOOL_OUTPUT") or "500")
 
 def make_planner_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
@@ -93,11 +106,23 @@ def make_planner_node(tools_by_name: dict):
         {state.get("messages", [])[-1].content if state.get("messages") else ""}
         """
 
-        if DEBUG_MESSAGES == 1 and SHOW_PLANNER_INPUT == 1:
+        trunc_lim_history = TRUNCATION_LIMIT_PLANNER_HISTORY
+        trunc_lim_tool = TRUNCATION_LIMIT_PLANNER_TOOL
+        
+        if DEBUG_MESSAGES == 1 and SHOW_PLANNER_HISTORY == 1:
             rich_print("\n" + "="*80)
-            rich_print("PLANNER INPUT (DO_SELECTION={DO_SELECTION})")
+            rich_print("PLANNER INPUT CHAT HISTORY (DO_SELECTION={})".format(DO_SELECTION))
             rich_print("="*80)
-            rich_print(prompt)
+            truncated_history = chat_history[:trunc_lim_history] + ("..." if len(chat_history) > trunc_lim_history else "")
+            rich_print(f'{truncated_history}')
+            rich_print("="*80)
+
+        if DEBUG_MESSAGES == 1 and SHOW_PLANNER_TOOL_CONTEXT == 1:
+            rich_print("\n" + "="*80)
+            rich_print("PLANNER INPUT TOOL CONTEXT (DO_SELECTION={})".format(DO_SELECTION))
+            rich_print("="*80)
+            truncated_context = tool_context[:trunc_lim_tool] + ("..." if len(tool_context) > trunc_lim_tool else "")
+            rich_print(f'{truncated_context}')
             rich_print("="*80)
 
         response = model.invoke([HumanMessage(content=prompt)])
@@ -336,13 +361,15 @@ Now write the final answer based strictly on the Conversation History below, inc
         transcript = format_history_for_responder(messages)
         final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{transcript}")]
 
-        if DEBUG_MESSAGES == 1 and SHOW_RESPONDER_INPUT == 1:
+        trunc_limit_hist = TRUNCATION_LIMIT_RESPONDER_HISTORY
+        if DEBUG_MESSAGES == 1 and SHOW_RESPONDER_HISTORY == 1:
             rich_print("\n" + "="*80)
-            rich_print("RESPONDER INVOKE MESSAGES")
+            rich_print("RESPONDER CONVERSATION HISTORY")
             rich_print("="*80)
-            for i, m in enumerate(final_prompt):
-                rich_print(format_msg(m))   # ← now exact match to original
+            truncated_transcript = transcript[:trunc_limit_hist] + ("..." if len(transcript) > trunc_limit_hist else "")
+            rich_print(f'{truncated_transcript}')
             rich_print("="*80)
+
 
         summary = model.invoke(final_prompt)
         final_text = (summary.content or "").strip()
@@ -362,30 +389,28 @@ def make_gate_node(
 ):
     """
     It sees, on every react step:
+        original round history
 
-    original round history
+        cached outputs
 
-    cached outputs
+        attempted repairs so far
 
-    attempted repairs so far
+        errors already fixed
 
-    errors already fixed
+        errors still unresolved
 
-    errors still unresolved
+        and then decides:
 
-    and then decides:
+        which error to prioritize next
 
-    which error to prioritize next
+        whether to do a direct fix or prerequisite step
 
-    whether to do a direct fix or prerequisite step
-
-    whether success should mark that error fixed
+        whether success should mark that error fixed
 
     So this is now genuinely reactive in both:
+        error-order selection
 
-    error-order selection
-
-    repair-step selection
+        repair-step selection
     """
 
     model = make_model(temperature=0.0)
@@ -809,12 +834,47 @@ RULES:
 6. Do not repeat an identical or semantically equivalent repair step already attempted in this gate run.
 7. If no safe automatic repair is possible, set `done`: true.
 """.strip()
-
-            if DEBUG_MESSAGES == 1 and SHOW_GATE_INPUT == 1:
+            
+            if DEBUG_MESSAGES == 1 and (SHOW_GATE_HISTORY == 1 or 
+                                        SHOW_GATE_CACHED_TOOL_OUTPUTS == 1 or 
+                                        SHOW_GATE_FIXED_ERRORS == 1 or 
+                                        SHOW_GATE_UNRESOLVED_ERRORS == 1 or 
+                                        SHOW_GATE_ATTEMPTED_REPAIRS == 1 or 
+                                        SHOW_GATE_UNRESOLVED_ERROR_IDS == 1):
                 rich_print("\n" + "=" * 80)
                 rich_print(f"AGENTIC GATE PROMPT STEP {react_idx + 1}")
                 rich_print("=" * 80)
-                rich_print(react_prompt)
+
+            if DEBUG_MESSAGES == 1 and SHOW_GATE_HISTORY == 1:
+                rich_print("CURRENT ROUND HISTORY:")
+                trunc_lim_hist = TRUNCATION_LIMIT_GATE_HISTORY
+                truncated_history = gate_history[:trunc_lim_hist] + ("..." if len(gate_history) > trunc_lim_hist else "")
+                rich_print(truncated_history)
+                rich_print("=" * 80)
+
+            if DEBUG_MESSAGES == 1 and SHOW_GATE_CACHED_TOOL_OUTPUTS == 1:
+                rich_print("CACHED TOOL OUTPUTS:")
+                rich_print(cache)
+                rich_print("=" * 80)
+
+            if DEBUG_MESSAGES == 1 and SHOW_GATE_FIXED_ERRORS == 1:
+                rich_print("So far errors fixed:")
+                rich_print(_serialize_errors_for_prompt(fixed_errors))
+                rich_print("=" * 80)
+
+            if DEBUG_MESSAGES == 1 and SHOW_GATE_UNRESOLVED_ERRORS == 1:
+                rich_print("Errors still unresolved:")
+                rich_print(_serialize_errors_for_prompt(unresolved_errors))
+                rich_print("=" * 80)
+
+            if DEBUG_MESSAGES == 1 and SHOW_GATE_ATTEMPTED_REPAIRS == 1:
+                rich_print("ALREADY ATTEMPTED REPAIR STEPS THIS GATE RUN:")
+                rich_print(_format_attempt_log(attempt_log))
+                rich_print("=" * 80)
+
+            if DEBUG_MESSAGES == 1 and SHOW_GATE_UNRESOLVED_ERROR_IDS == 1:
+                rich_print("VALID UNRESOLVED ERROR IDS:")
+                rich_print(sorted(list(valid_error_ids)))
                 rich_print("=" * 80)
 
             resp = model.invoke([HumanMessage(content=react_prompt)])
@@ -923,6 +983,16 @@ RULES:
                 "output": payload.get("result") if payload.get("ok") else payload.get("error"),
             })
 
+            trunc_lim_tool = TRUNCATION_LIMIT_GATE_TOOL_OUTPUT
+
+            if DEBUG_MESSAGES == 1 and SHOW_GATE_TOOL_OUTPUTS == 1:
+                rich_print("\n" + "=" * 80)
+                rich_print(f"[GATE STEP {react_idx + 1} RESULT] tool={tool_name} "
+                f"ok={payload.get('ok')} "
+                f"output={str(payload.get('result') if payload.get('ok') else payload.get('error'))[:trunc_lim_tool]}")
+                rich_print("=" * 80)
+                
+
             if payload.get("ok") is False:
                 gate_notes.append(
                     f"Repair step `{tool_name}` for `{target_error_id}` failed: {payload.get('error', 'Unknown error')}"
@@ -960,6 +1030,7 @@ RULES:
             note += " " + " | ".join(gate_notes[:4])
 
         emitted_messages.append(AIMessage(content=note))
+
 
         return {
             "plan": {"steps": [], "missing_args": missing_args},
