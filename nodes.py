@@ -3,6 +3,7 @@ from uuid import uuid4
 from typing import Dict, List, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from rich import print as rich_print
+import re
 
 from llm import make_model       
 from history_formatters import (
