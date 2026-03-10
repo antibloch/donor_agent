@@ -11,6 +11,7 @@ from history_formatters import (
     build_cached_tool_outputs,
     format_history_for_responder,
     detect_recent_tool_errors,
+    get_current_round_messages,
     format_msg, 
     _parse_plan, 
     _compact_json, 
@@ -289,8 +290,129 @@ def make_executor_node(tools_by_name: dict):
 def make_responder_node():
     model = make_model(temperature=0.0)
 
+    # Auth-gated tools — these require a password parameter and represent
+    # actual transactional operations.  Used by the programmatic password
+    # short-circuit to avoid false positives when a non-auth tool succeeds
+    # alongside a failed auth tool in the same execution round.
+    AUTH_GATED_TOOLS = frozenset({
+        "place_bid",
+        "fund_wallet",
+        "product_donation",
+        "campaign_donation",
+        "grant_donation",
+    })
+
+    def _detect_empty_results(tool_messages):
+        """
+        Scan successful ToolMessages for empty-but-ok payloads.
+        Returns a list of human-readable notes like:
+          "Tool 'get_my_bid_history' returned successfully but 'bids' is empty (0 results)."
+        """
+        notes = []
+        for m in tool_messages:
+            payload = _safe_json_loads((m.content or "").strip())
+            if payload is None:
+                continue
+            if _extract_tool_error(payload) is not None:
+                continue
+
+            # Unwrap the standard envelope: {"ok": true, "result": { ... }}
+            result = payload.get("result", payload) if isinstance(payload, dict) else payload
+            if isinstance(result, dict) and "result" in result:
+                result = result["result"]
+
+            if not isinstance(result, dict):
+                continue
+
+            for key, val in result.items():
+                if isinstance(val, list) and len(val) == 0:
+                    notes.append(
+                        f"Tool '{m.name}' returned successfully but '{key}' is empty (0 results)."
+                    )
+                elif (
+                    isinstance(val, (int, float))
+                    and key.lower().startswith("total")
+                    and val == 0
+                ):
+                    notes.append(
+                        f"Tool '{m.name}' returned successfully but '{key}' is 0."
+                    )
+        return notes
+
+    def _build_situational_block(state, current_round_tool_msgs):
+        """
+        Build a SITUATIONAL CONTEXT string from programmatic signals that
+        the responder LLM would otherwise not see (filtered System Notes,
+        state fields it never reads, empty-data detection, etc.).
+
+        Returns an empty string when nothing noteworthy is detected.
+        """
+        plan = state.get("plan", {}) or {}
+        missing_args = plan.get("missing_args", []) or []
+        last_tool_error = state.get("last_tool_error")
+
+        has_any_tool_output = len(current_round_tool_msgs) > 0
+        has_any_successful_tool = any(
+            _extract_tool_error(_safe_json_loads((m.content or "").strip())) is None
+            for m in current_round_tool_msgs
+            if _safe_json_loads((m.content or "").strip()) is not None
+        )
+
+        empty_data_notes = _detect_empty_results(current_round_tool_msgs)
+
+        lines = []
+
+        # Missing user input (bridges the System Note filtering gap) 
+        if missing_args:
+            lines.append(
+                f"MISSING USER INPUT: The system determined the following inputs "
+                f"are required from the user before the requested action can proceed: "
+                f"{', '.join(missing_args)}. "
+                f"Ask the user for ONLY these specific values. "
+                f"Do NOT attempt the action without them."
+            )
+
+        # Empty but successful tool outputs 
+        for note in empty_data_notes:
+            lines.append(f"EMPTY DATA: {note}")
+
+        # No tools executed at all
+        if not has_any_tool_output:
+            lines.append(
+                "NO TOOLS EXECUTED: No tools were called for this request. "
+                "If the user asked for data that requires a tool (e.g., bid history, "
+                "wallet balance, auction details), inform them that the information "
+                "could not be retrieved and suggest what they can try. "
+                "Do NOT fabricate data."
+            )
+        elif not has_any_successful_tool:
+            lines.append(
+                "ALL TOOLS FAILED: Every tool that ran in this round returned an error. "
+                "Inform the user that the request could not be completed and summarize "
+                "the issue. Do NOT fabricate data."
+            )
+
+        # Unresolved error from gate
+        if last_tool_error:
+            err_tool = last_tool_error.get("tool", "unknown")
+            err_text = str(last_tool_error.get("error", ""))[:200]
+            lines.append(
+                f"UNRESOLVED ERROR: Tool '{err_tool}' failed and could not be "
+                f"repaired automatically. Error: {err_text}"
+            )
+
+        if not lines:
+            return ""
+
+        return (
+            "\n\nSITUATIONAL CONTEXT (system-generated, authoritative):\n"
+            + "\n".join(f"- {line}" for line in lines)
+        )
+
     def responder(state: dict) -> Dict:
         messages = list(state.get("messages", []) or [])
+
+        # Locate the latest user message
         latest_user_idx = None
         latest_user_content = ""
         for i in range(len(messages) - 1, -1, -1):
@@ -299,22 +421,37 @@ def make_responder_node():
                 latest_user_content = (messages[i].content or "").strip()
                 break
 
+        # === Programmatic password short-circuit ===
+        # Only fires when the user's message is a password submission.
+        # Now checks specifically for auth-gated tool success rather than
+        # any tool success, so a successful read-only tool (e.g.,
+        # get_active_auctions) alongside a failed auth tool (e.g.,
+        # place_bid with wrong password) won't bypass this check.
         if latest_user_idx is not None and latest_user_content.lower().startswith("password:"):
-            fresh_tool_success = False
+            fresh_auth_tool_success = False
             for m in messages[latest_user_idx + 1:]:
                 if not isinstance(m, ToolMessage):
                     continue
                 payload = _safe_json_loads((m.content or "").strip())
                 if payload is not None and _extract_tool_error(payload) is None:
-                    fresh_tool_success = True
-                    break
+                    if m.name in AUTH_GATED_TOOLS:
+                        fresh_auth_tool_success = True
+                        break
 
-            if not fresh_tool_success:
+            if not fresh_auth_tool_success:
                 return {
                     "messages": [AIMessage(content="Please enter password")],
                     "final_answer": "Please enter password",
                 }
 
+        # Build situational context from programmatic signals
+        current_round = get_current_round_messages(messages)
+        current_round_tool_msgs = [
+            m for m in current_round if isinstance(m, ToolMessage)
+        ]
+        situational_block = _build_situational_block(state, current_round_tool_msgs)
+
+        
         system_prompt = """
 You are a donor-assisting AI agent on a donation website that produces FINAL, USER-FACING answers.
 Assume the user may be a confused or first-time donor who needs clear guidance.
@@ -334,6 +471,14 @@ OUTPUT RULES (STRICT):
 - Treat `CACHED_SUCCESS[...]` as reusable factual evidence from prior successful tool execution.
 - ONLY use information explicitly present in the Conversation History (especially `CACHED_SUCCESS[...]` entries and other tool outputs), do NOT invent or assume any facts not in the history.
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
+
+EMPTY AND MISSING DATA RULES (STRICT):
+- If a tool returned successfully but its data payload is empty (e.g., an empty list, zero count, or null records), you MUST tell the user clearly that no records were found. Do NOT invent, assume, or fabricate records that are not present in the tool output.
+- If the SITUATIONAL CONTEXT section below contains EMPTY DATA notes, use them as authoritative evidence that the result set is empty. Report this to the user directly.
+- If the SITUATIONAL CONTEXT section contains NO TOOLS EXECUTED or ALL TOOLS FAILED, and the user asked a data-dependent question, inform the user that the data could not be retrieved. Do NOT guess at what the data might contain.
+- If the SITUATIONAL CONTEXT section contains MISSING USER INPUT, your ONLY job is to ask the user for exactly those inputs — nothing else. Do NOT attempt to answer the underlying question without the missing inputs. Do NOT fabricate placeholder values.
+- If the SITUATIONAL CONTEXT section contains UNRESOLVED ERROR, briefly inform the user that something went wrong and suggest they try again or rephrase. Include the tool name if it helps the user understand the issue.
+- When no data is available, skip the Insights and Recommendations sections entirely. Only provide a Direct Answer stating that no data was found or the request could not be completed.
 
 RESPONSE STRUCTURE RULES:
 
@@ -359,17 +504,26 @@ Now write the final answer based strictly on the Conversation History below, inc
 """
 
         transcript = format_history_for_responder(messages)
-        final_prompt = [HumanMessage(content=f"{system_prompt}\n\nConversation History:\n{transcript}")]
+        final_prompt = [
+            HumanMessage(
+                content=f"{system_prompt}{situational_block}\n\nConversation History:\n{transcript}"
+            )
+        ]
 
         trunc_limit_hist = TRUNCATION_LIMIT_RESPONDER_HISTORY
         if DEBUG_MESSAGES == 1 and SHOW_RESPONDER_HISTORY == 1:
-            rich_print("\n" + "="*80)
+            rich_print("\n" + "=" * 80)
             rich_print("RESPONDER CONVERSATION HISTORY")
-            rich_print("="*80)
-            truncated_transcript = transcript[:trunc_limit_hist] + ("..." if len(transcript) > trunc_limit_hist else "")
-            rich_print(f'{truncated_transcript}')
-            rich_print("="*80)
-
+            rich_print("=" * 80)
+            truncated_transcript = transcript[:trunc_limit_hist] + (
+                "..." if len(transcript) > trunc_limit_hist else ""
+            )
+            rich_print(f"{truncated_transcript}")
+            if situational_block:
+                rich_print("-" * 40)
+                rich_print("SITUATIONAL CONTEXT INJECTED:")
+                rich_print(situational_block)
+            rich_print("=" * 80)
 
         summary = model.invoke(final_prompt)
         final_text = (summary.content or "").strip()
