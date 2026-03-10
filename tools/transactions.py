@@ -379,109 +379,73 @@ def list_charities_in_country(country_code: str):
 @tool
 def list_charity_products(charity_id: str):
     """
-        PURPOSE:
-        Retrieve active donation products for a specific charity and return detailed product information.
+    PURPOSE:
+    Retrieve donation products for a specific charity directly from the donors API 
+    and return the full response including detailed product information and pagination.
 
-        MUST_CALL_FIRST:
-        - after obtaining a valid charity_id from list_charities_in_country or discover_charities
+    MUST_CALL_FIRST:
+    - After obtaining a valid charity_id from list_charities_in_country or discover_charities.
 
-        DEFAULT_CHAIN:
-        - discover_charities -> charity_details -> get_charity_donation_products
+    DEFAULT_CHAIN:
+    - discover_charities -> charity_details -> get_charity_donation_products
 
-        WHEN TO USE:
-        - user wants to see donation products for a selected charity
-        - user asks what they can donate to a charity
-        - user wants product details like price, quantity, and impact
+    WHEN TO USE:
+    - User wants to see all donation products for a selected charity.
+    - User asks what they can donate to a charity.
+    - User wants full product details including price, quantity, impact, images, category, charity info, partner info, and location.
 
-        REQUIRES (Intuitive Schema):
-        - charity_id (str): unique identifier of the charity
+    REQUIRES:
+    - charity_id (str): unique identifier of the charity.
 
-        REQUIRES (Detailed Schema):
-            - charity_id (str): ID of the charity, obtained from list_charities_in_country or discover_charities
+    RETURNS:
+    - Full API response from /api/v1/donors/get-charity-products/{{charityId}}, including:
+        - success (bool): indicates if the request was successful.
+        - data (list): each item contains all product details as provided by the API, including:
+            _id, partnerProd, name, description, pricePerUnit, images, category, charity, partner, 
+            minimumDonationQuantity, maximumDonationQuantity, availableQuantity, remainingQuantity, 
+            impactLife, location, createdAt, updatedAt.
+        - pagination (dict): contains currentPage, totalPages, totalItems, hasNext, hasPrev.
 
-        RETURNS (Intuitive Schema):
-        - active donation products for the charity including id, name, price, and availability
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - Each product in the data list provides:
+        - _id: product identifier
+        - partnerProd: partner product identifier
+        - category _id: category identifier
+    These can be used for tools requiring donation product selection or checkout.
+    - Planner can use placeholders:
+        - "<SELECTED_PRODUCT_ID_FROM_LIST_CHARITY_PRODUCTS>"
+        - "<SELECTED_PARTNER_PROD_ID_FROM_LIST_CHARITY_PRODUCTS>"
+        - "<SELECTED_CATEGORY_ID_FROM_GET_LIST_CHARITY_PRODUCTS>"
 
-        RETURNS (Detailed Schema):
-            - success (bool): indicates if the request was successful
-            - products (list) -> each item contains:
-                _id (str): product identifier
-                name (str): product name
-                description (str)
-                pricePerUnit (float)
-                minimumDonationQuantity (int)
-                maximumDonationQuantity (int)
-                availableQuantity (int)
-                remainingQuantity (int)
-                isActive (bool)
-            - totalProducts (int): total number of products returned
-            - message (str): any status or informational message
-
-        CHAIN_OUTPUT_FOR_NEXT_TOOL:
-        - product _id can be used for tools requiring donation product selection or checkout
-        - if planning before execution, planner should use placeholder:
-        "<SELECTED_PRODUCT_ID_FROM_GET_CHARITY_DONATION_PRODUCTS>"
-
-        DO NOT STOP HERE WHEN:
-        - user wants further charity information or campaign context
-        - additional product details are needed
+    DO NOT STOP HERE WHEN:
+    - User wants further charity or campaign context.
+    - Additional product details are needed beyond what the API returns.
     """
-    params = {"page": 1, "limit": 50}
-    headers = {
-        'X-API-KEY':xApiKey
-    }
-    try:
-        if charity_id is None:
+    if not charity_id:
             return {
-            "success": False,
-            "campaigns": [],
-            "pagination": {},
-            "message": f"No charity specified."
+                "success": False,
+                "data": [],
+                "pagination": {},
+                "message": "No charity specified."
             }
-        response = requests.get(
-            f"{BASE_URL}/api/v3/agent/charities/{charity_id}/donation-products",
-            headers=headers,
-            params=params
-        )
+
+    try:
+        response = requests.get(f"{BASE_URL}/api/v1/donors/get-charity-products/{charity_id}", headers=headers)
         response.raise_for_status()
-        data = response.json()
-
-        items = data.get("data", {}).get("items", [])
-        cleaned_products = []
-
-        for item in items:
-            cleaned_products.append({
-                "_id": item.get("_id"),
-                "name": item.get("name"),
-                "description": item.get("description"),
-                "pricePerUnit": item.get("pricePerUnit"),
-                "minimumDonationQuantity": item.get("minimumDonationQuantity"),
-                "maximumDonationQuantity": item.get("maximumDonationQuantity"),
-                "availableQuantity": item.get("availableQuantity"),
-                "remainingQuantity": item.get("remainingQuantity"),
-                "isActive": item.get("isActive"),
-            })
-
-        return {
-            "success": True,
-            "products": cleaned_products,
-            "totalProducts": len(cleaned_products),
-            "message": f"{len(cleaned_products)} products found for charity {charity_id}."
-        }
+        return response.json()  
 
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
-            "products": [],
-            "totalProducts": 0,
+            "data": [],
+            "pagination": {},
             "message": f"Request failed: {str(e)}"
         }
-
     except Exception as e:
         return {
             "success": False,
-            "products": [],
-            "totalProducts": 0,
+            "data": [],
+            "pagination": {},
             "message": f"Unexpected error: {str(e)}"
         }
     
@@ -542,17 +506,17 @@ def list_charity_grants(charity_id: str):
         - user wants further charity information or donation product context
         - additional grant details are needed
     """
-    try:
-        headers = {
-            'X-API-KEY':xApiKey
+    if charity_id is None:
+        return {
+        "success": False,
+        "campaigns": [],
+        "pagination": {},
+        "message": f"No charity specified."
         }
-        if charity_id is None:
-            return {
-            "success": False,
-            "campaigns": [],
-            "pagination": {},
-            "message": f"No charity specified."
-            }
+    headers = {
+        'X-API-KEY':xApiKey
+    }
+    try:
         response = requests.get(
             f"{BASE_URL}/api/v3/agent/grants",
             headers=headers,
