@@ -132,6 +132,10 @@ def get_auction_details(auction_id: str):
     MUST_CALL_FIRST:
     - get_active_auctions must be called first to obtain a valid auction _id.
 
+    DEPENDS_ON:
+    - get_active_auctions — must be called first to obtain auction_id.
+    - auction_id passed here MUST come from get_active_auctions result, never invented.
+
     DEFAULT_CHAIN:
     - get_active_auctions -> get_auction_details -> place_bid
 
@@ -219,6 +223,12 @@ def get_my_bid_history():
     MUST_CALL_FIRST:
     - This is a standalone tool. No prerequisite tool required.
 
+    DEPENDS_ON:
+    - No dependencies. Standalone tool.
+    - Uses DONOR_PROFILE_ID constant from auctions.py — must be a valid donorProfile ObjectId.
+    AUTH:
+    - Uses X-API-KEY header only (read-only endpoint).
+
     DEFAULT_CHAIN:
     - get_my_bid_history (standalone)
 
@@ -295,6 +305,13 @@ def place_bid(auction_id: str, amount: float, password: str):
     MUST_CALL_FIRST:
     - get_active_auctions must have been called to obtain a valid auction _id.
     - User must have explicitly stated both the bid amount AND their password.
+
+    DEPENDS_ON:
+    - get_active_auctions — required to resolve auction_id before calling this tool.
+    - verify_user_password (transactions.py) — password is verified locally before API call.
+    - Bearer token (BEARER_TOKEN constant) — used in Authorization header for this request.
+    AUTH:
+    - Uses Bearer token header (user-scoped endpoint).
 
     DEFAULT_CHAIN:
     - get_active_auctions -> (optionally get_auction_details) -> place_bid
@@ -402,6 +419,11 @@ def get_donation_categories():
     - Always call this before get_charities_by_donation_type.
     - Required to obtain valid donation_type _id values for downstream tools.
 
+    DEPENDS_ON:
+    - No dependencies. Standalone tool — entry point of the donation category chain.
+    AUTH:
+    - Uses X-API-KEY header only (read-only endpoint).
+
     DEFAULT_CHAIN:
     - get_donation_categories -> get_charities_by_donation_type
 
@@ -473,6 +495,10 @@ def get_charities_by_donation_type(donation_type_id: str, country_code: str = "P
 
     MUST_CALL_FIRST:
     - get_donation_categories must be called first to obtain a valid donation_type_id.
+
+    DEPENDS_ON:
+    - get_donation_categories — must be called first to obtain donation_type_id.
+    - donation_type_id passed here MUST come from get_donation_categories result, never invented.
 
     DEFAULT_CHAIN:
     - get_donation_categories -> get_charities_by_donation_type
