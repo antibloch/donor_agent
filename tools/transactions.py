@@ -613,79 +613,92 @@ def list_charity_grants(charity_id: str):
 def list_charity_active_campaigns(charity_id: str):
     """
         PURPOSE:
-        Retrieve all active campaigns for a specific charity and return detailed campaign information.
+        Retrieve all active campaigns for a specific charity and return campaign details
+        including the valid donation types allowed for each campaign.
 
         MUST_CALL_FIRST:
         - after obtaining a valid charity_id from list_charities_in_country or discover_charities
+        - before making a campaign donation
 
         DEFAULT_CHAIN:
-        - discover_charities -> charity_details -> get_charity_campaigns
+        - list_charities_in_country -> list_charity_active_campaigns -> campaign_donation
 
         WHEN TO USE:
-        - user wants to see active campaigns for a selected charity
+        - user wants to see active campaigns for a charity
         - user asks what campaigns they can donate to
-        - user wants details like raised amount, title, and valid donation types
+        - user wants to know which donation types are valid for each campaign
+        - user intends to donate to a campaign but has not selected a donation type yet
 
         REQUIRES (Intuitive Schema):
         - charity_id (str): unique identifier of the charity
 
         REQUIRES (Detailed Schema):
-            - charity_id (str): ID of the charity, obtained from list_charities_in_country or discover_charities
+            - charity_id (str): ID of the charity obtained from list_charities_in_country
 
         RETURNS (Intuitive Schema):
-        - list of active campaigns including id, title, and status
+        - list of active campaigns with their allowed donation types
+        - Always list the allowed donation types in response
 
         RETURNS (Detailed Schema):
-            - success (bool): indicates if the request was successful
-            - campaigns (list) -> each item contains campaign details (flattened):
+            - success (bool)
+            - campaigns (list) -> each item contains:
                 _id (str): campaign identifier
                 title (str)
-                description (str)
                 expectedAmount (float)
                 raisedAmount (float)
                 status (str)
-                donationTypes (list): valid donation types for this campaign
+
+                donationTypes (list):
+                    - donationTypeId (str)
+                    - name (str)
+
                 startDate (str)
                 endDate (str)
-                charityId (str): reference to the charity
-                location (dict):
-                    city (str)
-                    state (str)
-                    country (str)
-                    countryCode (str)
-                    latitude (float)
-                    longitude (float)
+                charityId (str)
+
             - pagination (dict):
                 page (int)
                 limit (int)
                 total (int)
                 hasMore (bool)
-            - message (str): any status or informational message
 
+            - message (str)
+
+        AGENT FORMAT RULE:
+        - For every campaign returned, ALWAYS display the allowed donation types
+        - directly under the campaign title in bullet format.
+        - Do not omit donationTypes from the response.
+        
         CHAIN_OUTPUT_FOR_NEXT_TOOL:
-        - campaign _id can be used for tools requiring campaign selection or checkout
-        - if planning before execution, planner should use placeholder:
-        "<SELECTED_CAMPAIGN_ID_FROM_GET_CHARITY_CAMPAIGNS>"
+        - campaign _id -> campaignId for campaign_donation
+        - donationTypeId -> donationTypeId for campaign_donation
+
+        - planner placeholders:
+        "<SELECTED_CAMPAIGN_ID>"
+        "<SELECTED_DONATION_TYPE_ID>"
 
         DO NOT STOP HERE WHEN:
-        - user wants further charity, grant, or product details
-        - additional campaign details are needed
+        - user intends to donate to a campaign
+        - donation type selection is still required
+
+        AGENT INSTRUCTION:
+        - After retrieving campaigns, present the donationTypes for the selected campaign.
+        - Ask the user to choose a donation type before calling campaign_donation.
     """
     try:
         headers = {
             "X-API-KEY": xApiKey
         }
-        
-        # Add charityID as a query param if provided
-        params = {"page": 1, "limit": 10}
-        if charity_id is None:
+
+        if not charity_id:
             return {
-            "success": False,
-            "campaigns": [],
-            "pagination": {},
-            "message": f"No charity specified."
+                "success": False,
+                "campaigns": [],
+                "pagination": {},
+                "message": "No charity specified."
             }
-        params["charityId"] = charity_id
+
+        params = {"charityId": charity_id, "page": 1, "limit": 25}
 
         response = requests.get(
             f"{BASE_URL}/api/v3/agent/campaigns/active",
@@ -699,18 +712,27 @@ def list_charity_active_campaigns(charity_id: str):
         cleaned_campaigns = []
 
         for c in campaigns_list:
+            # Map milestones
             milestones = [
-                {"_id": m.get("_id"), "title": m.get("title"),
-                 "description": m.get("description"), "checked": m.get("checked", False)}
+                {
+                    "_id": m.get("_id"),
+                    "title": m.get("title"),
+                    "description": m.get("description"),
+                    "checked": m.get("checked", False)
+                }
                 for m in c.get("milestones", [])
             ]
 
+            # Map donationTypes correctly
             donation_types = [
-                {"_id": dt.get("_id"), "name": dt.get("name")}
+                {
+                    "donationTypeId": dt.get("_id"),
+                    "name": dt.get("name")
+                }
                 for dt in c.get("donationTypes", [])
             ]
 
-            charity = c.get("charity")
+            charity = c.get("charity", {})
             charity_info = {
                 "_id": charity.get("_id"),
                 "name": charity.get("name"),
@@ -722,25 +744,16 @@ def list_charity_active_campaigns(charity_id: str):
             cleaned_campaigns.append({
                 "_id": c.get("_id"),
                 "title": c.get("title"),
-                "description": c.get("description"),
-                "logo": c.get("logo"),
-                "backgroundImage": c.get("backgroundImage"),
-                "goalSettings": c.get("goalSettings"),
                 "goalAmount": c.get("goalAmount"),
                 "receivedAmount": c.get("receivedAmount"),
-                "meterOption": c.get("meterOption"),
-                "isFeatured": c.get("isFeatured"),
-                "isCauseCampaign": c.get("isCauseCampaign"),
-                "isP2P": c.get("isP2P"),
-                "showToDonors": c.get("showToDonors"),
-                "isEnabled": c.get("isEnabled"),
+                "status": "active" if c.get("isEnabled") else "inactive",
                 "milestones": milestones,
                 "donationTypes": donation_types,
+                "displayDonationTypes": ", ".join(dt["name"] for dt in donation_types),
+                "startDate": c.get("startDate"),
+                "endDate": c.get("endDate"),
+                "charityId": charity_info["_id"] if charity_info else None,
                 "charity": charity_info,
-                "job": c.get("job", {}),
-                "numberOfUniqueDonors": c.get("numberOfUniqueDonors", 0),
-                "createdAt": c.get("createdAt"),
-                "updatedAt": c.get("updatedAt")
             })
 
         pagination = data.get("pagination", {})
@@ -1457,5 +1470,6 @@ metadata_transaction = {
     }
 
 }
+
 
 
