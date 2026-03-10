@@ -55,7 +55,7 @@ def check_wallet_balance():
             - balance (float | None): available wallet balance
             - lockedBalance (float | None): amount currently locked and not available
             - message (str): status or informational message
-
+ 
         CHAIN_OUTPUT_FOR_NEXT_TOOL:
         - balance can be used to verify whether user has enough funds before donation or transaction
         - planner may compare donation amount with balance before proceeding
@@ -383,7 +383,7 @@ def list_charity_products(charity_id: str):
         Retrieve active donation products for a specific charity and return detailed product information.
 
         MUST_CALL_FIRST:
-        - after obtaining a valid charity_id from list_charities_by_country or discover_charities
+        - after obtaining a valid charity_id from list_charities_in_country or discover_charities
 
         DEFAULT_CHAIN:
         - discover_charities -> charity_details -> get_charity_donation_products
@@ -397,7 +397,7 @@ def list_charity_products(charity_id: str):
         - charity_id (str): unique identifier of the charity
 
         REQUIRES (Detailed Schema):
-            - charity_id (str): ID of the charity, obtained from list_charities_by_country or discover_charities
+            - charity_id (str): ID of the charity, obtained from list_charities_in_country or discover_charities
 
         RETURNS (Intuitive Schema):
         - active donation products for the charity including id, name, price, and availability
@@ -492,7 +492,7 @@ def list_charity_grants(charity_id: str):
         Retrieve all grants for a specific charity and return detailed grant information.
 
         MUST_CALL_FIRST:
-        - after obtaining a valid charity_id from list_charities_by_country or discover_charities
+        - after obtaining a valid charity_id from list_charities_in_country or discover_charities
 
         DEFAULT_CHAIN:
         - discover_charities -> charity_details -> get_charity_grants
@@ -506,7 +506,7 @@ def list_charity_grants(charity_id: str):
         - charity_id (str): unique identifier of the charity
 
         REQUIRES (Detailed Schema):
-            - charity_id (str): ID of the charity, obtained from list_charities_by_country or discover_charities
+            - charity_id (str): ID of the charity, obtained from list_charities_in_country or discover_charities
 
         RETURNS (Intuitive Schema):
         - list of grants for the charity including id, title, and status
@@ -616,7 +616,7 @@ def list_charity_active_campaigns(charity_id: str):
         Retrieve all active campaigns for a specific charity and return detailed campaign information.
 
         MUST_CALL_FIRST:
-        - after obtaining a valid charity_id from list_charities_by_country or discover_charities
+        - after obtaining a valid charity_id from list_charities_in_country or discover_charities
 
         DEFAULT_CHAIN:
         - discover_charities -> charity_details -> get_charity_campaigns
@@ -630,7 +630,7 @@ def list_charity_active_campaigns(charity_id: str):
         - charity_id (str): unique identifier of the charity
 
         REQUIRES (Detailed Schema):
-            - charity_id (str): ID of the charity, obtained from list_charities_by_country or discover_charities
+            - charity_id (str): ID of the charity, obtained from list_charities_in_country or discover_charities
 
         RETURNS (Intuitive Schema):
         - list of active campaigns including id, title, and status
@@ -1238,8 +1238,8 @@ def grant_donation(charityId: str, amount: float, grantId: str, password: str):
         - password (str): user password for authorization
 
         REQUIRES (Detailed Schema):
-            - charityId (str): unique identifier of the charity (from get_charity_grants)
-            - grantId (str): unique identifier of the grant (from get_charity_grants)
+            - charityId (str): unique identifier of the charity (from list_charity_grants)
+            - grantId (str): unique identifier of the grant (from list_charity_grants)
             - amount (float): monetary amount to donate toward the grant
             - password (str): authenticated user's password for transaction authorization
 
@@ -1360,14 +1360,14 @@ metadata_transaction = {
                     "- Do not expect card details in the response; only a secure redirection link is provided."
                 )
     },
-    "list_charities_by_country": {
+    "list_charities_in_country": {
         "domain": "donations",
         "type": "read",
         "when_to_use": "When the user wants to explore or select charities available in a specific country before making a donation, viewing causes, or initiating a transaction.",
         "do_not_use": "Do not use for retrieving donation products, grants, wallet information, or executing financial transactions. Do not use without a valid country_code.",
         "supports_pagination": True,
         "requires_auth": True,
-        "example_usage": "tool_name=list_charities_by_country",
+        "example_usage": "tool_name=list_charities_in_country",
         "hint": (
                     "- Always ask the user for the country code (e.g., PK, US) before calling this tool.\n"
                     "- Use this tool early in the donation flow to narrow down charity options.\n"
@@ -1457,6 +1457,5 @@ metadata_transaction = {
     }
 
 }
-
 
 
