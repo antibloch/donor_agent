@@ -313,7 +313,7 @@ def list_charities_in_country(country_code: str):
 
         CHAIN_OUTPUT_FOR_NEXT_TOOL:
         - _id should be used as charity_id for subsequent tools such as:
-          get_charity_donation_products, get_charity_grants, or get_charity_campaigns
+          get_charity_donation_products, list_charity_grants, or get_charity_campaigns
         - if planning before execution, planner should use placeholder:
         "<SELECTED_CHARITY_ID_FROM_LIST_CHARITIES_IN_COUNTRY>"
 
@@ -459,7 +459,7 @@ def list_charity_grants(charity_id: str):
         - after obtaining a valid charity_id from list_charities_in_country or discover_charities
 
         DEFAULT_CHAIN:
-        - discover_charities -> charity_details -> get_charity_grants
+        - discover_charities -> charity_details -> list_charity_grants
 
         WHEN TO USE:
         - user wants to see grants available for a selected charity
@@ -500,7 +500,7 @@ def list_charity_grants(charity_id: str):
         CHAIN_OUTPUT_FOR_NEXT_TOOL:
         - grant _id can be used for tools requiring grant selection or checkout
         - if planning before execution, planner should use placeholder:
-        "<SELECTED_GRANT_ID_FROM_GET_CHARITY_GRANTS>"
+        "<SELECTED_GRANT_ID_FROM_list_charity_grants>"
 
         DO NOT STOP HERE WHEN:
         - user wants further charity information or donation product context
@@ -1010,7 +1010,7 @@ def product_donation(
         - after selecting products and verifying user password for transaction authorization
 
         DEFAULT_CHAIN:
-        - discover_charities -> get_charity_donation_products -> product_donation -> get_transaction_history
+        - discover_charities -> list_charity_donation_products -> product_donation -> get_transaction_history
 
         WHEN TO USE:
         - user wants to donate products to a specific charity
