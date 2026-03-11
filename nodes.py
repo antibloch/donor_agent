@@ -51,6 +51,29 @@ def _normalize_missing_args(items: List[Any] | None) -> List[str]:
             out.append(value)
     return out
 
+def _contains_auth_failure(messages: List[BaseMessage]) -> bool:
+    auth_markers = (
+        "invalid password",
+        "transaction denied",
+        "please enter password",
+        "password is required",
+        "unauthorized",
+        "forbidden",
+    )
+    for m in messages:
+        content = ""
+        if isinstance(m, ToolMessage):
+            payload = _safe_json_loads((m.content or "").strip())
+            if payload is not None:
+                content = _compact_json(payload, max_chars=500).lower()
+            else:
+                content = (m.content or "").lower()
+        elif isinstance(m, AIMessage):
+            content = (m.content or "").lower()
+        if any(marker in content for marker in auth_markers):
+            return True
+    return False
+
 def make_planner_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
 
@@ -381,7 +404,7 @@ def make_responder_node():
         Returns an empty string when nothing noteworthy is detected.
         """
         plan = state.get("plan", {}) or {}
-        missing_args = plan.get("missing_args", []) or []
+        missing_args = _normalize_missing_args(plan.get("missing_args", []) or [])
         last_tool_error = state.get("last_tool_error")
 
         has_any_tool_output = len(current_round_tool_msgs) > 0
@@ -461,6 +484,8 @@ def make_responder_node():
         # get_active_auctions) alongside a failed auth tool (e.g.,
         # place_bid with wrong password) won't bypass this check.
         if latest_user_idx is not None and latest_user_content.lower().startswith("password:"):
+            current_missing_args = _normalize_missing_args((state.get("plan", {}) or {}).get("missing_args", []))
+            non_password_missing_args = [arg for arg in current_missing_args if arg != "password"]
             fresh_auth_tool_success = False
             for m in messages[latest_user_idx + 1:]:
                 if not isinstance(m, ToolMessage):
@@ -471,7 +496,11 @@ def make_responder_node():
                         fresh_auth_tool_success = True
                         break
 
-            if not fresh_auth_tool_success:
+            explicit_auth_failure = _contains_auth_failure(messages[latest_user_idx + 1:])
+
+            if not fresh_auth_tool_success and not non_password_missing_args and (
+                explicit_auth_failure or current_missing_args == ["password"] or not current_missing_args
+            ):
                 return {
                     "messages": [AIMessage(content="Please enter password")],
                     "final_answer": "Please enter password",
@@ -495,7 +524,7 @@ OUTPUT RULES (STRICT):
 - Always show the money in USD.
 - Authentication for the latest user request must be grounded only in tool outputs that occur AFTER the latest USER password submission.
 - A USER message containing a password is NOT itself evidence of successful authentication.
-- If the latest password submission is not followed by a successful relevant tool result for the latest requested action, your FINAL answer MUST be exactly: "Please enter password" (without quotes).
+- If the latest password submission is followed by an explicit auth failure or the only remaining missing input is `password`, your FINAL answer MUST be exactly: "Please enter password" (without quotes).
 - Do NOT reuse older successful auth-sensitive tool outputs from earlier turns as proof that the latest password worked.
 - Do NOT reveal your chain-of-thought, reasoning, internal steps, or analysis.
 - Do NOT describe tool usage steps.
