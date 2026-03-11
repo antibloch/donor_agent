@@ -118,6 +118,7 @@ def make_planner_node(tools_by_name: dict):
 
         MISSING-ARG POLICY:
         - For action tools like donations, bids, wallet funding, or other write operations: if any required final argument is not already known and not recoverable from earlier tools, add its exact field name to missing_args.
+        - For structured action arguments, treat the field as recoverable only when the exact executable value is grounded from prior successful outputs. A browse/list result alone does not make that action argument recoverable.
         - Do not ask for args already supplied in the latest user message.
         - Do not include any arg in missing_args if it can be grounded from prior successful tool outputs already present in chat history.
 
@@ -467,6 +468,7 @@ def make_responder_node():
 
     def responder(state: dict) -> Dict:
         messages = list(state.get("messages", []) or [])
+        current_missing_args = _normalize_missing_args((state.get("plan", {}) or {}).get("missing_args", []))
 
         # Locate the latest user message
         latest_user_idx = None
@@ -484,7 +486,6 @@ def make_responder_node():
         # get_active_auctions) alongside a failed auth tool (e.g.,
         # place_bid with wrong password) won't bypass this check.
         if latest_user_idx is not None and latest_user_content.lower().startswith("password:"):
-            current_missing_args = _normalize_missing_args((state.get("plan", {}) or {}).get("missing_args", []))
             non_password_missing_args = [arg for arg in current_missing_args if arg != "password"]
             fresh_auth_tool_success = False
             for m in messages[latest_user_idx + 1:]:
@@ -505,6 +506,23 @@ def make_responder_node():
                     "messages": [AIMessage(content="Please enter password")],
                     "final_answer": "Please enter password",
                 }
+
+        if current_missing_args:
+            missing_args_prompt = f"""
+You are a donor-assisting AI agent on a donation website.
+
+MISSING INPUT OVERRIDE RULE (HIGHEST PRIORITY):
+- The request is not executable yet because the following inputs are still unresolved: {", ".join(current_missing_args)}.
+- Ask only for exactly those unresolved inputs.
+- Do NOT answer the underlying request.
+- Do NOT provide a confirmation, estimate, preview, recommendation, or implied completion.
+- Do NOT use prior conversation context to simulate a completed action while missing inputs remain.
+- Keep the response short and user-facing.
+""".strip()
+
+            missing_args_response = model.invoke([HumanMessage(content=missing_args_prompt)])
+            missing_args_text = (missing_args_response.content or "").strip()
+            return {"messages": [missing_args_response], "final_answer": missing_args_text}
 
         # Build situational context from programmatic signals
         current_round = get_current_round_messages(messages)
@@ -535,6 +553,13 @@ OUTPUT RULES (STRICT):
 - Treat `CACHED_SUCCESS[...]` as reusable factual evidence from prior successful tool execution.
 - ONLY use information explicitly present in the Conversation History (especially `CACHED_SUCCESS[...]` entries and other tool outputs), do NOT invent or assume any facts not in the history.
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
+
+MISSING INPUT OVERRIDE RULE (HIGHEST PRIORITY):
+- If the SITUATIONAL CONTEXT contains `MISSING USER INPUT`, the request is not currently executable.
+- In that case, ask only for exactly those unresolved inputs.
+- Do NOT answer the underlying request.
+- Do NOT provide a confirmation, estimate, preview, recommendation, or implied completion.
+- Do NOT use prior Conversation History to simulate a completed action while missing inputs remain.
 
 EMPTY AND MISSING DATA RULES (STRICT):
 - If a tool returned successfully but its data payload is empty (e.g., an empty list, zero count, or null records), you MUST tell the user clearly that no records were found. Do NOT invent, assume, or fabricate records that are not present in the tool output.
@@ -1012,12 +1037,14 @@ VERY IMPORTANT:
 - You are responsible for maintaining the CURRENT unresolved user-input list across repair steps.
 - Any `missing_args` you output must be the current authoritative list after considering all successful repair steps so far.
 - On the final `done: true` step, `missing_args` must contain every remaining required argument that is still not recoverable from available tool calls or cached successful outputs, and must exclude anything already recovered.
+- Do not clear a structured action field from `missing_args` unless the exact backend-ready value has been grounded. A product browsing result is not by itself sufficient evidence that the `products`, `partners`, or `categories` arguments for `product_donation` are fully recoverable.
 
 COMPLEX ARGUMENT ASSEMBLY RULE:
 - When a failed tool requires structured arguments (lists, nested objects), you MUST actively extract concrete values from CACHED TOOL OUTPUTS to build those arguments.
 - Do NOT pass empty lists, empty objects, or zero values as a shortcut to satisfy type validation. An empty list is not a valid repair — it will fail at the API level.
 - Walk through the cached outputs field by field. Match the user's original request (e.g., product name, campaign title) to items in the cached data to select the correct records.
 - For list-of-object arguments (e.g., products: [{{"partner": "...", "charityProd": "..."}}]), construct each object by extracting real field values (_id, pricePerUnit, category, partner, etc.) from the cached tool output that returned those records.
+- If available tool outputs do not expose the exact identifiers required by the write tool schema, keep that parent field in `missing_args` instead of inferring that it has been recovered.
 - If the cached data does not contain a required field value and no other available tool can provide it, add that field name to missing_args and set done: true. Do NOT substitute a placeholder, empty value, or guess.
 
 SELF-CONTAINMENT RULE:
