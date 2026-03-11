@@ -455,16 +455,18 @@ def _format_synthetic_cached_tool_call(tool_name: str, tool_call_id: str | None 
 def _format_last_agentic_step(last_agentic_step: Dict[str, Any] | None) -> str:
     if not isinstance(last_agentic_step, dict) or not last_agentic_step:
         return ""
-
-    payload = {
-        "react_step": last_agentic_step.get("react_step"),
-        "target_error_id": last_agentic_step.get("target_error_id"),
-        "tool": last_agentic_step.get("tool"),
-        "args": _sanitize_sensitive_data(dict(last_agentic_step.get("args") or {})),
-        "ok": last_agentic_step.get("ok"),
-        "output": last_agentic_step.get("output"),
-    }
+    payload = _sanitize_sensitive_data(dict(last_agentic_step))
     return f"FINAL_AGENT_STEP[gate] -> {_compact_json(payload, max_chars=TRUNCATION_TOOL_LIMIT)}"
+
+def _inject_before_latest_assistant(lines: List[str], injected_line: str) -> List[str]:
+    if not injected_line:
+        return lines
+
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].startswith("ASSISTANT: "):
+            return lines[:i] + [injected_line] + lines[i:]
+
+    return lines + [injected_line]
 
 def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
     """Provides history for the repair node (Gate)."""
@@ -582,9 +584,10 @@ def format_history_for_planner(
                 continue
             lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
             lines.append(_format_cached_tool_output(m.name, m.content))
-    formatted_last_agentic_step = _format_last_agentic_step(last_agentic_step)
-    if formatted_last_agentic_step:
-        lines.append(formatted_last_agentic_step)
+    lines = _inject_before_latest_assistant(
+        lines,
+        _format_last_agentic_step(last_agentic_step),
+    )
     return "\n".join(lines) if lines else "(no prior history)"
 
 def format_history_for_responder(
@@ -656,7 +659,8 @@ def format_history_for_responder(
                 continue
             lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
             lines.append(_format_cached_tool_output(m.name, m.content))
-    formatted_last_agentic_step = _format_last_agentic_step(last_agentic_step)
-    if formatted_last_agentic_step:
-        lines.append(formatted_last_agentic_step)
+    lines = _inject_before_latest_assistant(
+        lines,
+        _format_last_agentic_step(last_agentic_step),
+    )
     return "\n".join(lines) if lines else "(empty)"

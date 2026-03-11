@@ -930,6 +930,7 @@ def make_gate_node(
         missing_args: List[str] = list(base_missing_args)
         gate_notes: List[str] = []
         attempt_log: List[Dict[str, Any]] = []
+        last_agentic_step: Dict[str, Any] | None = None
 
         original_errors: List[Dict[str, Any]] = []
         for idx, err in enumerate(raw_original_errors, start=1):
@@ -1116,6 +1117,7 @@ RULES:
                 break
 
             decision = _sanitize_decision(raw_obj, valid_error_ids=valid_error_ids)
+            last_agentic_step = {"react_step": react_idx + 1, **decision}
 
             target_error_id = decision["target_error_id"]
             step = decision["step"]
@@ -1260,7 +1262,7 @@ RULES:
             "plan": {"steps": [], "missing_args": missing_args},
             "messages": emitted_messages,
             "last_tool_error": unresolved_errors[0] if unresolved_errors else None,
-            "last_agentic_step": attempt_log[-1] if attempt_log else None,
+            "last_agentic_step": last_agentic_step,
         }
 
     return gate_node
