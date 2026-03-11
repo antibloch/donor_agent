@@ -1,0 +1,9 @@
+requests
+pydantic
+python-dotenv
+rich
+langchain_core
+langchain_openai
+langchain_experimental
+langchain_mcp_adapters
+langgraph
