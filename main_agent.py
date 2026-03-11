@@ -41,6 +41,7 @@ class AgentState(TypedDict, total=False):
     repair_attempts: int
     last_tool_error: Dict[str, Any]
     last_agentic_step: Dict[str, Any]
+    agentic_steps_by_round: List[Dict[str, Any] | None]
 
 
 def _should_wrap_as_password(messages: Sequence[BaseMessage]) -> bool:
@@ -94,6 +95,7 @@ async def main():
 
     chat_memory: List[BaseMessage] = []
     last_agentic_step: Dict[str, Any] | None = None
+    agentic_steps_by_round: List[Dict[str, Any] | None] = []
     console = Console()
 
     rich_print("\n" + "="*60)
@@ -118,6 +120,7 @@ async def main():
 
         user_msg = HumanMessage(content=outgoing_user_input)
         chat_memory.append(user_msg)
+        current_agentic_steps_by_round = list(agentic_steps_by_round) + [None]
 
         rich_print("\n(Agent is thinking...)\n")
 
@@ -127,6 +130,7 @@ async def main():
                     "messages": chat_memory,
                     "repair_attempts": 0,
                     "last_agentic_step": last_agentic_step,
+                    "agentic_steps_by_round": current_agentic_steps_by_round,
                 },
                 stream_mode="updates"
             ):
@@ -135,6 +139,8 @@ async def main():
                         continue
                     if "last_agentic_step" in node_output:
                         last_agentic_step = node_output["last_agentic_step"]
+                    if "agentic_steps_by_round" in node_output:
+                        current_agentic_steps_by_round = node_output["agentic_steps_by_round"]
                     if "messages" in node_output:
                         new_messages = node_output["messages"]
                         for msg in new_messages:
@@ -157,6 +163,7 @@ async def main():
                                                                         )
                                                                     )
                                                                     rich_print() # Add a little padding after
+            agentic_steps_by_round = current_agentic_steps_by_round
         except Exception as e:
             rich_print(f"\n[ERROR] {e}")
             import traceback

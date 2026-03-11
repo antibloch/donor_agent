@@ -458,15 +458,15 @@ def _format_last_agentic_step(last_agentic_step: Dict[str, Any] | None) -> str:
     payload = _sanitize_sensitive_data(dict(last_agentic_step))
     return f"FINAL_AGENT_STEP[gate] -> {_compact_json(payload, max_chars=TRUNCATION_TOOL_LIMIT)}"
 
-def _inject_before_latest_assistant(lines: List[str], injected_line: str) -> List[str]:
-    if not injected_line:
-        return lines
-
-    for i in range(len(lines) - 1, -1, -1):
-        if lines[i].startswith("ASSISTANT: "):
-            return lines[:i] + [injected_line] + lines[i:]
-
-    return lines + [injected_line]
+def _get_round_agentic_step(
+    agentic_steps_by_round: List[Dict[str, Any] | None] | None,
+    round_idx: int,
+) -> str:
+    if not isinstance(agentic_steps_by_round, list):
+        return ""
+    if round_idx < 0 or round_idx >= len(agentic_steps_by_round):
+        return ""
+    return _format_last_agentic_step(agentic_steps_by_round[round_idx])
 
 def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
     """Provides history for the repair node (Gate)."""
@@ -529,7 +529,7 @@ def format_history_for_planner(
     messages: Sequence[BaseMessage],
     *,
     drop_last_user: bool = True,
-    last_agentic_step: Dict[str, Any] | None = None,
+    agentic_steps_by_round: List[Dict[str, Any] | None] | None = None,
 ) -> str:
     msgs = list(messages) if messages else []
     if drop_last_user:
@@ -543,9 +543,11 @@ def format_history_for_planner(
     superseded_failed_call_ids = get_superseded_failed_call_ids(msgs)
     lines = []
     seen_call_ids: set[str] = set()
+    round_idx = -1
     
     for m in msgs:
         if isinstance(m, HumanMessage):
+            round_idx += 1
             lines.append(f"USER: {_redact_passwords(m.content)}")
         elif isinstance(m, AIMessage):
             if (m.content or "").strip().startswith("System Note:"):
@@ -572,6 +574,9 @@ def format_history_for_planner(
                             lines.append(_format_planner_tool_output(tm.name, tm.content))
                             seen_call_ids.add(tcid)
             if (m.content or "").strip():
+                round_agentic_step = _get_round_agentic_step(agentic_steps_by_round, round_idx)
+                if round_agentic_step:
+                    lines.append(round_agentic_step)
                 lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
         elif isinstance(m, ToolMessage):
             tcid = getattr(m, "tool_call_id", None)
@@ -584,16 +589,12 @@ def format_history_for_planner(
                 continue
             lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
             lines.append(_format_cached_tool_output(m.name, m.content))
-    lines = _inject_before_latest_assistant(
-        lines,
-        _format_last_agentic_step(last_agentic_step),
-    )
     return "\n".join(lines) if lines else "(no prior history)"
 
 def format_history_for_responder(
     messages: Sequence[BaseMessage],
     *,
-    last_agentic_step: Dict[str, Any] | None = None,
+    agentic_steps_by_round: List[Dict[str, Any] | None] | None = None,
 ) -> str:
     current_round = get_current_round_messages(messages)
     current_round_ids = {id(m) for m in current_round}
@@ -610,9 +611,11 @@ def format_history_for_responder(
     superseded_failed_call_ids = get_superseded_failed_call_ids(messages)
     lines = []
     seen_call_ids: set[str] = set()
+    round_idx = -1
     
     for m in messages or []:
         if isinstance(m, HumanMessage):
+            round_idx += 1
             # lines.append(f"USER: {_redact_passwords(m.content)}")
             lines.append(f"USER: {m.content}")
         elif isinstance(m, AIMessage):
@@ -645,6 +648,9 @@ def format_history_for_responder(
                         if tm:
                             lines.append(_format_cached_tool_output(tm.name, tm.content))
             if (m.content or "").strip():
+                round_agentic_step = _get_round_agentic_step(agentic_steps_by_round, round_idx)
+                if round_agentic_step:
+                    lines.append(round_agentic_step)
                 lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
         elif isinstance(m, ToolMessage):
             if id(m) not in current_round_ids and m.name in current_round_failed_tools:
@@ -659,8 +665,4 @@ def format_history_for_responder(
                 continue
             lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
             lines.append(_format_cached_tool_output(m.name, m.content))
-    lines = _inject_before_latest_assistant(
-        lines,
-        _format_last_agentic_step(last_agentic_step),
-    )
     return "\n".join(lines) if lines else "(empty)"

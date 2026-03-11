@@ -58,7 +58,7 @@ def make_planner_node(tools_by_name: dict):
         chat_history = format_history_for_planner(
             state.get("messages", []),
             drop_last_user=True,
-            last_agentic_step=state.get("last_agentic_step"),
+            agentic_steps_by_round=state.get("agentic_steps_by_round"),
         )
         prior_missing_args = extract_latest_requested_missing_args(state.get("messages", []))
         user_query = state.get("messages", [])[-1].content if state.get("messages") else ""
@@ -550,7 +550,7 @@ Now write the final answer based strictly on the Conversation History below, inc
 
         transcript = format_history_for_responder(
             messages,
-            last_agentic_step=state.get("last_agentic_step"),
+            agentic_steps_by_round=state.get("agentic_steps_by_round"),
         )
         final_prompt = [
             HumanMessage(
@@ -1257,12 +1257,19 @@ RULES:
 
         emitted_messages.append(AIMessage(content=note))
 
+        agentic_steps_by_round = list(state.get("agentic_steps_by_round", []) or [])
+        if agentic_steps_by_round:
+            agentic_steps_by_round[-1] = last_agentic_step
+        else:
+            agentic_steps_by_round = [last_agentic_step]
+
 
         return {
             "plan": {"steps": [], "missing_args": missing_args},
             "messages": emitted_messages,
             "last_tool_error": unresolved_errors[0] if unresolved_errors else None,
             "last_agentic_step": last_agentic_step,
+            "agentic_steps_by_round": agentic_steps_by_round,
         }
 
     return gate_node
