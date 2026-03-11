@@ -67,17 +67,29 @@ def _extract_first_json_object(text: str) -> str:
                     return cleaned[start : i + 1].strip()
     raise ValueError("Unbalanced JSON braces in LLM output")
 
+def _quote_bare_placeholders(json_like: str) -> str:
+    if not json_like:
+        return json_like
+    # Repair planner outputs like: "charityProdPrice": <PRICE_FROM_PRODUCT>
+    # so they remain valid JSON and survive parsing.
+    return re.sub(
+        r'(:\s*)(<[^<>\n]+>)(\s*[,}])',
+        lambda m: f'{m.group(1)}"{m.group(2)}"{m.group(3)}',
+        json_like,
+    )
+
 def _parse_plan(raw: str) -> Dict:
     if not raw:
         return {"steps": [], "missing_args": []}
     try:
         json_str = _extract_first_json_object(raw)
+        json_str = _quote_bare_placeholders(json_str)
         return json.loads(json_str)
     except:
         try:
             match = re.search(r"\{.*\}", raw, re.DOTALL)
             if match:
-                return json.loads(match.group(0))
+                return json.loads(_quote_bare_placeholders(match.group(0)))
         except:
             pass
     return {"steps": [], "missing_args": []}
