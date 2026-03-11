@@ -40,6 +40,7 @@ class AgentState(TypedDict, total=False):
     plan: Dict[str, Any]
     repair_attempts: int
     last_tool_error: Dict[str, Any]
+    last_agentic_step: Dict[str, Any]
 
 
 def _should_wrap_as_password(messages: Sequence[BaseMessage]) -> bool:
@@ -92,6 +93,7 @@ async def main():
     graph = await build_graph()
 
     chat_memory: List[BaseMessage] = []
+    last_agentic_step: Dict[str, Any] | None = None
     console = Console()
 
     rich_print("\n" + "="*60)
@@ -121,12 +123,18 @@ async def main():
 
         try:
             async for step in graph.astream(
-                {"messages": chat_memory, "repair_attempts": 0},
+                {
+                    "messages": chat_memory,
+                    "repair_attempts": 0,
+                    "last_agentic_step": last_agentic_step,
+                },
                 stream_mode="updates"
             ):
                 for node_name, node_output in step.items():
                     if not node_output:
                         continue
+                    if "last_agentic_step" in node_output:
+                        last_agentic_step = node_output["last_agentic_step"]
                     if "messages" in node_output:
                         new_messages = node_output["messages"]
                         for msg in new_messages:

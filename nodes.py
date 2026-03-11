@@ -55,7 +55,11 @@ def make_planner_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
 
     def planner_node(state: dict) -> Dict:
-        chat_history = format_history_for_planner(state.get("messages", []), drop_last_user=True)
+        chat_history = format_history_for_planner(
+            state.get("messages", []),
+            drop_last_user=True,
+            last_agentic_step=state.get("last_agentic_step"),
+        )
         prior_missing_args = extract_latest_requested_missing_args(state.get("messages", []))
         user_query = state.get("messages", [])[-1].content if state.get("messages") else ""
         tool_context = build_tool_context(
@@ -73,6 +77,7 @@ def make_planner_node(tools_by_name: dict):
 
         VERY IMPORTANT:
         - Tool descriptions contain dependency chains and required ordering.
+        - Use any FINAL_AGENT_STEP[gate] context in Chat History as grounded execution context when choosing the next plan.
         - You must follow those dependency chains.
         - If a later tool depends on an earlier tool's result, you must still include the later tool in the plan when it is part of the required chain.
         - When an argument is not yet known because it will come from a previous tool result, use a symbolic placeholder instead of omitting the dependent tool.
@@ -496,6 +501,8 @@ OUTPUT RULES (STRICT):
 - Do NOT describe tool usage steps.
 - Do NOT output any code blocks or code snippets.
 - The Conversation History may contain cached tool traces labeled as `CACHED_TOOL_CALL[...]` and cached successful results labeled as `CACHED_SUCCESS[...]`.
+- The Conversation History may contain `FINAL_AGENT_STEP[gate]` entries that capture the latest gate action and result. Use them as grounded execution context for the final response.
+- When `FINAL_AGENT_STEP[gate]` is present, incorporate its result into the final answer when it is relevant to the latest user request.
 - Treat `CACHED_SUCCESS[...]` as reusable factual evidence from prior successful tool execution.
 - ONLY use information explicitly present in the Conversation History (especially `CACHED_SUCCESS[...]` entries and other tool outputs), do NOT invent or assume any facts not in the history.
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
@@ -541,7 +548,10 @@ RECOMMENDATION STYLE:
 Now write the final answer based strictly on the Conversation History below, including any `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]` entries.
 """
 
-        transcript = format_history_for_responder(messages)
+        transcript = format_history_for_responder(
+            messages,
+            last_agentic_step=state.get("last_agentic_step"),
+        )
         final_prompt = [
             HumanMessage(
                 content=f"{system_prompt}{situational_block}\n\nConversation History:\n{transcript}"
@@ -1250,6 +1260,7 @@ RULES:
             "plan": {"steps": [], "missing_args": missing_args},
             "messages": emitted_messages,
             "last_tool_error": unresolved_errors[0] if unresolved_errors else None,
+            "last_agentic_step": attempt_log[-1] if attempt_log else None,
         }
 
     return gate_node
