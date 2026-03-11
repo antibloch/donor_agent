@@ -174,7 +174,45 @@ def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
     return f"TOOL[{tool_name}] -> {_compact_json(result, max_chars=TRUNCATION_TOOL_LIMIT)}"
 
 
+
+
+
 #------------------------------------------------------------------------------------------------------------
+
+
+def extract_latest_requested_missing_args(messages: Sequence[BaseMessage]) -> List[str]:
+    pattern = re.compile(r"CURRENT_MISSING_ARGS_JSON=(\[[^\n]*\])")
+
+    for m in reversed(messages or []):
+        if not isinstance(m, AIMessage):
+            continue
+
+        content = (m.content or "").strip()
+        if "CURRENT_MISSING_ARGS_JSON=" not in content:
+            continue
+
+        match = pattern.search(content)
+        if not match:
+            continue
+
+        try:
+            parsed = json.loads(match.group(1))
+        except Exception:
+            continue
+
+        if not isinstance(parsed, list):
+            continue
+
+        out: List[str] = []
+        for item in parsed:
+            if isinstance(item, str):
+                value = item.strip()
+                if value and value not in out:
+                    out.append(value)
+        return out
+
+    return []
+
 
 def _redact_passwords(text: str) -> str:
     """

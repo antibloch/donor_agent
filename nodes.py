@@ -28,7 +28,6 @@ DO_SELECTION = (dotenv.get_key(dotenv.find_dotenv(), "DO_SELECTION") or "0").str
 SHOW_PLANNER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_PLANNER_HISTORY") or "0")
 SHOW_PLANNER_TOOL_CONTEXT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_PLANNER_TOOL_CONTEXT") or "0")
 SHOW_RESPONDER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_RESPONDER_HISTORY") or "0")
-SHOW_GATE_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_INPUT") or "0")
 TRUNCATION_LIMIT_PLANNER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_PLANNER_HISTORY") or "10000")
 TRUNCATION_LIMIT_PLANNER_TOOL = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_PLANNER_TOOL") or "1000")
 TRUNCATION_LIMIT_RESPONDER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_RESPONDER_HISTORY") or "10000")
