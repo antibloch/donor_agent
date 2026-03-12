@@ -10,6 +10,7 @@ from history_formatters import (
     format_history_for_gate,
     build_cached_tool_outputs,
     format_history_for_responder,
+    extract_latest_requested_missing_args,
     detect_recent_tool_errors,
     get_current_round_messages,
     format_msg, 
@@ -27,7 +28,6 @@ DO_SELECTION = (dotenv.get_key(dotenv.find_dotenv(), "DO_SELECTION") or "0").str
 SHOW_PLANNER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_PLANNER_HISTORY") or "0")
 SHOW_PLANNER_TOOL_CONTEXT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_PLANNER_TOOL_CONTEXT") or "0")
 SHOW_RESPONDER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_RESPONDER_HISTORY") or "0")
-SHOW_GATE_INPUT = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_INPUT") or "0")
 TRUNCATION_LIMIT_PLANNER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_PLANNER_HISTORY") or "10000")
 TRUNCATION_LIMIT_PLANNER_TOOL = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_PLANNER_TOOL") or "1000")
 TRUNCATION_LIMIT_RESPONDER_HISTORY = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_RESPONDER_HISTORY") or "10000")
@@ -41,11 +41,22 @@ SHOW_GATE_UNRESOLVED_ERROR_IDS = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_
 SHOW_GATE_TOOL_OUTPUTS = int(dotenv.get_key(dotenv.find_dotenv(), "SHOW_GATE_TOOL_OUTPUTS") or "0")
 TRUNCATION_LIMIT_GATE_TOOL_OUTPUT = int(dotenv.get_key(dotenv.find_dotenv(), "TRUNCATION_LIMIT_GATE_TOOL_OUTPUT") or "500")
 
+def _normalize_missing_args(items: List[Any] | None) -> List[str]:
+    out: List[str] = []
+    for item in items or []:
+        if not isinstance(item, str):
+            continue
+        value = item.strip()
+        if value and value not in out:
+            out.append(value)
+    return out
+
 def make_planner_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
 
     def planner_node(state: dict) -> Dict:
         chat_history = format_history_for_planner(state.get("messages", []), drop_last_user=True)
+        prior_missing_args = extract_latest_requested_missing_args(state.get("messages", []))
         user_query = state.get("messages", [])[-1].content if state.get("messages") else ""
         tool_context = build_tool_context(
             tools_by_name,
@@ -65,6 +76,8 @@ def make_planner_node(tools_by_name: dict):
         - You must follow those dependency chains.
         - If a later tool depends on an earlier tool's result, you must still include the later tool in the plan when it is part of the required chain.
         - When an argument is not yet known because it will come from a previous tool result, use a symbolic placeholder instead of omitting the dependent tool.
+        - If a required value cannot be recovered from prior successful outputs or from tools earlier in THIS plan, do NOT leave it as a placeholder. Put that field name in missing_args.
+        - The missing_args list must represent the current unresolved user inputs after considering all reusable prior tool outputs in chat history.
 
         PLACEHOLDER POLICY:
         - You may use symbolic placeholders for arguments that will be derived from earlier tool outputs.
@@ -72,7 +85,13 @@ def make_planner_node(tools_by_name: dict):
         - Instead use placeholders such as:
         - "<BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>"
         - "<WEBSITE_URL_FROM_CHARITY_DETAILS>"
+        - Every placeholder must correspond to a value that an earlier tool in the plan or cached history can realistically produce.
         - Prefer a complete dependency-aware plan over a single first-step plan when tool descriptions define a normal chain.
+
+        MISSING-ARG POLICY:
+        - For action tools like donations, bids, wallet funding, or other write operations: if any required final argument is not already known and not recoverable from earlier tools, add its exact field name to missing_args.
+        - Do not ask for args already supplied in the latest user message.
+        - Do not include any arg in missing_args if it can be grounded from prior successful tool outputs already present in chat history.
 
         PLANNING RULES:
         1. Identify all user intents.
@@ -83,6 +102,7 @@ def make_planner_node(tools_by_name: dict):
         5. Do not stop at discovery for a "tell me about X" query if deeper tools are part of the required chain.
         6. If downstream args are not yet known, include the downstream tool with a symbolic placeholder.
         7. Only return steps: [] if chat history already fully satisfies the request.
+        8. If the previous round already asked for missing inputs, shrink that list if the latest user message or prior successful tool outputs now cover some of them.
 
         AVAILABLE TOOLS:
         {tool_context}
@@ -102,6 +122,9 @@ def make_planner_node(tools_by_name: dict):
 
         Chat History:
         {chat_history}
+
+        Previously Requested Missing Inputs:
+        {_compact_json(prior_missing_args, max_chars=500)}
 
         User Request:
         {state.get("messages", [])[-1].content if state.get("messages") else ""}
@@ -136,6 +159,7 @@ def make_planner_node(tools_by_name: dict):
             rich_print("="*80)
 
         plan = _parse_plan(response.content)
+        plan["missing_args"] = _normalize_missing_args(plan.get("missing_args", []))
 
         if DEBUG_MESSAGES == 1:
             steps_list = [s.get("tool", "") for s in plan.get("steps", [])]
@@ -150,7 +174,7 @@ def make_validator_node(tools_by_name: dict):
     def validator_node(state: dict) -> Dict:
         plan = state.get("plan", {})
         steps = plan.get("steps", [])
-        missing_args = plan.get("missing_args", [])
+        missing_args = _normalize_missing_args(plan.get("missing_args", []))
         messages = []
 
         valid_steps = []
@@ -169,7 +193,11 @@ def make_validator_node(tools_by_name: dict):
         if missing_args and not valid_steps:
             return {
                 "plan": updated_plan,
-                "messages": [AIMessage(content=f"System Note: STOP EXECUTION. The planner needs input. Ask the user strictly for: {', '.join(missing_args)}")]
+                "messages": [AIMessage(content=(
+                    f"System Note: STOP EXECUTION. The planner needs input. "
+                    f"Ask the user strictly for: {', '.join(missing_args)}. "
+                    f"CURRENT_MISSING_ARGS_JSON={json.dumps(missing_args, ensure_ascii=False)}"
+                ))]
             }
         if not valid_steps and not missing_args:
             return {
@@ -874,11 +902,12 @@ def make_gate_node(
 
     async def gate_node(state: dict) -> Dict:
         base_messages = list(state.get("messages", []) or [])
+        base_missing_args = _normalize_missing_args((state.get("plan", {}) or {}).get("missing_args", []))
         raw_original_errors = detect_recent_tool_errors(base_messages)
 
         if not raw_original_errors:
             return {
-                "plan": {"steps": [], "missing_args": []},
+                "plan": {"steps": [], "missing_args": base_missing_args},
                 "messages": [],
                 "last_tool_error": None,
             }
@@ -888,7 +917,7 @@ def make_gate_node(
 
         emitted_messages: List[BaseMessage] = []
         seen_step_signatures: set[str] = set()
-        missing_args: List[str] = []
+        missing_args: List[str] = list(base_missing_args)
         gate_notes: List[str] = []
         attempt_log: List[Dict[str, Any]] = []
 
@@ -940,6 +969,9 @@ VERY IMPORTANT:
 - Reuse grounded values from cached successful outputs.
 - Do NOT invent ids, names, urls, passwords, numeric values, or other arguments not present in history/cache.
 - Return exactly ONE next repair action or mark done.
+- You are responsible for maintaining the CURRENT unresolved user-input list across repair steps.
+- Any `missing_args` you output must be the current authoritative list after considering all successful repair steps so far.
+- On the final `done: true` step, `missing_args` must contain every remaining required argument that is still not recoverable from available tool calls or cached successful outputs, and must exclude anything already recovered.
 
 COMPLEX ARGUMENT ASSEMBLY RULE:
 - When a failed tool requires structured arguments (lists, nested objects), you MUST actively extract concrete values from CACHED TOOL OUTPUTS to build those arguments.
@@ -967,6 +999,9 @@ CURRENT ROUND HISTORY:
 
 CACHED TOOL OUTPUTS:
 {cache}
+
+PLANNER/STATE MISSING INPUTS CARRIED INTO GATE:
+{_compact_json(missing_args, max_chars=500)}
 
 So far errors fixed:
 {_serialize_errors_for_prompt(fixed_errors)}
@@ -1005,6 +1040,8 @@ RULES:
 6. Do not repeat an identical or semantically equivalent repair step already attempted in this gate run.
 7. If no safe automatic repair is possible, set `done`: true.
 8. NEVER pass empty lists or empty objects for arguments that require real data. If the original error was caused by placeholder strings, the repair MUST replace them with actual values from cached outputs, not with empty containers.
+9. When a prior missing arg becomes recoverable from a successful repair step or cached tool output, remove it from `missing_args`.
+10. When `done` is true, do not return a partial list. Return the full remaining unresolved set the user must provide next.
 """.strip()
             
             if DEBUG_MESSAGES == 1 and (SHOW_GATE_HISTORY == 1 or 
@@ -1076,9 +1113,11 @@ RULES:
             reason = decision["reason"]
             mark_target_fixed_if_success = decision["mark_target_fixed_if_success"]
 
-            for item in decision["missing_args"]:
-                if item not in missing_args:
-                    missing_args.append(item)
+            if decision["missing_args"]:
+                if done or step is None:
+                    missing_args = _normalize_missing_args(decision["missing_args"])
+                else:
+                    missing_args = _normalize_missing_args(missing_args + decision["missing_args"])
 
             if done and step is None:
                 gate_notes.append(reason or "Repair model stopped.")
@@ -1200,6 +1239,9 @@ RULES:
 
         if gate_notes:
             note += " " + " | ".join(gate_notes[:4])
+
+        if missing_args:
+            note += f" CURRENT_MISSING_ARGS_JSON={json.dumps(missing_args, ensure_ascii=False)}"
 
         emitted_messages.append(AIMessage(content=note))
 
