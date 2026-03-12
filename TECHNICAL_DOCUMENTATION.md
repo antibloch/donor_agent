@@ -142,48 +142,70 @@ The gate runs after the executor.
 Its purpose is to detect tool failures and attempt automatic repair cycles. The current implementation is not a generic replanner that returns a fresh full plan in one shot. It is a targeted ReAct-style repair agent that:
 
 - looks only at the current round of execution
-- inspects recent tool outputs for failures
-- chooses one unresolved error to work on next
+- inspects recent tool outputs for failures using explicit `ok: false` markers and semantic error detection
+- assigns each error a unique identifier (`E1`, `E2`, etc.)
+- chooses one unresolved error to work on next based on reactive context
 - decides one repair action at a time
-- executes that repair step immediately inside the gate
-- repeats for up to `GATE_MAX_REACT_STEPS`
+- executes that repair step immediately inside the gate via `_invoke_tool`
+- updates fixed error tracking and tracks all attempt history
+- repeats for up to `GATE_MAX_REACT_STEPS` iterations
 
-It detects failures using:
+It detects failures using `detect_recent_tool_errors()` which identifies:
 
-- explicit `ok: false` failures
+- explicit `ok: false` failures in normalized tool payloads
 - backend payloads that encode failure as `success: false`
-- traceback-like strings
+- traceback-like strings (Traceback, IndentationError, SyntaxError, NameError, KeyError, TypeError, ValueError, etc.)
 - common error markers such as `SyntaxError`, `TypeError`, `Invalid`, or `missing`
+- semantic errors returned by `_detect_semantic_error()` (e.g., zero result sets when data is expected)
 
-For each ReAct step, the gate prompt asks the model to return exactly one JSON decision:
+For each ReAct step, the gate prompt asks the LLM to return exactly one JSON decision:
 
-<html><body><table><tr><td>Field</td><td>Meaning</td></tr><tr><td>`target_error_id`</td><td>Which unresolved error to work on now</td></tr><tr><td>`step`</td><td>At most one repair tool call to attempt next</td></tr><tr><td>`mark_target_fixed_if_success`</td><td>Whether a successful step should resolve the selected error</td></tr><tr><td>`done`</td><td>Stop repairing if no safe automatic step exists</td></tr><tr><td>`missing_args`</td><td>User inputs the gate could not derive from tools or cache</td></tr></table></body></html>
+<html><body><table><tr><td>Field</td><td>Meaning</td></tr><tr><td>`target_error_id`</td><td>Which unresolved error (E1, E2, etc.) to work on now, chosen reactively</td></tr><tr><td>`step`</td><td>At most one repair tool call to attempt next: `{"tool": "tool_name", "args": {...}}`</td></tr><tr><td>`mark_target_fixed_if_success`</td><td>Whether a successful step should resolve the selected error, or if it’s only prerequisite work</td></tr><tr><td>`done`</td><td>Stop repairing if no safe automatic step exists</td></tr><tr><td>`reason`</td><td>Evidence-based explanation of why this error is chosen and why this repair is appropriate</td></tr><tr><td>`missing_args`</td><td>User inputs the gate could not derive from tools, cache, or history</td></tr></table></body></html>
 
-This is especially useful when a multi-step request depends on one tool’s output being transformed by another tool, such as Python-based numeric analysis, prerequisite discovery, or ID recovery.
+This is especially useful when a multi-step request depends on one tool’s output being transformed by another tool, such as Python-based numeric analysis, prerequisite discovery, ID recovery, or structured data assembly.
 
 # Gate ReAct Behavior
 
-The gate maintains internal state for the current repair pass:
+The gate maintains internal state for the current repair pass across the `max_react_steps` loop:
 
-- original detected errors, each tagged with an `E1`, `E2`, ... identifier
-- errors already fixed
-- unresolved errors
-- attempted repair steps in the current gate run
-- successful tool outputs cached from the current round
-- any `missing_args` the gate discovered but could not fill automatically
+- **original detected errors**: Each tagged with an `E1`, `E2`, ... identifier extracted by `detect_recent_tool_errors()`
+- **fixed error tracking**: Set of error IDs already marked as fixed by prior repair steps
+- **unresolved errors**: Currently unresolved errors (original minus fixed)
+- **attempted repair steps**: Full log of each repair step, its arguments, success/failure, and output
+- **seen step signatures**: Set of normalized step signatures to prevent duplicate attempts
+- **successful tool outputs cache**: Built from base messages plus emitted messages via `build_cached_tool_outputs()`
+- **missing user args**: Initially from planner, updated by gate decision `missing_args`
+- **LLM visible history**: Original round messages, frozen to allow the LLM to see context consistently
 
-The gate follows these rules:
+The gate follows these operational rules:
 
-- it can choose a prerequisite repair step before retrying the failing tool
-- it must not invent IDs, passwords, URLs, or other arguments not grounded in history or cache
-- it filters repair arguments against the real tool schema before invoking the tool
-- it avoids duplicate or semantically equivalent repair steps in the same gate run
-- it can stop with `step: null` when no safe repair exists
-- it can return `missing_args` when repair requires new user input
+**Safety & Grounding:**
+- must not invent IDs, passwords, URLs, numeric values, or other arguments not grounded in history or cache
+- filters repair arguments against the real tool schema before invoking the tool via `_filter_args_for_tool()`
+- avoids duplicate or semantically equivalent repair steps in the same gate run using step signature tracking
+- can choose a prerequisite repair step before retrying a downstream tool
+- can stop with `step: null` when no safe repair exists
 
-<html><body><table><tr><td>Behavior</td><td>Implementation Detail</td></tr><tr><td>Error discovery</td><td>`detect_recent_tool_errors()` inspects only the current round and ignores failures already superseded by later repair notes</td></tr><tr><td>One-step execution</td><td>The gate emits an `AIMessage` tool call and a matching `ToolMessage` result for each repair attempt it executes</td></tr><tr><td>Direct fix</td><td>If the repair succeeds and directly resolves the selected error, the gate marks that error fixed</td></tr><tr><td>Prerequisite fix</td><td>If the step only prepares for a later retry, the gate leaves the target error unresolved</td></tr><tr><td>User input needed</td><td>The gate returns `missing_args`, which are routed back through validator so the responder can ask the user</td></tr><tr><td>No safe repair</td><td>The gate stops and hands off to the responder with a system note</td></tr></table></body></html>
+**Repair Strategy:**
+- reactive error selection: chooses which error to work on based on current state, not a pre-determined order
+- reactive step selection: chooses one repair step at a time, informed by cached outputs and prior attempts
+- respects tool dependency rules from tool descriptions when prioritizing prerequisite repairs
+- uses cached successful outputs to ground arguments for new repair steps
 
-The limit for internal ReAct iterations is loaded from `GATE_MAX_REACT_STEPS`.
+**State Management:**
+- can return `missing_args` when repair requires new user input (routed back to validator → responder)
+- marks errors fixed when the repair succeeds and `mark_target_fixed_if_success` is true, or when the tool that ran matches the tool from the target error
+- continues to the next ReAct iteration if unresolved errors remain and `done` is false
+- breaks the loop early if no safe repair is possible, if invalid JSON is returned, or if max iterations reached
+
+**Output Tracking:**
+- emits an `AIMessage` with tool call metadata and a matching `ToolMessage` for each repair attempt
+- records each attempt in `attempt_log` with: react_step, target_error_id, tool, args, ok, output
+- captures the final repair step as `last_agentic_step` to be persisted to conversation history
+
+<html><body><table><tr><td>Behavior</td><td>Implementation Detail</td></tr><tr><td>Error discovery</td><td>`detect_recent_tool_errors()` runs once at gate entry, inspects current round only, ignores failures already resolved</td></tr><tr><td>Reactive loop state</td><td>Each iteration uses current `_current_unresolved_errors()` and `_current_fixed_errors()` views to decide what to work on</td></tr><tr><td>One-step execution</td><td>The gate emits an `AIMessage` tool call and a matching `ToolMessage` result for each repair attempt, then updates attempt_log</td></tr><tr><td>Semantic error detection</td><td>After tool returns, payload is checked by `_detect_semantic_error()` to flag e.g. empty result sets as failures even if `ok: true`</td></tr><tr><td>Direct fix</td><td>If repair succeeds and `mark_target_fixed_if_success` is true OR tool_name matches target error tool, error is added to fixed_error_ids</td></tr><tr><td>Prerequisite fix</td><td>If repair succeeds but is marked as prerequisite only, the target error remains unresolved for a later step</td></tr><tr><td>User input needed</td><td>The gate returns `missing_args` in the final decision, which are routed back through validator so responder can ask the user</td></tr><tr><td>No safe repair</td><td>The gate sets `done: true` and stops, emitting a system note with unresolved errors to the responder</td></tr><tr><td>Duplicate prevention</td><td>Step signatures are computed via `_step_signature()` and checked against `seen_step_signatures` to skip semantically identical attempts</td></tr><tr><td>Final step capture</td><td>`last_agentic_step` is sourced from attempt_log AFTER tool execution, capturing real success/failure and output</td></tr><tr><td>History serialization</td><td>Final `last_agentic_step` is formatted by `_format_last_agentic_step()` and added as an AIMessage for durable conversation context</td></tr></table></body></html>
+
+The limit for internal ReAct iterations is loaded from the `GATE_MAX_REACT_STEPS` environment variable (default 1).
 
 # Responder
 
@@ -236,27 +258,95 @@ Charity endpoints currently used:
 
 # 3.3 Transaction Tools
 
-The transaction layer currently exposes these tools:
+The transaction layer (`tools/transactions.py`) currently exposes these tools:
 
-<html><body><table><tr><td>Tool</td><td>Type</td><td>Description</td></tr><tr><td>check_wallet_balance</td><td>GET</td><td>Fetch wallet details for the authenticated donor</td></tr><tr><td>get_payment_methods</td><td>GET</td><td>List saved payment methods</td></tr><tr><td>add_payment_method</td><td>GET</td><td>Return a hosted URL for adding a payment method</td></tr><tr><td>list_charities_by_country</td><td>GET</td><td>List charities available for a specified country code</td></tr><tr><td>get_charity_donation_products</td><td>GET</td><td>List donation products for a charity</td></tr><tr><td>get_all_charities_with_grants</td><td>GET</td><td>List charities and their grants</td></tr><tr><td>get_all_active_campaigns</td><td>GET</td><td>List active campaigns</td></tr><tr><td>get_donation_types_campaign</td><td>GET</td><td>List donation type categories used by campaigns</td></tr><tr><td>get_transaction_history</td><td>GET</td><td>Fetch wallet transaction history</td></tr><tr><td>fund_wallet</td><td>POST</td><td>Add funds to the donor wallet</td></tr><tr><td>product_donation</td><td>POST</td><td>Create a product donation</td></tr><tr><td>campaign_donation</td><td>POST</td><td>Create a campaign donation</td></tr><tr><td>grant_donation</td><td>POST</td><td>Create a grant donation</td></tr></table></body></html>
+<html><body><table><tr><td>Tool</td><td>Method</td><td>Auth</td><td>Description</td></tr><tr><td>`check_wallet_balance`</td><td>GET</td><td>Bearer token</td><td>Fetch wallet balance, currency, and account status for the authenticated donor</td></tr><tr><td>`list_saved_payment_methods`</td><td>GET</td><td>Bearer token</td><td>List all saved payment methods on the donor account</td></tr><tr><td>`create_payment_method_url`</td><td>GET</td><td>Bearer token</td><td>Return a hosted payment method registration URL for adding a new card/bank account</td></tr><tr><td>`list_charities_in_country`</td><td>GET</td><td>API key</td><td>List charities available for a specified country code</td></tr><tr><td>`list_charity_products`</td><td>GET</td><td>API key</td><td>List donation products for a specific charity (requires charity ID)</td></tr><tr><td>`list_charity_active_campaigns`</td><td>GET</td><td>API key</td><td>List active fundraising campaigns for a charity</td></tr><tr><td>`list_charity_grants`</td><td>GET</td><td>API key</td><td>List available grants/matching donation programs for a charity</td></tr><tr><td>`get_transaction_history`</td><td>GET</td><td>Bearer token</td><td>Fetch the donor's transaction history with timestamps and statuses</td></tr><tr><td>`fund_wallet`</td><td>POST</td><td>Bearer token + password</td><td>Add funds to the donor wallet using a saved payment method</td></tr><tr><td>`product_donation`</td><td>POST</td><td>Bearer token + password</td><td>Make a product-based donation to a charity</td></tr><tr><td>`campaign_donation`</td><td>POST</td><td>Bearer token + password</td><td>Make a campaign donation contribution</td></tr><tr><td>`grant_donation`</td><td>POST</td><td>Bearer token + password</td><td>Make a grant/matching donation</td></tr></table></body></html>
+
+**Key Implementation Details:**
+- All transaction tools use hardcoded bearer tokens in source (demo-only, not production-ready)
+- Password-gated write operations (`fund_wallet`, `*_donation` tools) require explicit password verification via `verify_user_password()` before API submission
+- Read operations use API-key-only headers; write operations require Bearer token authentication
+- Tool results are normalized into the standard `{"ok": true/false, "result": {...}}` envelope
+- Error responses include HTTP status, endpoint path, and truncated response text for debugging
 
 # 3.4 Auction Tools
 
-The current auction layer exposes these tools:
+The auction layer (`tools/auctions.py`) exposes these tools:
 
-<html><body><table><tr><td>Tool</td><td>Type</td><td>Description</td></tr><tr><td>get_active_auctions</td><td>GET</td><td>Fetch active auction records</td></tr><tr><td>get_auction_details</td><td>GET</td><td>Fetch one auction by exact `_id`</td></tr><tr><td>get_my_bid_history</td><td>GET</td><td>Fetch the donor’s bid history</td></tr><tr><td>place_bid</td><td>POST</td><td>Place a bid using auction ID, amount, and password</td></tr><tr><td>get_donation_categories</td><td>GET</td><td>List donation categories</td></tr><tr><td>get_charities_by_donation_type</td><td>GET</td><td>List charities for a selected donation type and country</td></tr></table></body></html>
+<html><body><table><tr><td>Tool</td><td>Method</td><td>Auth</td><td>Description</td></tr><tr><td>`get_active_auctions`</td><td>GET</td><td>API key</td><td>Fetch all currently active auctions with pagination; returns list of auction objects with title, minBidAmount, incrementType, incrementValue, and timestamps</td></tr><tr><td>`get_auction_details`</td><td>GET</td><td>API key</td><td>Fetch one auction by exact MongoDB `_id`; includes condition, reserve price, and increment rules</td></tr><tr><td>`get_my_bid_history`</td><td>GET</td><td>API key</td><td>Fetch the donor’s complete bid history across all auctions; returns list of bids with status (Pending, Won, Lost) and amounts</td></tr><tr><td>`place_bid`</td><td>POST</td><td>Bearer token + password</td><td>Place a bid on an active auction; requires exact auction `_id`, positive amount, and password verification</td></tr><tr><td>`get_donation_categories`</td><td>GET</td><td>API key</td><td>List all donation categories (chanda, fitra, hadya, saqdah, etc.); step 1 of category-based charity lookup</td></tr><tr><td>`get_charities_by_donation_type`</td><td>GET</td><td>API key</td><td>List charities accepting a specific donation category; requires `donation_type_id` from `get_donation_categories`</td></tr></table></body></html>
 
-Auction endpoints currently used:
+Auction endpoints and implementation details:
 
-<html><body><table><tr><td>Tool</td><td>Method</td><td>Endpoint</td></tr><tr><td>get_active_auctions</td><td>GET</td><td>/api/v3/agent/auctions/list</td></tr><tr><td>get_auction_details</td><td>GET</td><td>/api/v3/agent/auctions/{auction_id}</td></tr><tr><td>get_my_bid_history</td><td>GET</td><td>/api/v3/agent/user/{DONOR_PROFILE_ID}/bids</td></tr><tr><td>place_bid</td><td>POST</td><td>/api/v3/agent/auctions/{auction_id}/bid</td></tr><tr><td>get_donation_categories</td><td>GET</td><td>/api/v3/agent/donation-categories</td></tr><tr><td>get_charities_by_donation_type</td><td>GET</td><td>/api/v3/agent/charities/by-donation-type</td></tr></table></body></html>
+<html><body><table><tr><td>Tool</td><td>Method</td><td>Endpoint</td><td>Implementation Notes</td></tr><tr><td>`get_active_auctions`</td><td>GET</td><td>`/api/v3/agent/auctions/list`</td><td>Pagination support via `page` and `limit` query params; returns `data.auctions` and `data.pagination`</td></tr><tr><td>`get_auction_details`</td><td>GET</td><td>`/api/v3/agent/auctions/{auction_id}`</td><td>Requires exact ObjectId string; sanitizes input and returns error if _id is missing or malformed</td></tr><tr><td>`get_my_bid_history`</td><td>GET</td><td>`/api/v3/agent/user/{DONOR_PROFILE_ID}/bids`</td><td>Uses hardcoded `DONOR_PROFILE_ID` constant (currently a placeholder); returns list of bid records with auction references</td></tr><tr><td>`place_bid`</td><td>POST</td><td>`/api/v3/agent/auctions/{auction_id}/bid`</td><td>Requires password verification first via `verify_user_password()`; validates amount > 0; sends `{"bidAmount": amount}` in body</td></tr><tr><td>`get_donation_categories`</td><td>GET</td><td>`/api/v3/agent/donation-categories`</td><td>No args required; returns list of category objects with `_id` and `name`</td></tr><tr><td>`get_charities_by_donation_type`</td><td>GET</td><td>`/api/v3/agent/charities/by-donation-type`</td><td>Query params: `donationTypeId` (required), `countryCode` (defaults to "PK"); returns charities filtered by category and location</td></tr></table></body></html>
+
+**Key Constraints & Behavioral Rules:**
+- `get_active_auctions` must be called first before `get_auction_details` or `place_bid` to obtain valid auction `_id` values (NOT display numbers)
+- `get_donation_categories` must be called before `get_charities_by_donation_type` to resolve the category `_id`
+- `place_bid` requires THREE inputs: exact auction `_id`, explicit bid `amount`, AND password (explicitly provided by user, not invented)
+- Bid failure cases include: invalid `_id`, zero/negative amount, missing password, or failed password verification
+- `get_my_bid_history` is the ONLY correct tool for bid history requests; never substitute `check_wallet_balance`
+- Tool descriptions embed detailed ordering constraints and dependency rules to guide planner and gate repair logic
 
 # 3.5 Tool Guidance Embedded in Code
 
-The tool descriptions are not just labels. They also contain operational instructions for the planner.
+The tool descriptions are not just labels—they also contain operational instructions and behavioral constraints for the planner and gate repair agent. Every tool in `tools/transactions.py`, `tools/auctions.py`, and `tools/analytics.py` includes structured guidance.
 
-Examples of encoded tool guidance:
+**Examples of encoded tool guidance patterns:**
 
-<html><body><table><tr><td>Guidance Pattern</td><td>Why It Matters</td></tr><tr><td>“Use exact `_id` only”</td><td>Prevents the planner from sending human display numbers like 1 or 2 to backend endpoints</td></tr><tr><td>“Call this first”</td><td>Enforces multi-step flows such as category lookup before charity-by-category lookup</td></tr><tr><td>Password required</td><td>Prevents sensitive actions such as `place_bid` from being executed without explicit user authorization input</td></tr><tr><td>Website fetch hints</td><td>Encourages the planner to pair charity detail retrieval with website content retrieval when needed</td></tr></table></body></html>
+<html><body><table><tr><td>Guidance Pattern</td><td>Sections in Tool Description</td><td>Why It Matters</td></tr><tr><td>”Use exact `_id` only, never display numbers”</td><td>DO NOT USE WHEN section + REQUIRES section</td><td>Prevents the planner from sending human display numbers like 1 or 2 to backend endpoints; ensures data integrity and backend compatibility</td></tr><tr><td>”Call this FIRST before X”</td><td>MUST_CALL_FIRST + DEFAULT_CHAIN sections</td><td>Enforces multi-step flows such as `get_donation_categories` before `get_charities_by_donation_type`, or `get_active_auctions` before `get_auction_details`</td></tr><tr><td>”Password MUST be explicitly provided”</td><td>DO NOT USE WHEN + WHEN TO USE sections</td><td>Prevents sensitive actions such as `place_bid` from being executed without explicit user password input; gates transactional operations to prevent unauthorized actions</td></tr><tr><td>”Call this tool first to get required IDs”</td><td>CHAIN_OUTPUT_FOR_NEXT_TOOL section</td><td>Teaches the planner and gate that downstream tools depend on this tool's output, guiding prerequisite repair strategy</td></tr><tr><td>Dependency chains with placeholders</td><td>DEFAULT_CHAIN + CHAIN_OUTPUT_FOR_NEXT_TOOL</td><td>Allows planner to schedule the full chain at plan time using placeholders like `<AUCTION_ID_FROM_GET_ACTIVE_AUCTIONS>`, which gate can resolve at repair time</td></tr><tr><td>Empty data handling hints</td><td>WHEN TO USE + DO NOT STOP HERE sections</td><td>Guides planner behavior when a tool returns empty results (e.g., no auctions, no charities in that category)</td></tr></table></body></html>
+
+**Tool Description Structure:**
+
+Each tool's description follows a consistent pattern:
+
+```
+PURPOSE:
+  [Core reason for the tool]
+
+MUST_CALL_FIRST / DEPENDS_ON:
+  [Prerequisites and entry conditions]
+
+DEFAULT_CHAIN:
+  [Typical multi-step orchestration pattern]
+
+WHEN TO USE:
+  [Trigger conditions and user phrases]
+
+DO NOT USE WHEN:
+  [Anti-patterns and when to avoid the tool]
+
+REQUIRES (Intuitive Schema):
+  [Simple argument summary]
+
+REQUIRES (Detailed Schema):
+  [Full schema with types and constraints]
+
+RETURNS (Intuitive Schema):
+  [User-friendly output summary]
+
+RETURNS (Detailed Schema):
+  [Complete output structure and nested fields]
+
+CHAIN_OUTPUT_FOR_NEXT_TOOL:
+  [How to pass this tool's output to downstream tools, including placeholder format]
+
+DO NOT STOP HERE WHEN:
+  [Hints for when to continue the chain]
+```
+
+**How Planner Uses Tool Guidance:**
+
+1. **Dependency Ordering**: The planner reads `MUST_CALL_FIRST` and `DEFAULT_CHAIN` to sequence tools correctly
+2. **Placeholder Arguments**: When a tool's output is needed but not yet available, the planner uses the placeholder format from `CHAIN_OUTPUT_FOR_NEXT_TOOL` (e.g., `<AUCTION_ID_FROM_GET_ACTIVE_AUCTIONS>`)
+3. **Safety Constraints**: The planner respects `DO NOT USE WHEN` to avoid unsafe patterns (e.g., never pass invented `_id` values)
+4. **Intent Preservation**: Descriptions guide the planner to choose the complete chain needed to answer the user, not a shortcut
+
+**How Gate Uses Tool Guidance:**
+
+1. **Repair Strategy**: When choosing a repair step, the gate reads `DEPENDS_ON` and `DEFAULT_CHAIN` to decide whether a prerequisite must be fixed first
+2. **Argument Resolution**: The gate uses `CHAIN_OUTPUT_FOR_NEXT_TOOL` and cached tool outputs to assemble arguments for repair steps
+3. **Semantic Consistency**: The gate enforces constraints like “password must be explicitly provided by user” before attempting transactional operations
+4. **Error Prioritization**: The gate uses tool descriptions to understand which errors block which downstream operations, choosing repair order strategically
 
 # 4. Charity Flow
 
