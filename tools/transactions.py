@@ -408,12 +408,12 @@ def list_charity_products(charity_id: str):
 
     CHAIN_OUTPUT_FOR_NEXT_TOOL:
     - Each product in the data list provides:
-        - _id: product identifier
-        - partnerProd: partner product identifier
-        - category _id: category identifier
+        - _id: charity product identifier
+        - parentID: partner product identifier
+        - categoryId: category identifier
     These can be used for tools requiring donation product selection or checkout.
     - Planner can use placeholders:
-        - "<SELECTED_PRODUCT_ID_FROM_LIST_CHARITY_PRODUCTS>"
+        - "<SELECTED_CHARITY_PROD_ID_FROM_LIST_CHARITY_PRODUCTS>"
         - "<SELECTED_PARTNER_PROD_ID_FROM_LIST_CHARITY_PRODUCTS>"
         - "<SELECTED_CATEGORY_ID_FROM_GET_LIST_CHARITY_PRODUCTS>"
 
@@ -428,9 +428,11 @@ def list_charity_products(charity_id: str):
                 "pagination": {},
                 "message": "No charity specified."
             }
-
+    headers = {
+        'X-API-KEY':xApiKey
+    }
     try:
-        response = requests.get(f"{BASE_URL}/api/v1/donors/get-charity-products/{charity_id}", headers=headers)
+        response = requests.get(f"{BASE_URL}/api/v3/agent/charities/{charity_id}/donation-products", headers=headers)
         response.raise_for_status()
         return response.json()  
 
@@ -1034,8 +1036,8 @@ def product_donation(
             - countryCode (str): ISO 3166-1 alpha-2 country code
             - products (list[dict]) -> each item must contain:
                 partner (str): partner ID
-                charityProd (str): charity product ID
-                partnerProd (str): partner product ID
+                charityProd (str): charity product ID (it is the _id received from LIST_CHARITY_DONATION_PRODUCTS)
+                partnerProd (str): partner product ID (it is the parentID received from LIST_CHARITY_DONATION_PRODUCTS)
                 category (str): category ID
                 charityProdPrice (float): price per product
                 quantity (int): number of units to donate
