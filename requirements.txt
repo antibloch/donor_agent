@@ -7,3 +7,6 @@ langchain_openai
 langchain_experimental
 langchain_mcp_adapters
 langgraph
+playwright
+fastapi
+uvicorn
