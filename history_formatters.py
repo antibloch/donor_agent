@@ -97,6 +97,67 @@ def _compact_json(obj: Any, max_chars: int = 900) -> str:
         return s[:max_chars] + " ...[truncated]"
     return s
 
+def _detect_semantic_error(payload: dict) -> str | None:
+    """
+    Detects semantic errors in tool outputs even when payload["ok"] == True.
+
+    Returns a short error string if an error is detected, otherwise None.
+    """
+    if not isinstance(payload, dict):
+        return None
+
+    # Extract candidate text
+    result = payload.get("result")
+    error = payload.get("error")
+
+    text = ""
+
+    if isinstance(result, (str, bytes)):
+        text = str(result)
+
+    elif isinstance(result, list):
+        try:
+            text = json.dumps(result)
+        except Exception:
+            text = str(result)
+
+    elif isinstance(result, dict):
+        try:
+            text = json.dumps(result)
+        except Exception:
+            text = str(result)
+
+    if not text and error:
+        text = str(error)
+
+    text_lower = text.lower()
+
+    ERROR_PATTERNS = [
+        "request failed",
+        "client error",
+        "server error",
+        "unauthorized",
+        "forbidden",
+        "invalid",
+        "missing",
+        "exception",
+        "traceback",
+        "error:",
+        "<error>",
+        "failed",
+        "timeout",
+        "not found",
+        "dns",
+        "name_not_resolved",
+        "connection refused",
+    ]
+
+    for p in ERROR_PATTERNS:
+        if p in text_lower:
+            return text[:300]
+
+    return None
+
 def _extract_tool_error(payload: Any) -> Any | None:
     if isinstance(payload, dict):
         if payload.get("ok") is False:
@@ -451,15 +512,41 @@ def _format_synthetic_cached_tool_call(tool_name: str, tool_call_id: str | None 
     tid = tool_call_id or ""
     return f'CACHED_TOOL_CALL[{tool_name} id={tid}] args={{"tool_name": "{tool_name}", "source": "prior_successful_tool_message"}}'
 
-def _format_last_agentic_step(last_agentic_step: Dict[str, Any] | None) -> str:
-    """
-    Format the last gate agentic step for injection into planner/responder history.
+def _looks_like_final_gate_step_message(text: str) -> bool:
+    return isinstance(text, str) and text.strip().startswith("FINAL_AGENT_STEP[gate] -> ")
 
-    Uses an explicit field whitelist sourced from the attempt_log entry (post-execution),
-    so only meaningful execution context is exposed — internal gate-repair fields
-    (done, reason, mark_target_fixed_if_success, step, missing_args) are excluded.
-    Args are sanitized to strip sensitive keys before formatting.
+def _history_already_has_final_gate_step(messages: Sequence[BaseMessage]) -> bool:
+    for m in reversed(messages or []):
+        if isinstance(m, AIMessage) and _looks_like_final_gate_step_message((m.content or "").strip()):
+            return True
+    return False
+
+def _truncate_last_gate_output(output: Any, max_chars: int | None = None) -> Any:
     """
+    Truncate only the `output` field of the persisted final gate step message,
+    so the history keeps the final gate action but stays compact.
+    """
+    limit = max_chars or int(os.getenv("TRUNC_LAST_GATE", str(TRUNCATION_TOOL_LIMIT)))
+    if output is None:
+        return None
+
+    if isinstance(output, (dict, list)):
+        try:
+            s = json.dumps(_sanitize_sensitive_data(output), ensure_ascii=False, default=str)
+        except Exception:
+            s = str(output)
+    else:
+        s = str(output)
+
+    if len(s) > limit:
+        s = s[:limit] + " ...[truncated]"
+    return s
+
+
+def _is_final_agent_step_text(text: str) -> bool:
+    return isinstance(text, str) and text.strip().startswith("FINAL_AGENT_STEP[gate] -> ")
+
+def _format_last_agentic_step(last_agentic_step: Dict[str, Any] | None) -> str:
     if not isinstance(last_agentic_step, dict) or not last_agentic_step:
         return ""
 
@@ -469,6 +556,9 @@ def _format_last_agentic_step(last_agentic_step: Dict[str, Any] | None) -> str:
         "tool": last_agentic_step.get("tool"),
         "args": _sanitize_sensitive_data(dict(last_agentic_step.get("args") or {})),
         "ok": last_agentic_step.get("ok"),
+        "reason": last_agentic_step.get("reason", ""),
+        "missing_args": list(last_agentic_step.get("missing_args") or []),
+        "done": last_agentic_step.get("done"),
         "output": last_agentic_step.get("output"),
     }
     return f"FINAL_AGENT_STEP[gate] -> {_compact_json(payload, max_chars=TRUNCATION_TOOL_LIMIT)}"
@@ -520,17 +610,18 @@ def _inject_before_latest_user(lines: List[str], injected_line: str) -> List[str
 
 def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
     """Provides history for the repair node (Gate)."""
-    current_round = get_current_round_messages(messages)
-    best_tool_by_call_id = get_best_tool_message_by_call_id(current_round)
+    best_tool_by_call_id = get_best_tool_message_by_call_id(messages)
     lines = []
     seen_call_ids: set[str] = set()
-    for m in current_round:
+
+    for m in messages or []:
         if isinstance(m, HumanMessage):
-            # lines.append(f"USER: {_redact_passwords(m.content)}")
             lines.append(f"USER: {m.content}")
+
         elif isinstance(m, AIMessage):
             if (m.content or "").strip().startswith("System Note:"):
                 continue
+
             if getattr(m, "tool_calls", None):
                 lines.append(_format_tool_calls_block(m.tool_calls))
                 for tc in m.tool_calls or []:
@@ -539,13 +630,20 @@ def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
                         tm = best_tool_by_call_id[tcid]
                         seen_call_ids.add(tcid)
                         lines.append(_summarize_tool_output(tm.name, tm.content))
-            if (m.content or "").strip():
-                lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
+
+            content = (m.content or "").strip()
+            if content:
+                if _is_final_agent_step_text(content):
+                    lines.append(content)
+                else:
+                    lines.append(f"ASSISTANT: {_redact_passwords(content)}")
+
         elif isinstance(m, ToolMessage):
             tcid = getattr(m, "tool_call_id", None)
             if tcid and tcid in seen_call_ids:
                 continue
             lines.append(_summarize_tool_output(m.name, m.content))
+
     return "\n".join(lines) if lines else "(empty)"
 
 def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = TRUNCATION_TOOL_LIMIT) -> str:
@@ -621,8 +719,12 @@ def format_history_for_planner(
                             tm = best_tool_by_call_id[tcid]
                             lines.append(_format_planner_tool_output(tm.name, tm.content))
                             seen_call_ids.add(tcid)
-            if (m.content or "").strip():
-                lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
+            content = (m.content or "").strip()
+            if content:
+                if _is_final_agent_step_text(content):
+                    lines.append(content)
+                else:
+                    lines.append(f"ASSISTANT: {_redact_passwords(content)}")
         elif isinstance(m, ToolMessage):
             tcid = getattr(m, "tool_call_id", None)
             if tcid and tcid in seen_call_ids:
@@ -635,13 +737,13 @@ def format_history_for_planner(
             lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
             lines.append(_format_cached_tool_output(m.name, m.content))
 
-    # Inject before the last ASSISTANT: line. With drop_last_user=True the current
-    # user message has been removed, so the last ASSISTANT: entry is the correct
-    # temporal anchor — the gate step occurred after that prior response.
-    lines = _inject_before_latest_assistant(
-        lines,
-        _format_last_agentic_step(last_agentic_step),
-    )
+    # Fallback injection only when the current gate step has not yet been
+    # persisted as a normal AIMessage in history.
+    if not _history_already_has_final_gate_step(msgs):
+        lines = _inject_before_latest_assistant(
+            lines,
+            _format_last_agentic_step(last_agentic_step),
+        )
     return "\n".join(lines) if lines else "(no prior history)"
 
 def format_history_for_responder(
@@ -698,8 +800,12 @@ def format_history_for_responder(
                         tm = best_tool_by_call_id.get(tcid)
                         if tm:
                             lines.append(_format_cached_tool_output(tm.name, tm.content))
-            if (m.content or "").strip():
-                lines.append(f"ASSISTANT: {_redact_passwords(m.content)}")
+            content = (m.content or "").strip()
+            if content:
+                if _is_final_agent_step_text(content):
+                    lines.append(content)
+                else:
+                    lines.append(f"ASSISTANT: {_redact_passwords(content)}")
         elif isinstance(m, ToolMessage):
             if id(m) not in current_round_ids and m.name in current_round_failed_tools:
                 continue
@@ -714,11 +820,11 @@ def format_history_for_responder(
             lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
             lines.append(_format_cached_tool_output(m.name, m.content))
 
-    # Inject before the last USER: line. The responder sees the full message list
-    # including the current user message, so inserting before USER: gives the
-    # correct temporal ordering: gate step → current user request → response.
-    lines = _inject_before_latest_user(
-        lines,
-        _format_last_agentic_step(last_agentic_step),
-    )
+    # Fallback injection only when the current gate step has not yet been
+    # persisted as a normal AIMessage in history.
+    if not _history_already_has_final_gate_step(messages):
+        lines = _inject_before_latest_user(
+            lines,
+            _format_last_agentic_step(last_agentic_step),
+        )
     return "\n".join(lines) if lines else "(empty)"

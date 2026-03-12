@@ -17,7 +17,9 @@ from history_formatters import (
     _parse_plan, 
     _compact_json, 
     _safe_json_loads, 
-    _extract_tool_error           
+    _extract_tool_error,
+    _format_last_agentic_step, 
+    _detect_semantic_error,
 )
 from tools.tool_setup import build_tool_context
 
@@ -78,6 +80,8 @@ def make_planner_node(tools_by_name: dict):
         VERY IMPORTANT:
         - Tool descriptions contain dependency chains and required ordering.
         - Use any FINAL_AGENT_STEP[gate] context in Chat History as grounded execution context when choosing the next plan.
+        - FINAL_AGENT_STEP[gate] may include reason and missing_args from the last gate decision; use them to continue unfinished repair work correctly.
+        - The most recent FINAL_AGENT_STEP[gate] and r is especially important when continuing or repairing a multi-round workflow.
         - You must follow those dependency chains.
         - If a later tool depends on an earlier tool's result, you must still include the later tool in the plan when it is part of the required chain.
         - When an argument is not yet known because it will come from a previous tool result, use a symbolic placeholder instead of omitting the dependent tool.
@@ -108,6 +112,21 @@ def make_planner_node(tools_by_name: dict):
         6. If downstream args are not yet known, include the downstream tool with a symbolic placeholder.
         7. Only return steps: [] if chat history already fully satisfies the request.
         8. If the previous round already asked for missing inputs, shrink that list if the latest user message or prior successful tool outputs now cover some of them.
+
+        SITUATIONAL CONTEXT USAGE:
+        The conversation history may include a section labeled "SITUATIONAL CONTEXT".
+
+        This context summarizes important state from previous agent rounds, such as:
+        - missing tool arguments
+        - unresolved tool errors
+        - constraints discovered by the gate agent
+
+        When SITUATIONAL CONTEXT contains missing arguments:
+        - Prefer plans that recover those arguments using tools if possible.
+        - If the arguments cannot be recovered from tools, ask the user for them.
+
+        Treat SITUATIONAL CONTEXT as authoritative state from the previous round.
+        ---
 
         AVAILABLE TOOLS:
         {tool_context}
@@ -375,27 +394,23 @@ def make_responder_node():
     def _build_situational_block(state, current_round_tool_msgs):
         """
         Build a SITUATIONAL CONTEXT string from programmatic signals that
-        the responder LLM would otherwise not see (filtered System Notes,
-        state fields it never reads, empty-data detection, etc.).
+        the responder LLM would otherwise not see.
 
-        Returns an empty string when nothing noteworthy is detected.
+        Priority:
+        1) current missing args
+        2) final gate step for this round (last_agentic_step)
+        3) unresolved last_tool_error
+        4) fallback heuristics from all current-round tool messages
         """
         plan = state.get("plan", {}) or {}
         missing_args = plan.get("missing_args", []) or []
         last_tool_error = state.get("last_tool_error")
-
-        has_any_tool_output = len(current_round_tool_msgs) > 0
-        has_any_successful_tool = any(
-            _extract_tool_error(_safe_json_loads((m.content or "").strip())) is None
-            for m in current_round_tool_msgs
-            if _safe_json_loads((m.content or "").strip()) is not None
-        )
+        last_agentic_step = state.get("last_agentic_step") or {}
 
         empty_data_notes = _detect_empty_results(current_round_tool_msgs)
-
         lines = []
 
-        # Missing user input (bridges the System Note filtering gap) 
+        # 1) Missing user input
         if missing_args:
             lines.append(
                 f"MISSING USER INPUT: The system determined the following inputs "
@@ -405,30 +420,68 @@ def make_responder_node():
                 f"Do NOT attempt the action without them."
             )
 
-        # Empty but successful tool outputs 
+        # 2) Final gate step for this round (preferred over coarse tool heuristics)
+        has_final_gate_step = isinstance(last_agentic_step, dict) and bool(last_agentic_step)
+
+        if has_final_gate_step:
+            step_ok = last_agentic_step.get("ok")
+            step_tool = last_agentic_step.get("tool") or "gate_decision"
+            step_output = str(last_agentic_step.get("output", ""))[:250]
+            step_reason = str(last_agentic_step.get("reason", "")).strip()
+            step_missing_args = list(last_agentic_step.get("missing_args") or [])
+            step_done = bool(last_agentic_step.get("done"))
+
+            if step_ok is False:
+                msg = (
+                    f"FINAL AGENT STEP FAILED: The final gate step for this round "
+                    f"failed or concluded that automatic repair was not possible. "
+                    f"Tool: '{step_tool}'."
+                )
+
+                if step_reason:
+                    msg += f" Reason: {step_reason}"
+
+                if step_missing_args:
+                    msg += f" Missing args still needed: {', '.join(step_missing_args)}."
+
+                if step_output:
+                    msg += f" Error/output: {step_output}"
+
+                if step_done and step_tool == "gate_decision":
+                    msg += " The gate explicitly decided that no further automatic repair step should be attempted."
+
+                lines.append(msg)
+
+        # 3) Empty but successful-looking data
         for note in empty_data_notes:
             lines.append(f"EMPTY DATA: {note}")
 
-        # No tools executed at all
-        if not has_any_tool_output:
-            lines.append(
-                "NO TOOLS EXECUTED: No tools were called for this request. "
-                "If the user asked for data that requires a tool (e.g., bid history, "
-                "wallet balance, auction details), inform them that the information "
-                "could not be retrieved and suggest what they can try. "
-                "Do NOT fabricate data."
-            )
-        elif not has_any_successful_tool:
-            lines.append(
-                "ALL TOOLS FAILED: Every tool that ran in this round returned an error. "
-                "Inform the user that the request could not be completed and summarize "
-                "the issue. Do NOT fabricate data."
+        # 4) Fallback heuristics only when there is NO final gate step
+        if not has_final_gate_step:
+            has_any_tool_output = len(current_round_tool_msgs) > 0
+            has_any_successful_tool = any(
+                _extract_tool_error(_safe_json_loads((m.content or "").strip())) is None
+                for m in current_round_tool_msgs
+                if _safe_json_loads((m.content or "").strip()) is not None
             )
 
-        # Unresolved error from gate
+            if not has_any_tool_output:
+                lines.append(
+                    "NO TOOLS EXECUTED: No tools were called for this request. "
+                    "If the user asked for data that requires a tool, inform them that "
+                    "the information could not be retrieved. Do NOT fabricate data."
+                )
+            elif not has_any_successful_tool:
+                lines.append(
+                    "ALL TOOLS FAILED: Every tool that ran in this round returned an error. "
+                    "Inform the user that the request could not be completed and summarize "
+                    "the issue. Do NOT fabricate data."
+                )
+
+        # 5) Unresolved tool error
         if last_tool_error:
             err_tool = last_tool_error.get("tool", "unknown")
-            err_text = str(last_tool_error.get("error", ""))[:200]
+            err_text = str(last_tool_error.get("error", ""))[:250]
             lines.append(
                 f"UNRESOLVED ERROR: Tool '{err_tool}' failed and could not be "
                 f"repaired automatically. Error: {err_text}"
@@ -492,6 +545,9 @@ Assume the user may be a confused or first-time donor who needs clear guidance.
 OUTPUT RULES (STRICT):
 - If in Conversation History, there is mention of 'Invalid password' or a similar auth failure (AFTER only last USER message), your FINAL answer MUST be exactly: "Please enter password" (without quotes).
 - After getting password, use the conversation history to determine course of response.
+- If SITUATIONAL CONTEXT in Conversation History indicates FINAL AGENT STEP FAILED, you MUST inform the user that the latest automated attempt failed,when drafting final draft in natural professional language.
+- When FINAL_AGENT_STEP[gate] shows a failure, prefer that evidence over cached data when explaining the result (naturally for non-technical user), when drafting final draft in natural professional language.
+- Do NOT present information as verified if the most recent gate step indicates a failed verification attempt.
 - Always show the money in USD.
 - Authentication for the latest user request must be grounded only in tool outputs that occur AFTER the latest USER password submission.
 - A USER message containing a password is NOT itself evidence of successful authentication.
@@ -501,8 +557,8 @@ OUTPUT RULES (STRICT):
 - Do NOT describe tool usage steps.
 - Do NOT output any code blocks or code snippets.
 - The Conversation History may contain cached tool traces labeled as `CACHED_TOOL_CALL[...]` and cached successful results labeled as `CACHED_SUCCESS[...]`.
-- The Conversation History may contain FINAL_AGENT_STEP[gate] entries that capture the latest gate action and result. Use them as grounded execution context for the final response.
-- When FINAL_AGENT_STEP[gate] is present, incorporate its result into the final answer when it is relevant to the latest user request.
+- The Conversation History may contain FINAL_AGENT_STEP[gate] entries from the current and prior rounds. Use them as grounded execution context for the final response.
+- Give highest priority to the most recent FINAL_AGENT_STEP[gate], but use earlier ones too when they help explain or continue an ongoing workflow.
 - Treat `CACHED_SUCCESS[...]` as reusable factual evidence from prior successful tool execution.
 - ONLY use information explicitly present in the Conversation History (especially `CACHED_SUCCESS[...]` entries and other tool outputs), do NOT invent or assume any facts not in the history.
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
@@ -514,6 +570,7 @@ EMPTY AND MISSING DATA RULES (STRICT):
 - If the SITUATIONAL CONTEXT section contains MISSING USER INPUT, your ONLY job is to ask the user for exactly those inputs — nothing else. Do NOT attempt to answer the underlying question without the missing inputs. Do NOT fabricate placeholder values.
 - If the SITUATIONAL CONTEXT section contains UNRESOLVED ERROR, briefly inform the user that something went wrong and suggest they try again or rephrase. Include the tool name if it helps the user understand the issue.
 - When no data is available, skip the Insights and Recommendations sections entirely. Only provide a Direct Answer stating that no data was found or the request could not be completed.
+
 
 DATA COMPLETENESS RULES (STRICT):
 - Your response must include ALL information from the Conversation History that is relevant to answering the user's current request. Do NOT omit, skip, or summarize away any records or items returned by tool outputs.
@@ -910,6 +967,7 @@ def make_gate_node(
             })
         return json.dumps(rows, ensure_ascii=False, indent=2)
 
+
     async def gate_node(state: dict) -> Dict:
         base_messages = list(state.get("messages", []) or [])
         base_missing_args = _normalize_missing_args((state.get("plan", {}) or {}).get("missing_args", []))
@@ -983,6 +1041,9 @@ VERY IMPORTANT:
 - You are responsible for maintaining the CURRENT unresolved user-input list across repair steps.
 - Any `missing_args` you output must be the current authoritative list after considering all successful repair steps so far.
 - On the final `done: true` step, `missing_args` must contain every remaining required argument that is still not recoverable from available tool calls or cached successful outputs, and must exclude anything already recovered.
+- CURRENT ROUND HISTORY may contain FINAL_AGENT_STEP[gate] entries from prior rounds.
+- Use prior FINAL_AGENT_STEP[gate] entries as grounded context about what was last attempted, what succeeded, and what failed in earlier rounds.
+- Prefer continuity with the most recent FINAL_AGENT_STEP[gate] when the user is continuing an unfinished workflow.
 
 COMPLEX ARGUMENT ASSEMBLY RULE:
 - When a failed tool requires structured arguments (lists, nested objects), you MUST actively extract concrete values from CACHED TOOL OUTPUTS to build those arguments.
@@ -1130,6 +1191,7 @@ RULES:
                 else:
                     missing_args = _normalize_missing_args(missing_args + decision["missing_args"])
 
+
             if done and step is None:
                 gate_notes.append(reason or "Repair model stopped.")
                 break
@@ -1144,6 +1206,26 @@ RULES:
                 (err for err in unresolved_errors if err["error_id"] == target_error_id),
                 None,
             )
+
+            if done and not step:
+                last_agentic_step = {
+                    "react_step": react_idx + 1,
+                    "target_error_id": target_error_id,
+                    "tool": None,
+                    "args": {},
+                    "ok": False,
+                    "output": (
+                        target_error.get("error")
+                        if isinstance(target_error, dict) else "Automatic repair not possible."
+                    ),
+                    "reason": reason,
+                    "missing_args": missing_args,
+                    "done": True,
+                }
+                gate_notes.append(f"No safe automatic repair available for `{target_error_id}`.")
+                break
+
+
             if target_error is None:
                 gate_notes.append(
                     f"Repair model selected invalid target error id `{target_error_id}`."
@@ -1189,6 +1271,17 @@ RULES:
                     "args": raw_args,
                 }
 
+            # find semantic errors in the tool output, even if the tool call itself succeeded
+            semantic_error = _detect_semantic_error(payload)
+
+            semantic_ok = bool(payload.get("ok", False)) and semantic_error is None
+
+            semantic_output = (
+                payload.get("result")
+                if semantic_ok
+                else semantic_error if semantic_error is not None else payload.get("error")
+            )
+
             tool_msg = ToolMessage(
                 content=json.dumps(payload, ensure_ascii=False, default=str),
                 name=tool_name,
@@ -1196,13 +1289,17 @@ RULES:
             )
             emitted_messages.append(tool_msg)
 
+
             attempt_log.append({
                 "react_step": react_idx + 1,
                 "target_error_id": target_error_id,
                 "tool": tool_name,
                 "args": raw_args,
-                "ok": bool(payload.get("ok", False)),
-                "output": payload.get("result") if payload.get("ok") else payload.get("error"),
+                "ok": semantic_ok,
+                "output": semantic_output,
+                "reason": decision.get("reason", ""),
+                "missing_args": _normalize_missing_args(decision.get("missing_args")),
+                "done": bool(decision.get("done", False)),
             })
             # Capture the post-execution attempt entry as last_agentic_step.
             # This is intentionally sourced from attempt_log (after tool invocation)
@@ -1214,14 +1311,14 @@ RULES:
             trunc_lim_tool = TRUNCATION_LIMIT_GATE_TOOL_OUTPUT
 
             if DEBUG_MESSAGES == 1 and SHOW_GATE_TOOL_OUTPUTS == 1:
-                rich_print("\n" + "=" * 80)
-                rich_print(f"[GATE STEP {react_idx + 1} RESULT] tool={tool_name} "
-                f"ok={payload.get('ok')} "
-                f"output={str(payload.get('result') if payload.get('ok') else payload.get('error'))[:trunc_lim_tool]}")
-                rich_print("=" * 80)
+                rich_print(
+                    f"[GATE STEP {react_idx + 1} RESULT] tool={tool_name} "
+                    f"ok={semantic_ok} "
+                    f"output={str(semantic_output)[:trunc_lim_tool]}"
+                )
                 
 
-            if payload.get("ok") is False:
+            if not semantic_ok:
                 gate_notes.append(
                     f"Repair step `{tool_name}` for `{target_error_id}` failed: {payload.get('error', 'Unknown error')}"
                 )
@@ -1248,6 +1345,13 @@ RULES:
 
         unresolved_errors = _current_unresolved_errors()
 
+        # Persist the final gate step as a normal AIMessage so it becomes part
+        # of durable conversation history for future planner/responder/gate turns.
+        if last_agentic_step:
+            gate_step_line = _format_last_agentic_step(last_agentic_step)
+            if gate_step_line:
+                emitted_messages.append(AIMessage(content=gate_step_line))
+
         note = (
             "System Note: Agentic gate finished with unresolved tool error(s)."
             if unresolved_errors
@@ -1262,7 +1366,7 @@ RULES:
 
         emitted_messages.append(AIMessage(content=note))
 
-
+        
         return {
             "plan": {"steps": [], "missing_args": missing_args},
             "messages": emitted_messages,

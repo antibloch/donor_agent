@@ -40,6 +40,7 @@ class AgentState(TypedDict, total=False):
     plan: Dict[str, Any]
     repair_attempts: int
     last_tool_error: Dict[str, Any]
+    last_agentic_step: Dict[str, Any]   # <- add this
 
 
 def _should_wrap_as_password(messages: Sequence[BaseMessage]) -> bool:
@@ -135,20 +136,26 @@ async def main():
                             if isinstance(msg, ToolMessage):
                                 rich_print(f" ➤ [Tool Executed] {msg.name}")
                             elif isinstance(msg, AIMessage):
-                                if getattr(msg, "tool_calls", None) and not (msg.content or "").strip():
+                                content = (msg.content or "").strip()
+
+                                if getattr(msg, "tool_calls", None) and not content:
                                     continue
-                                if "System Note:" not in (msg.content or ""):
-                                                                    md = Markdown(msg.content)
-                                                                    console.print(
-                                                                        Panel(
-                                                                            md, 
-                                                                            title="[bold cyan]Agent[/bold cyan]", 
-                                                                            title_align="left",
-                                                                            border_style="cyan",
-                                                                            expand=False
-                                                                        )
-                                                                    )
-                                                                    rich_print() # Add a little padding after
+                                if content.startswith("System Note:"):
+                                    continue
+                                if content.startswith("FINAL_AGENT_STEP[gate] -> "):
+                                    continue
+
+                                md = Markdown(content)
+                                console.print(
+                                    Panel(
+                                        md,
+                                        title="[bold cyan]Agent[/bold cyan]",
+                                        title_align="left",
+                                        border_style="cyan",
+                                        expand=False,
+                                    )
+                                )
+                                rich_print()
         except Exception as e:
             rich_print(f"\n[ERROR] {e}")
             import traceback
