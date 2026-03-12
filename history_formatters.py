@@ -145,7 +145,7 @@ def _extract_tool_error(payload: Any) -> Any | None:
             joined = "\n".join(text_blocks)
             lower = joined.lower()
             error_markers = (
-                "<error>",
+                "<e>",
                 "title: error",
                 "failed to retrieve",
                 "err_name_not_resolved",
@@ -172,7 +172,6 @@ def _summarize_tool_output(tool_name: str, tool_content: str) -> str:
     result = _sanitize_sensitive_data(result)
     # =======================================================
     return f"TOOL[{tool_name}] -> {_compact_json(result, max_chars=TRUNCATION_TOOL_LIMIT)}"
-
 
 
 
@@ -452,6 +451,73 @@ def _format_synthetic_cached_tool_call(tool_name: str, tool_call_id: str | None 
     tid = tool_call_id or ""
     return f'CACHED_TOOL_CALL[{tool_name} id={tid}] args={{"tool_name": "{tool_name}", "source": "prior_successful_tool_message"}}'
 
+def _format_last_agentic_step(last_agentic_step: Dict[str, Any] | None) -> str:
+    """
+    Format the last gate agentic step for injection into planner/responder history.
+
+    Uses an explicit field whitelist sourced from the attempt_log entry (post-execution),
+    so only meaningful execution context is exposed — internal gate-repair fields
+    (done, reason, mark_target_fixed_if_success, step, missing_args) are excluded.
+    Args are sanitized to strip sensitive keys before formatting.
+    """
+    if not isinstance(last_agentic_step, dict) or not last_agentic_step:
+        return ""
+
+    payload = {
+        "react_step": last_agentic_step.get("react_step"),
+        "target_error_id": last_agentic_step.get("target_error_id"),
+        "tool": last_agentic_step.get("tool"),
+        "args": _sanitize_sensitive_data(dict(last_agentic_step.get("args") or {})),
+        "ok": last_agentic_step.get("ok"),
+        "output": last_agentic_step.get("output"),
+    }
+    return f"FINAL_AGENT_STEP[gate] -> {_compact_json(payload, max_chars=TRUNCATION_TOOL_LIMIT)}"
+
+def _inject_before_latest_assistant(lines: List[str], injected_line: str) -> List[str]:
+    """
+    Inject a line just before the last ASSISTANT: entry in a lines list.
+
+    Used by format_history_for_planner, where drop_last_user=True has already
+    removed the current user message, making the last ASSISTANT: line the correct
+    temporal anchor — the gate step happened after the prior assistant response
+    and before the next planning cycle.
+
+    Falls back to appending if no ASSISTANT: line is found (e.g. first round).
+    """
+    if not injected_line:
+        return lines
+
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].startswith("ASSISTANT: "):
+            return lines[:i] + [injected_line] + lines[i:]
+
+    return lines + [injected_line]
+
+def _inject_before_latest_user(lines: List[str], injected_line: str) -> List[str]:
+    """
+    Inject a line just before the last USER: entry in a lines list.
+
+    Used by format_history_for_responder, where the current user message is still
+    present in the history. Placing the gate step here gives the responder the
+    correct temporal ordering:
+
+        ... prior history ...
+        FINAL_AGENT_STEP[gate] -> {...}   ← gate executed this just now
+        USER: <current request>           ← now produce the final answer
+
+    Falls back to appending if no USER: line is found (should not occur in normal
+    operation, but handled defensively).
+    """
+    if not injected_line:
+        return lines
+
+    for i in range(len(lines) - 1, -1, -1):
+        if lines[i].startswith("USER: "):
+            return lines[:i] + [injected_line] + lines[i:]
+
+    # Defensive fallback: append at end if no USER: line exists
+    return lines + [injected_line]
+
 def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
     """Provides history for the repair node (Gate)."""
     current_round = get_current_round_messages(messages)
@@ -509,7 +575,12 @@ def build_cached_tool_outputs(messages: Sequence[BaseMessage], max_chars: int = 
         blocks.append(f"- {tool_name}: {c}")
     return "\n".join(blocks)
 
-def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_user: bool = True) -> str:
+def format_history_for_planner(
+    messages: Sequence[BaseMessage],
+    *,
+    drop_last_user: bool = True,
+    last_agentic_step: Dict[str, Any] | None = None,
+) -> str:
     msgs = list(messages) if messages else []
     if drop_last_user:
         for i in range(len(msgs) - 1, -1, -1):
@@ -563,9 +634,21 @@ def format_history_for_planner(messages: Sequence[BaseMessage], *, drop_last_use
                 continue
             lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
             lines.append(_format_cached_tool_output(m.name, m.content))
+
+    # Inject before the last ASSISTANT: line. With drop_last_user=True the current
+    # user message has been removed, so the last ASSISTANT: entry is the correct
+    # temporal anchor — the gate step occurred after that prior response.
+    lines = _inject_before_latest_assistant(
+        lines,
+        _format_last_agentic_step(last_agentic_step),
+    )
     return "\n".join(lines) if lines else "(no prior history)"
 
-def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
+def format_history_for_responder(
+    messages: Sequence[BaseMessage],
+    *,
+    last_agentic_step: Dict[str, Any] | None = None,
+) -> str:
     current_round = get_current_round_messages(messages)
     current_round_ids = {id(m) for m in current_round}
     current_round_failed_tools: set[str] = set()
@@ -630,4 +713,12 @@ def format_history_for_responder(messages: Sequence[BaseMessage]) -> str:
                 continue
             lines.append(_format_synthetic_cached_tool_call(m.name, tcid))
             lines.append(_format_cached_tool_output(m.name, m.content))
+
+    # Inject before the last USER: line. The responder sees the full message list
+    # including the current user message, so inserting before USER: gives the
+    # correct temporal ordering: gate step → current user request → response.
+    lines = _inject_before_latest_user(
+        lines,
+        _format_last_agentic_step(last_agentic_step),
+    )
     return "\n".join(lines) if lines else "(empty)"
