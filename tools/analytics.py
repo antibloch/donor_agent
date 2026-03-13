@@ -225,6 +225,7 @@ def Python_tool():
     python_tool.description = """
     PURPOSE:
     Run Python code to compute, transform, aggregate, sort, filter, compare, or summarize structured data that was already obtained from other tools.
+    Leverages pandas, numpy, and scipy for statistical analysis, optimization, and data transformation.
 
     MUST_NOT_CALL_FIRST:
     - Never use this tool as the first tool for a charity-information request.
@@ -232,41 +233,99 @@ def Python_tool():
 
     REQUIRED_PREDECESSOR:
     - This tool must use data already returned by discover_charities and/or charity_details.
-    - It may also use data returned by fetch_url only if the website text has already been fetched and needs structured processing.
+    - It may also use data returned by get_transaction_history, list_charity_products, list_charity_grants, list_charity_active_campaigns.
+    - It may also use data returned by get_active_auctions, get_my_bid_history, or fetch_url only after data has been fetched.
+
+    LIBRARIES AVAILABLE:
+    - pandas: DataFrame manipulation for multi-charity analysis, filtering, grouping, aggregation
+    - numpy: Array operations for numerical computations
+    - scipy.stats: Statistical distributions, hypothesis testing, correlations
+    - statistics: Built-in module for mean, median, stdev on simple lists
+    - import statistics; statistics.mean(list), statistics.median(list), statistics.stdev(list)
 
     WHEN TO USE:
-    - when the user asks for calculations
-    - when the user asks for mean, median, max, min, count, ranking, sorting, grouping, filtering, percentages, or comparisons
-    - when multiple charity records from discover_charities need numeric/statistical analysis
-    - when charity_details output needs structured extraction or computation
-    - when tool output is too large and needs deterministic post-processing
+    ✓ Aggregate queries: 'average donation across charities', 'total funds raised', 'mean/median/stdev of donor counts'
+    ✓ Ranking & sorting: 'top 5 charities by donor count', 'sort grants by completion %', 'highest bid amounts'
+    ✓ Filtering & grouping: 'charities in country X', 'active vs inactive charities', 'products by category'
+    ✓ Comparative analysis: 'compare X charities side-by-side', 'which charity is most verified', 'auction bid patterns'
+    ✓ Trend analysis: 'goal progress across campaigns', 'fundraising efficiency', 'product availability trends'
+    ✓ Multi-step calculations: percentages, ratios, derived metrics (e.g., raised_amount / goal_amount)
+
+    DOMAIN-SPECIFIC USE CASES:
+    ✓ DONOR ANALYSIS: transaction frequency, average donation amount, favorite causes (from transaction_history)
+    ✓ CHARITY ANALYSIS: donor diversity, verification/activity status, product breadth, grant success rates
+    ✓ AUCTION ANALYSIS: bid frequency per auction, average winning bids, bid amount distributions
+    ✓ PRODUCT ANALYSIS: price ranges, quantity distributions, availability trends, donation impact
+    ✓ CAMPAIGN ANALYSIS: goal achievement rates, funding velocity, milestone progress
+    ✓ OPTIMIZATION: portfolio allocation (scipy.optimize), bid strategy ranking, charity ranking by impact-per-dollar
 
     WHEN NOT TO USE:
-    - when the needed information can be answered directly from discover_charities or charity_details without computation
-    - when no prior tool output exists yet
-    - when the task is entity resolution, search, lookup, or website retrieval
-    - when the model can answer directly without code execution
+    ✗ when the needed information can be answered directly from tool output without computation
+    ✗ when no prior tool output exists yet
+    ✗ when the task is entity resolution, search, lookup, or website retrieval
+    ✗ when the model can answer directly without code execution
+    ✗ for simple counting/sorting that tools already provide
 
     INPUT SOURCE POLICY:
-    - Prefer discover_charities output for list-level analytics across many charities
-    - Prefer charity_details output for deep analysis of one resolved charity
-    - Prefer fetch_url output only after the webpage has already been fetched and only if code-based parsing/counting is actually useful
+    - Prefer discover_charities output for list-level analytics across many charities (uses uniqueDonorCount, isVerified, isActive)
+    - Prefer charity_details output for deep analysis of one resolved charity (uses donationAmount, products, blogs)
+    - Prefer get_transaction_history for temporal donor behavior analysis (uses amount, type, status, createdAt)
+    - Prefer list_charity_products for product-level analytics (uses pricePerUnit, availableQuantity, totalDonated)
+    - Prefer list_charity_grants for fundraising progress (uses expectedAmount, raisedAmount, status)
+    - Prefer list_charity_active_campaigns for campaign performance (uses goalAmount, receivedAmount)
+    - Prefer get_my_bid_history for bid pattern analysis (uses bidAmount, status)
     - Do not fabricate data; only operate on prior tool outputs from chat history
 
     DEFAULT DEPENDENCY CHAINS:
-    - discover_charities -> Python_REPL
-    - discover_charities -> charity_details -> Python_REPL
-    - discover_charities -> charity_details -> fetch_url -> Python_REPL
+    - discover_charities -> Python_REPL (charity comparison & ranking)
+    - charity_details -> Python_REPL (single charity deep-dive)
+    - get_transaction_history -> Python_REPL (donor behavior analysis)
+    - list_charity_products -> Python_REPL (product analytics)
+    - list_charity_grants -> Python_REPL (fundraising progress analysis)
+    - list_charity_active_campaigns -> Python_REPL (campaign performance analysis)
+    - get_my_bid_history -> Python_REPL (auction bid analysis)
+    - Multiple tools combined -> Python_REPL (cross-domain analysis)
 
     CHAIN POSITION:
     - post-processing tool
     - usually final tool in a chain, after retrieval tools have produced data
 
-    EXAMPLES:
-    - 'Which charity has the highest donor count?' -> discover_charities -> Python_REPL
-    - 'What are the mean and median donor counts across charities?' -> discover_charities -> Python_REPL
-    - 'Compare donation fields for this charity and summarize totals' -> charity_details -> Python_REPL
-    - 'Count how many times education is mentioned on the charity website' -> charity_details -> fetch_url -> Python_REPL
+    CODE EXAMPLES:
+
+    CHARITY ANALYSIS:
+    - 'Which charity has the highest donor count?'
+      → discover_charities -> Python_REPL: data[data['uniqueDonorCount'].idxmax()]
+
+    - 'What are the mean and median donor counts across charities?'
+      → discover_charities -> Python_REPL: statistics.mean(list), statistics.median(list)
+
+    - 'Top 5 verified charities by donor count'
+      → discover_charities -> Python_REPL: df[df['isVerified']==True].nlargest(5, 'uniqueDonorCount')
+
+    TRANSACTION ANALYSIS:
+    - 'Average donation amount by transaction type'
+      → get_transaction_history -> Python_REPL: df.groupby('type')['amount'].mean()
+
+    - 'Total donations this month'
+      → get_transaction_history -> Python_REPL: df[df['createdAt'] >= '2026-03-01']['amount'].sum()
+
+    PRODUCT ANALYSIS:
+    - 'Product price range and availability distribution'
+      → list_charity_products -> Python_REPL: min/max/median prices, availability stats
+
+    CAMPAIGN ANALYSIS:
+    - 'Campaign fundraising progress (goal vs received)'
+      → list_charity_active_campaigns -> Python_REPL: (receivedAmount / goalAmount * 100) as completion %
+
+    AUCTION ANALYSIS:
+    - 'Average bid amount and winning vs lost bid ratios'
+      → get_my_bid_history -> Python_REPL: df.groupby('status')['bidAmount'].agg(['mean', 'count'])
+
+    INPUT FORMAT FOR CODE:
+    Your Python code receives the prior tool output as structured data (dict/list).
+    Import at top: import pandas as pd, import numpy as np, import statistics
+    Use pd.DataFrame() to convert lists of dicts into DataFrames for powerful grouping/filtering.
+    Your final line MUST be a print() statement that outputs ONLY the final result (no lists, no extra text).
     """
 
 
