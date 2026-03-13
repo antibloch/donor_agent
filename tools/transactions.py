@@ -746,63 +746,94 @@ def list_charity_active_campaigns(charity_id: str):
             "message": f"Unexpected error: {str(e)}"
         }
 
+@tool
+def list_campaign_donation_types():
+    """
+    PURPOSE:
+    Retrieve all available donation types that can be used when donating to campaigns.
 
-# @tool
-# def list_campaign_donation_types():
-#     """
-#     Retrieve all donation types available for campaigns.
+    MUST_CALL_FIRST:
+    - when the user wants to donate to a campaign and needs to choose a donation type
+    - when the user asks what types of donations are supported for campaigns
 
-#     Use this tool when the user:
-#         - wants to see available donation types for campaigns
-#         - asks about categories like chanda, fitra, hadya, sadaqah for campaigns
-#         - is preparing to donate campaign and needs to select a type
+    DEFAULT_CHAIN:
+    - list_campaign_donation_types -> select_campaign_donation_type -> donate_to_campaign
 
-#     Returns:
-#         dict:
-#             - success (bool)
-#             - donation_types (list): List of donation type objects
-#                 - _id (str)
-#                 - name (str)
-#                 - createdBy (str)
-#                 - createdByModel (str)
-#                 - isDeleted (bool)
-#                 - createdAt (str)
-#                 - updatedAt (str)
-#             - pagination (dict): { currentPage, totalPages, totalItems, itemsPerPage, hasNextPage, hasPrevPage }
-#             - message (str)
-#     """
-#     params = {
-#         "page": 1,
-#         "limit": 50
-#     }
-#     try:
-#         response = requests.get(
-#             f"{BASE_URL}/api/v3/donors/campaign/donation-types",
-#             headers=headers,
-#             params=params
-#         )
-#         response.raise_for_status()
-#         data = response.json()
+    WHEN TO USE:
+    - user asks for available campaign donation categories
+    - user mentions types like chanda, fitra, hadya, sadaqah, zakat, etc.
+    - user wants to know what donation types they can select while donating
+    - donation flow requires selecting a valid campaign donation type
 
-#         return {
-#             "success": True,
-#             "message": "Donation types retrieved successfully",
-#             "data": data
-#         }
+    REQUIRES (Intuitive Schema):
+    - no arguments required
 
-#     except requests.exceptions.RequestException as e:
-#         return {
-#             "success": False,
-#             "message": f"Request failed: {str(e)}",
-#             "data": []
-#         }
+    REQUIRES (Detailed Schema):
+    - none (donation types are retrieved from the system)
 
-#     except Exception as e:
-#         return {
-#             "success": False,
-#             "message": f"Unexpected error: {str(e)}",
-#             "data": []
-#         }
+    RETURNS (Intuitive Schema):
+    - list of available donation types that can be used for campaign donations
+
+    RETURNS (Detailed Schema):
+        - success (bool): indicates whether the request was successful
+        - donation_types (list) -> each item contains:
+            _id (str): unique identifier of the donation type
+            name (str): name of the donation type (e.g., chanda, fitra, hadya, sadaqah)
+            createdBy (str): identifier of the entity who created the donation type
+            createdByModel (str): model type of the creator
+            isDeleted (bool): indicates whether the donation type has been deleted
+            createdAt (str): timestamp when the donation type was created
+            updatedAt (str): timestamp when the donation type was last updated
+        - pagination (dict):
+            currentPage (int)
+            totalPages (int)
+            totalItems (int)
+            itemsPerPage (int)
+            hasNextPage (bool)
+            hasPrevPage (bool)
+        - message (str): informational or status message
+
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - donation type _id should be used in the campaign donation tool
+    - if planning before execution, planner should use placeholder:
+    "<SELECTED_CAMPAIGN_DONATION_TYPE_ID>"
+
+    DO NOT STOP HERE WHEN:
+    - the user intends to donate to a campaign
+    - proceed to campaign selection and donation execution after the user selects a donation type
+    """
+    params = {
+        "page": 1,
+        "limit": 50
+    }
+    try:
+        response = requests.get(
+            f"{BASE_URL}/api/v3/donors/campaign/donation-types",
+            headers=headers,
+            params=params
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        return {
+            "success": True,
+            "message": "Donation types retrieved successfully",
+            "data": data
+        }
+
+    except requests.exceptions.RequestException as e:
+        return {
+            "success": False,
+            "message": f"Request failed: {str(e)}",
+            "data": []
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": f"Unexpected error: {str(e)}",
+            "data": []
+        }
 
 @tool
 def get_transaction_history():
@@ -1119,11 +1150,12 @@ def campaign_donation(
         Make a monetary donation to a specific campaign and confirm the donation details.
 
         MUST_CALL_FIRST:
-        - after obtaining campaignId and valid donationTypeId from list_charity_active_campaigns
+        - after obtaining campaignId from list_charity_active_campaigns
+        - after obtaining donationTypeId from list_campaign_donation_types
         - after verifying the user's password for transaction authorization
 
         DEFAULT_CHAIN:
-        - list_charity_active_campaigns -> campaign_donation -> get_transaction_history
+        - list_charity_active_campaigns -> list_campaign_donation_types -> campaign_donation -> get_transaction_history
 
         WHEN TO USE:
         - user wants to donate money to a specific campaign
@@ -1133,14 +1165,14 @@ def campaign_donation(
         REQUIRES (Intuitive Schema):
         - campaignId (str): campaign identifier
         - amount (float): donation amount
-        - donationTypeId (str): selected donation type ID
+        - donationTypeId (str): selected donation type ID (from LIST_CAMPAIGN_DONATION_TYPES)
         - password (str): user password for authorization
         - campaignType (str, optional): type of campaign (default 'CharityOrganization')
 
         REQUIRES (Detailed Schema):
             - campaignId (str): unique identifier of the campaign
             - amount (float): monetary amount to donate
-            - donationTypeId (str): ID of the selected donation type
+            - donationTypeId (str): ID of the selected donation type (from LIST_CAMPAIGN_DONATION_TYPES)
             - password (str): authenticated user's password for transaction authorization
             - campaignType (str, optional): campaign type; default is 'CharityOrganization'
 
