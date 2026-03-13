@@ -54,7 +54,182 @@ Agent: [Guides through donation workflow]
 ---
 
 ## Run Docker Container
+---------------------------------------------------------
+IMPORT & RUN ON WINDOWS (Destination Machine)
+---------------------------------------------------------
+Install docker desktop from: https://docs.docker.com/desktop/setup/install/windows-install/
 
+Prerequisite: Ensure Docker Desktop is installed and running. Open 
+PowerShell or Command Prompt in the folder containing the .tar file.
+
+1. Load the image into Docker:
+   docker load -i donor_agent_image.tar
+
+2. Run the Agent:
+   docker run -it -e NVIDIA_API_KEY="paste_your_key_here" --name my_donor_agent updated_agent_image
+
+   (Press Ctrl+C to stop)
+
+---------------------------------------------------------
+Docker Setup on Ubuntu (22.04 / Jammy)
+---------------------------------------------------------
+# This document describes how to install **Docker Engine** on Ubuntu using the official Docker repository.
+---
+
+# 1. Remove Old Docker Versions (Optional)
+
+Remove any conflicting packages:
+
+```bash
+sudo apt remove docker.io docker-compose docker-doc podman-docker containerd runc
+```
+
+---
+
+# 2. Update System
+
+```bash
+sudo apt update
+```
+
+---
+
+# 3. Install Required Dependencies
+
+```bash
+sudo apt install ca-certificates curl
+```
+
+Create directory for Docker keyrings:
+
+```bash
+sudo install -m 0755 -d /etc/apt/keyrings
+```
+
+---
+
+# 4. Add Docker GPG Key
+
+```bash
+sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg \
+-o /etc/apt/keyrings/docker.asc
+```
+
+Set permissions:
+
+```bash
+sudo chmod a+r /etc/apt/keyrings/docker.asc
+```
+
+---
+
+# 5. Add Docker Repository
+
+```bash
+echo \
+"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] \
+https://download.docker.com/linux/ubuntu \
+$(. /etc/os-release && echo "$VERSION_CODENAME") stable" | \
+sudo tee /etc/apt/sources.list.d/docker.list
+```
+
+---
+
+# 6. Update Package Index
+
+```bash
+sudo apt update
+```
+
+Verify Docker repository appears in the update output.
+
+---
+
+# 7. Install Docker
+
+```bash
+sudo apt install docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+
+---
+
+# 8. Verify Installation
+
+Check Docker version:
+
+```bash
+docker --version
+```
+
+Run test container:
+
+```bash
+sudo docker run hello-world
+```
+
+Expected output: Docker prints a success message confirming the installation.
+
+---
+
+# 9. Run Docker Without sudo (Recommended)
+
+Add your user to the Docker group:
+
+```bash
+sudo usermod -aG docker $USER
+```
+
+Log out and log back in for the change to take effect.
+
+---
+
+# 10. Useful Docker Commands
+
+List running containers:
+
+```bash
+docker ps
+```
+
+List all containers:
+
+```bash
+docker ps -a
+```
+
+List images:
+
+```bash
+docker images
+```
+
+Stop container:
+
+```bash
+docker stop <container_id>
+```
+
+Remove container:
+
+```bash
+docker rm <container_id>
+```
+---
+
+---------------------------------------------------------
+IMPORT & RUN ON LINUX (Destination Server)
+---------------------------------------------------------
+Prerequisite: Ensure the Docker daemon is running. Open your terminal 
+in the directory where you uploaded the .tar file. You may need 
+to use 'sudo' depending on your user permissions.
+
+1. Load the image into Docker:
+   sudo docker load -i donor_agent_image.tar
+
+2. Run the Agent:
+sudo docker run -it -e NVIDIA_API_KEY="paste_your_key_here" --name my_donor_agent updated_agent_image
+   (Press Ctrl+C to stop)
+   
 ---
 
 ## Run API Server
