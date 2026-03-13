@@ -224,67 +224,206 @@ def Python_tool():
     python_tool.name = "Python_REPL"
     python_tool.description = """
     PURPOSE:
-    Execute Python code to compute, transform, aggregate, sort, filter, compare, or summarize structured data that was already obtained from other tools. Leverages pandas, numpy, scipy, and statistics for data analysis, statistical computations, and optimization.
+    Run Python code to compute, transform, aggregate, sort, filter, compare, or summarize structured data that was already obtained from other tools.
+    Leverages pandas, numpy, and scipy for statistical analysis, optimization, and data transformation.
 
-    MUST_FOLLOW:
-    - Data retrieval tools must be called first (discover_charities, charity_details, get_transaction_history, list_charity_products, list_charity_grants, list_charity_active_campaigns, get_active_auctions, get_my_bid_history, etc.)
-    - This tool MUST NOT be used for initial data discovery, search, or retrieval
+    MUST_NOT_CALL_FIRST:
+    - Never use this tool as the first tool for a charity-information request.
+    - Never use this tool to search for charities, identify a charity, fetch charity details, or fetch website content.
 
-    DEFAULT_CHAIN:
+    REQUIRED_PREDECESSOR:
+    - This tool must use data already returned by discover_charities and/or charity_details.
+    - It may also use data returned by get_transaction_history, list_charity_products, list_charity_grants, list_charity_active_campaigns.
+    - It may also use data returned by get_active_auctions, get_my_bid_history, or fetch_url only after data has been fetched.
+
+    LIBRARIES AVAILABLE:
+    - pandas: DataFrame manipulation for multi-charity analysis, filtering, grouping, aggregation
+    - numpy: Array operations for numerical computations
+    - scipy.stats: Statistical distributions, hypothesis testing, correlations
+    - statistics: Built-in module for mean, median, stdev on simple lists
+    - import statistics; statistics.mean(list), statistics.median(list), statistics.stdev(list)
+
+    WHEN TO USE:
+    ✓ Aggregate queries: 'average donation across charities', 'total funds raised', 'mean/median/stdev of donor counts'
+    ✓ Ranking & sorting: 'top 5 charities by donor count', 'sort grants by completion %', 'highest bid amounts'
+    ✓ Filtering & grouping: 'charities in country X', 'active vs inactive charities', 'products by category'
+    ✓ Comparative analysis: 'compare X charities side-by-side', 'which charity is most verified', 'auction bid patterns'
+    ✓ Trend analysis: 'goal progress across campaigns', 'fundraising efficiency', 'product availability trends'
+    ✓ Multi-step calculations: percentages, ratios, derived metrics (e.g., raised_amount / goal_amount)
+    ✓ Recommendation / "best" / "analyse" queries: 'best charities for donation', 'which should I choose'
+      → auto-detect ALL numeric columns from data, normalize each to 0-1, sum into total_score
+      → MUST print full ranked table with all score components visible, NOT just a single-column sort
+    ✓ Budget allocation / maximisation queries: 'donate maximum products with $X', 'best use of $X budget',
+      'how many items can I donate', 'maximise count within budget', 'optimal strategy with $X'
+      → ALWAYS use the LP TEMPLATE (linprog) even if the user does not say "linear programming" or "LP"
+
+    DOMAIN-SPECIFIC USE CASES:
+    ✓ DONOR ANALYSIS: transaction frequency, average donation amount, favorite causes (from transaction_history)
+    ✓ CHARITY ANALYSIS: donor diversity, verification/activity status, product breadth, grant success rates
+    ✓ AUCTION ANALYSIS: bid frequency per auction, average winning bids, bid amount distributions
+    ✓ PRODUCT ANALYSIS: price ranges, quantity distributions, availability trends, donation impact
+    ✓ CAMPAIGN ANALYSIS: goal achievement rates, funding velocity, milestone progress
+    ✓ OPTIMIZATION: portfolio allocation (scipy.optimize), bid strategy ranking, charity ranking by impact-per-dollar
+
+    WHEN NOT TO USE:
+    ✗ when the needed information can be answered directly from tool output without computation
+    ✗ when no prior tool output exists yet
+    ✗ when the task is entity resolution, search, lookup, or website retrieval
+    ✗ when the model can answer directly without code execution
+    ✗ for simple counting/sorting that tools already provide
+
+    INPUT SOURCE POLICY:
+    - Prefer discover_charities output for list-level analytics across many charities (uses uniqueDonorCount, isVerified, isActive)
+    - Prefer charity_details output for deep analysis of one resolved charity (uses donationAmount, products, blogs)
+    - Prefer get_transaction_history for temporal donor behavior analysis (uses amount, type, status, createdAt)
+    - Prefer list_charity_products for product-level analytics (uses pricePerUnit, availableQuantity, totalDonated)
+    - Prefer list_charity_grants for fundraising progress (uses expectedAmount, raisedAmount, status)
+    - Prefer list_charity_active_campaigns for campaign performance (uses goalAmount, receivedAmount)
+    - Prefer get_my_bid_history for bid pattern analysis (uses bidAmount, status)
+    - Do not fabricate data; only operate on prior tool outputs from chat history
+
+    DEFAULT DEPENDENCY CHAINS:
     - discover_charities -> Python_REPL (charity comparison & ranking)
-    - charity_details -> Python_REPL (single charity deep-dive analysis)
-    - get_transaction_history -> Python_REPL (donor behavior & spending patterns)
-    - list_charity_products -> Python_REPL (product price & availability analytics)
+    - charity_details -> Python_REPL (single charity deep-dive)
+    - get_transaction_history -> Python_REPL (donor behavior analysis)
+    - list_charity_products -> Python_REPL (product analytics)
     - list_charity_grants -> Python_REPL (fundraising progress analysis)
-    - list_charity_active_campaigns -> Python_REPL (campaign performance metrics)
-    - get_my_bid_history -> Python_REPL (auction bid pattern analysis)
-    - Multiple retrieval tools combined -> Python_REPL (cross-domain comparative analysis)
+    - list_charity_active_campaigns -> Python_REPL (campaign performance analysis)
+    - get_my_bid_history -> Python_REPL (auction bid analysis)
+    - Multiple tools combined -> Python_REPL (cross-domain analysis)
 
-    REQUIRES (Intuitive Schema):
-    - Python code that operates on prior tool output
-    - Valid imports (statistics, pandas, numpy, scipy as needed)
-    - Final print() statement outputting the result
+    CHAIN POSITION:
+    - post-processing tool
+    - usually final tool in a chain, after retrieval tools have produced data
 
-    REQUIRES (Detailed Schema):
-    - input (str): Python code string with:
-        • imports at top: import statistics, import pandas as pd, import numpy as np, etc.
-        • operations on data_list or prior tool output (already available in context)
-        • FINAL line MUST be: print(result_value) — outputs ONLY the computed result, not lists/dicts
-        • No leading indentation on code lines (Python syntax error risk)
+    CODE EXAMPLES:
 
-    WHEN data_list OR tool_output IS NOT YET AVAILABLE AT PLANNING TIME:
-    - planner must still include this tool in the chain after the data retrieval tool
-    - use placeholder: "<DATA_FROM_[RETRIEVAL_TOOL]>"
-    - example: "<DATA_FROM_DISCOVER_CHARITIES>" or "<TRANSACTION_DATA_FROM_HISTORY>"
+    ALL ANALYSIS QUERIES — use the GENERIC ANALYSIS TEMPLATE below.
+    This template is data-agnostic: it works on any tabular tool output regardless of field names.
 
-    RETURNS (Intuitive Schema):
-    - A single computed value or statistic (number, percentage, text summary)
-    - Result of aggregation, ranking, filtering, or comparison
+    ── GENERIC ANALYSIS TEMPLATE ──────────────────────────────────────────────────────
+    import pandas as pd
 
-    RETURNS (Detailed Schema):
-    - result: Computed output from the final print() statement, which contains:
-        For aggregations: single numeric value (mean, sum, count, median, stdev)
-        For rankings: sorted list of top-N items with values
-        For comparisons: comparative metrics or ratios
-        For multi-step calculations: derived metrics (e.g., goal_achievement_percent, average_donation_per_cause)
-    - Examples:
-        • Aggregation result: "42.5" (average donor count)
-        • Ranking result: "Charity A: 1500 donors, Charity B: 1200 donors, Charity C: 950 donors"
-        • Comparison result: "80% of campaigns reached their goal"
-        • Campaign analysis: "Goal: 100000, Received: 75000, Progress: 75%"
+    # STEP 1: Inline actual records from prior tool output as a Python list of dicts
+    items = [
+        # Include ONLY the label field (name/_id) and the numeric fields needed for analysis.
+        # DO NOT copy nested objects, arrays, or boolean fields — they cause NameError (true/false).
+    ]
+    df = pd.DataFrame(items)
 
-    CHAIN_OUTPUT_FOR_NEXT_TOOL:
-    - This is typically a terminal tool — no further chaining required after output
-    - Result value can be referenced in user-facing responses or further conversational context
+    # STEP 2: Cast ALL columns to numeric in one line — non-numeric columns become NaN
+    # CRITICAL: use df.apply(...) NOT pd.to_numeric(df, ...) — the latter destroys the DataFrame
+    num_df = df.apply(pd.to_numeric, errors="coerce")
 
-    DO NOT USE ALONE WHEN:
-    - No prior tool output exists in chat history
-    - User is asking for initial discovery, search, or lookup
-    - The answer can be obtained directly from tool output without computation
-    - Task is web scraping, API calls, or entity resolution
-    - Simple data visibility is sufficient (use original tool output instead)
+    # STEP 3: Identify label column (first column whose numeric conversion is ALL NaN = it is text)
+    label_col = next((c for c in df.columns if num_df[c].isna().all()), df.columns[0])
+
+    # STEP 4: Keep only columns that converted successfully and are not the label
+    num_cols = [c for c in num_df.columns if num_df[c].notna().any() and c != label_col]
+    for col in num_cols:
+        df[col] = num_df[col]
+
+    # STEP 5: If a scalar constraint is available from another tool (e.g. wallet_balance, budget),
+    # apply it as a filter HERE before scoring:
+    #   constraint = <value from prior tool call, or None if unavailable>
+    #   if constraint is not None:
+    #       df = df[df["<constraint_col>"] <= constraint].copy()
+    # If no constraint applies, skip this step.
+
+    # STEP 6: Derive insight columns from available numeric data.
+    # Do NOT just normalize raw columns — compute metrics that answer the user's question.
+    # Examples of derived insight columns (use whichever apply to the data at hand):
+    #   df["affordability"]   = constraint / df["minBidAmount"]   if constraint else None
+    #   df["time_remaining"]  = (pd.to_datetime(df["endCol"]) - pd.Timestamp.now(tz="UTC")).dt.total_seconds() / 3600
+    #   df["completion_pct"]  = df["raisedAmount"] / df["goalAmount"] * 100
+    #   df["donor_density"]   = df["donorCount"] / df["donorCount"].max()
+    # After deriving, collect only the new insight columns (not raw inputs) for scoring:
+    insight_cols = []   # replace [] with list of derived column names you actually created
+
+    # STEP 7: Compute total_score by normalizing each insight column to 0-1 and summing
+    # Fall back to normalizing raw num_cols if no insight columns were derived
+    score_src = insight_cols if insight_cols else num_cols
+    for col in score_src:
+        col_max = df[col].max()
+        df[col + "_norm"] = (df[col] / col_max).round(3) if col_max and col_max != 0 else 0.0
+    norm_cols = [c for c in df.columns if c.endswith("_norm")]
+    df["total_score"] = df[norm_cols].sum(axis=1).round(3)
+
+    # STEP 8: Print ranked table — label + insight columns + total_score
+    out_cols = [label_col] + (insight_cols if insight_cols else num_cols) + ["total_score"]
+    out_cols = [c for c in out_cols if c in df.columns]
+    ranked = df[out_cols].sort_values("total_score", ascending=False).reset_index(drop=True)
+    ranked.index += 1
+    print(ranked.to_string())
+    ── END TEMPLATE ────────────────────────────────────────────────────────────────────
+
+    ── LINEAR PROGRAMMING (use when user asks to maximise/minimise subject to a budget) ──
+    NEVER use greedy loops or manual iteration for optimisation — always use linprog.
+    MUST NOT: c = -df[any_column].values   ← always produces wrong inflated output (e.g. 20000 instead of 20)
+    MUST NOT: b_ub = \  or  b_ub = np.array()  ← budget missing → wrong answer
+    MUST NOT: budget = X  then  b_ub = np.array([budget])  ← indirect reference is always forgotten; put the value directly
+    MUST USE: b_ub = np.array([100])  ← substitute the literal number, e.g. np.array([100]) for a $100 budget
+
+    NEVER use pandas/DataFrame/num_df for LP — always extract columns via list comprehension:
+    from scipy.optimize import linprog
+    import numpy as np
+    items   = [{"pricePerUnit": 20, "availableQuantity": 800}, ...]   # inlined records
+    prices  = np.array([p["pricePerUnit"]      for p in items], dtype=float)
+    max_qty = np.array([p["availableQuantity"] for p in items], dtype=float)
+    n       = len(items)
+    c       = -np.ones(n)                   # MUST be -np.ones(n) — NEVER -prices, -max_qty, or any .values
+    A_ub    = prices.reshape(1, n)          # shape must be (1, n)
+    b_ub    = np.array([100])               # literal budget — NEVER np.array() or np.array([budget_var])
+    bounds  = [(0, max_qty[i]) for i in range(n)]
+    res     = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method="highs")
+    print(res.message if not res.success else f"Max items: {-res.fun:.1f}, cost: {(res.x*prices).sum():.2f}")
+    ── END LP TEMPLATE ─────────────────────────────────────────────────────────────────
+
+    ANTI-PATTERNS — these cause NaN output or SyntaxError, never do them:
+    ✗ pd.to_numeric(df, errors="coerce")              # operates on whole df → all string cols become NaN
+    ✗ for col in df.columns: df = pd.to_numeric(...)  # same mistake, reassigns whole df
+    ✗ (df['score'] = ...)                             # assignment inside parens → SyntaxError
+    ✗ printing a plain sorted table with no derived metrics — that is NOT analysis
+
+    RULES:
+    ✓ Always use df.apply(pd.to_numeric, errors="coerce") for casting — never the loop form
+    ✓ Always derive at least one insight column (Step 6) that directly answers the user's question
+    ✓ Apply scalar constraints from other tool calls (balance, budget, limit) as filters before scoring
+    ✓ For LP/optimisation queries: use the LP TEMPLATE above — never write linprog by hand from scratch
+    ✓ For single-metric queries (mean, sum, max): Steps 1–4 only, then compute and print one value
+    ✓ For groupby queries: Steps 1–4, then df.groupby(cat_col)[num_col].agg(...)
+    ✓ Never reference a column name from memory — only use columns present in the inlined items
+
+    INPUT FORMAT FOR CODE:
+    There is NO pre-populated variable holding prior tool output. You MUST copy the actual data
+    returned by prior tools directly into your Python code as a hardcoded Python list or dict literal.
+
+    MANDATORY CODE STRUCTURE — always follow the GENERIC ANALYSIS TEMPLATE in CODE EXAMPLES above.
+    Key rules:
+    - Inline actual records from prior tool output as items = [{...}, ...]
+    - Try pd.to_numeric(..., errors="coerce") on every column — auto-detect what is numeric
+    - Convert boolean-like columns (True/False/Yes/No) to 0/1 so they contribute to scoring
+    - For ranking/recommendation queries: compute total_score as sum of per-column normalized values
+    - For simple aggregation: cast numeric columns first, then compute the single metric
+
+    Do NOT write `output['data']['items']` or any other variable reference to prior tool output.
+    Do NOT assume any variable (output, result, data, items, etc.) is pre-defined — it is not.
+    Do NOT hardcode column names from memory — only use columns present in the inlined items list.
+
+    Import at top: import pandas as pd, import numpy as np, import statistics
+    Your final line MUST be a print() statement that outputs ONLY the final result (no lists, no extra text).
+
+    CRITICAL - NEWLINES IN CODE:
+    - Write code with real newline characters between statements.
+    - Do NOT use `\\n` escape sequences inside the code string — that causes SyntaxError.
+
+    CRITICAL - PYTHON BOOLEANS AND NULL:
+    - NEVER use JSON literals in Python code. Python is NOT JSON.
+    - JSON `true`  → Python `True`   (capital T)
+    - JSON `false` → Python `False`  (capital F)
+    - JSON `null`  → Python `None`   (capital N)
+    - Using `true`, `false`, or `null` in Python code will always raise a NameError.
     """
-
 
     return python_tool
 
