@@ -81,7 +81,7 @@ def check_wallet_balance():
                 "message": "Unable to fetch wallet balance."
             }
 
-        wallet = data.get("wallet", {})
+        wallet = data.get("data", {})
 
         return {
             "success": True,
