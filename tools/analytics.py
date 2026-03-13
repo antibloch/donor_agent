@@ -224,108 +224,65 @@ def Python_tool():
     python_tool.name = "Python_REPL"
     python_tool.description = """
     PURPOSE:
-    Run Python code to compute, transform, aggregate, sort, filter, compare, or summarize structured data that was already obtained from other tools.
-    Leverages pandas, numpy, and scipy for statistical analysis, optimization, and data transformation.
+    Execute Python code to compute, transform, aggregate, sort, filter, compare, or summarize structured data that was already obtained from other tools. Leverages pandas, numpy, scipy, and statistics for data analysis, statistical computations, and optimization.
 
-    MUST_NOT_CALL_FIRST:
-    - Never use this tool as the first tool for a charity-information request.
-    - Never use this tool to search for charities, identify a charity, fetch charity details, or fetch website content.
+    MUST_FOLLOW:
+    - Data retrieval tools must be called first (discover_charities, charity_details, get_transaction_history, list_charity_products, list_charity_grants, list_charity_active_campaigns, get_active_auctions, get_my_bid_history, etc.)
+    - This tool MUST NOT be used for initial data discovery, search, or retrieval
 
-    REQUIRED_PREDECESSOR:
-    - This tool must use data already returned by discover_charities and/or charity_details.
-    - It may also use data returned by get_transaction_history, list_charity_products, list_charity_grants, list_charity_active_campaigns.
-    - It may also use data returned by get_active_auctions, get_my_bid_history, or fetch_url only after data has been fetched.
-
-    LIBRARIES AVAILABLE:
-    - pandas: DataFrame manipulation for multi-charity analysis, filtering, grouping, aggregation
-    - numpy: Array operations for numerical computations
-    - scipy.stats: Statistical distributions, hypothesis testing, correlations
-    - statistics: Built-in module for mean, median, stdev on simple lists
-    - import statistics; statistics.mean(list), statistics.median(list), statistics.stdev(list)
-
-    WHEN TO USE:
-    ✓ Aggregate queries: 'average donation across charities', 'total funds raised', 'mean/median/stdev of donor counts'
-    ✓ Ranking & sorting: 'top 5 charities by donor count', 'sort grants by completion %', 'highest bid amounts'
-    ✓ Filtering & grouping: 'charities in country X', 'active vs inactive charities', 'products by category'
-    ✓ Comparative analysis: 'compare X charities side-by-side', 'which charity is most verified', 'auction bid patterns'
-    ✓ Trend analysis: 'goal progress across campaigns', 'fundraising efficiency', 'product availability trends'
-    ✓ Multi-step calculations: percentages, ratios, derived metrics (e.g., raised_amount / goal_amount)
-
-    DOMAIN-SPECIFIC USE CASES:
-    ✓ DONOR ANALYSIS: transaction frequency, average donation amount, favorite causes (from transaction_history)
-    ✓ CHARITY ANALYSIS: donor diversity, verification/activity status, product breadth, grant success rates
-    ✓ AUCTION ANALYSIS: bid frequency per auction, average winning bids, bid amount distributions
-    ✓ PRODUCT ANALYSIS: price ranges, quantity distributions, availability trends, donation impact
-    ✓ CAMPAIGN ANALYSIS: goal achievement rates, funding velocity, milestone progress
-    ✓ OPTIMIZATION: portfolio allocation (scipy.optimize), bid strategy ranking, charity ranking by impact-per-dollar
-
-    WHEN NOT TO USE:
-    ✗ when the needed information can be answered directly from tool output without computation
-    ✗ when no prior tool output exists yet
-    ✗ when the task is entity resolution, search, lookup, or website retrieval
-    ✗ when the model can answer directly without code execution
-    ✗ for simple counting/sorting that tools already provide
-
-    INPUT SOURCE POLICY:
-    - Prefer discover_charities output for list-level analytics across many charities (uses uniqueDonorCount, isVerified, isActive)
-    - Prefer charity_details output for deep analysis of one resolved charity (uses donationAmount, products, blogs)
-    - Prefer get_transaction_history for temporal donor behavior analysis (uses amount, type, status, createdAt)
-    - Prefer list_charity_products for product-level analytics (uses pricePerUnit, availableQuantity, totalDonated)
-    - Prefer list_charity_grants for fundraising progress (uses expectedAmount, raisedAmount, status)
-    - Prefer list_charity_active_campaigns for campaign performance (uses goalAmount, receivedAmount)
-    - Prefer get_my_bid_history for bid pattern analysis (uses bidAmount, status)
-    - Do not fabricate data; only operate on prior tool outputs from chat history
-
-    DEFAULT DEPENDENCY CHAINS:
+    DEFAULT_CHAIN:
     - discover_charities -> Python_REPL (charity comparison & ranking)
-    - charity_details -> Python_REPL (single charity deep-dive)
-    - get_transaction_history -> Python_REPL (donor behavior analysis)
-    - list_charity_products -> Python_REPL (product analytics)
+    - charity_details -> Python_REPL (single charity deep-dive analysis)
+    - get_transaction_history -> Python_REPL (donor behavior & spending patterns)
+    - list_charity_products -> Python_REPL (product price & availability analytics)
     - list_charity_grants -> Python_REPL (fundraising progress analysis)
-    - list_charity_active_campaigns -> Python_REPL (campaign performance analysis)
-    - get_my_bid_history -> Python_REPL (auction bid analysis)
-    - Multiple tools combined -> Python_REPL (cross-domain analysis)
+    - list_charity_active_campaigns -> Python_REPL (campaign performance metrics)
+    - get_my_bid_history -> Python_REPL (auction bid pattern analysis)
+    - Multiple retrieval tools combined -> Python_REPL (cross-domain comparative analysis)
 
-    CHAIN POSITION:
-    - post-processing tool
-    - usually final tool in a chain, after retrieval tools have produced data
+    REQUIRES (Intuitive Schema):
+    - Python code that operates on prior tool output
+    - Valid imports (statistics, pandas, numpy, scipy as needed)
+    - Final print() statement outputting the result
 
-    CODE EXAMPLES:
+    REQUIRES (Detailed Schema):
+    - input (str): Python code string with:
+        • imports at top: import statistics, import pandas as pd, import numpy as np, etc.
+        • operations on data_list or prior tool output (already available in context)
+        • FINAL line MUST be: print(result_value) — outputs ONLY the computed result, not lists/dicts
+        • No leading indentation on code lines (Python syntax error risk)
 
-    CHARITY ANALYSIS:
-    - 'Which charity has the highest donor count?'
-      → discover_charities -> Python_REPL: data[data['uniqueDonorCount'].idxmax()]
+    WHEN data_list OR tool_output IS NOT YET AVAILABLE AT PLANNING TIME:
+    - planner must still include this tool in the chain after the data retrieval tool
+    - use placeholder: "<DATA_FROM_[RETRIEVAL_TOOL]>"
+    - example: "<DATA_FROM_DISCOVER_CHARITIES>" or "<TRANSACTION_DATA_FROM_HISTORY>"
 
-    - 'What are the mean and median donor counts across charities?'
-      → discover_charities -> Python_REPL: statistics.mean(list), statistics.median(list)
+    RETURNS (Intuitive Schema):
+    - A single computed value or statistic (number, percentage, text summary)
+    - Result of aggregation, ranking, filtering, or comparison
 
-    - 'Top 5 verified charities by donor count'
-      → discover_charities -> Python_REPL: df[df['isVerified']==True].nlargest(5, 'uniqueDonorCount')
+    RETURNS (Detailed Schema):
+    - result: Computed output from the final print() statement, which contains:
+        For aggregations: single numeric value (mean, sum, count, median, stdev)
+        For rankings: sorted list of top-N items with values
+        For comparisons: comparative metrics or ratios
+        For multi-step calculations: derived metrics (e.g., goal_achievement_percent, average_donation_per_cause)
+    - Examples:
+        • Aggregation result: "42.5" (average donor count)
+        • Ranking result: "Charity A: 1500 donors, Charity B: 1200 donors, Charity C: 950 donors"
+        • Comparison result: "80% of campaigns reached their goal"
+        • Campaign analysis: "Goal: 100000, Received: 75000, Progress: 75%"
 
-    TRANSACTION ANALYSIS:
-    - 'Average donation amount by transaction type'
-      → get_transaction_history -> Python_REPL: df.groupby('type')['amount'].mean()
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - This is typically a terminal tool — no further chaining required after output
+    - Result value can be referenced in user-facing responses or further conversational context
 
-    - 'Total donations this month'
-      → get_transaction_history -> Python_REPL: df[df['createdAt'] >= '2026-03-01']['amount'].sum()
-
-    PRODUCT ANALYSIS:
-    - 'Product price range and availability distribution'
-      → list_charity_products -> Python_REPL: min/max/median prices, availability stats
-
-    CAMPAIGN ANALYSIS:
-    - 'Campaign fundraising progress (goal vs received)'
-      → list_charity_active_campaigns -> Python_REPL: (receivedAmount / goalAmount * 100) as completion %
-
-    AUCTION ANALYSIS:
-    - 'Average bid amount and winning vs lost bid ratios'
-      → get_my_bid_history -> Python_REPL: df.groupby('status')['bidAmount'].agg(['mean', 'count'])
-
-    INPUT FORMAT FOR CODE:
-    Your Python code receives the prior tool output as structured data (dict/list).
-    Import at top: import pandas as pd, import numpy as np, import statistics
-    Use pd.DataFrame() to convert lists of dicts into DataFrames for powerful grouping/filtering.
-    Your final line MUST be a print() statement that outputs ONLY the final result (no lists, no extra text).
+    DO NOT USE ALONE WHEN:
+    - No prior tool output exists in chat history
+    - User is asking for initial discovery, search, or lookup
+    - The answer can be obtained directly from tool output without computation
+    - Task is web scraping, API calls, or entity resolution
+    - Simple data visibility is sufficient (use original tool output instead)
     """
 
 
