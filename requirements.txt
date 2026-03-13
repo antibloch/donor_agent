@@ -10,3 +10,7 @@ langgraph
 playwright
 fastapi
 uvicorn
+numpy
+pandas
+scikit-learn
+cvxpy
