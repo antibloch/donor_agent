@@ -757,7 +757,7 @@ def list_campaign_donation_types():
     - when the user asks what types of donations are supported for campaigns
 
     DEFAULT_CHAIN:
-    - list_campaign_donation_types -> select_campaign_donation_type -> donate_to_campaign
+    - list_campaign_donation_types -> select_campaign_donation_type -> campaign_donation
 
     WHEN TO USE:
     - user asks for available campaign donation categories
@@ -806,9 +806,12 @@ def list_campaign_donation_types():
         "page": 1,
         "limit": 50
     }
+    headers = {
+    "X-API-KEY": xApiKey
+    }
     try:
         response = requests.get(
-            f"{BASE_URL}/api/v3/donors/campaign/donation-types",
+            f"{BASE_URL}/api/v3/agent/campaign/donation-types",
             headers=headers,
             params=params
         )
@@ -1117,12 +1120,7 @@ def product_donation(
         )
         response.raise_for_status()
         data = response.json()
-
-        return {
-            "success": True,
-            "message": data.get("message", "Product donation created successfully"),
-            "data": data.get("data", {})
-        }
+        return data
 
     except requests.exceptions.RequestException as e:
         return {
@@ -1211,12 +1209,7 @@ def campaign_donation(
         )
         response.raise_for_status()
         data = response.json()
-
-        return {
-            "success": True,
-            "message": data.get("message", "Donation successful"),
-            "data": data.get("data", {})
-        }
+        return data
 
     except requests.exceptions.RequestException as e:
         return {"success": False, "message": f"Request failed: {str(e)}", "data": {}}
@@ -1298,13 +1291,8 @@ def grant_donation(charityId: str, amount: float, grantId: str, password: str):
 
         response.raise_for_status()
         data = response.json()
-
-        return {
-            "success": True,
-            "message": data.get("message", "Grant donation successful"),
-            "data": data.get("data", {})
-        }
-
+        return data
+    
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
