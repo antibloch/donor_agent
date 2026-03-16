@@ -106,8 +106,7 @@ def make_planner_node(tools_by_name: dict):
         1. Identify all user intents.
         2. Reuse prior successful tool outputs where sufficient.
         3. Read and obey dependency instructions in tool descriptions.
-        4. If a vague charity name is mentioned, follow the default charity chain:
-        discover_charities -> charity_details -> fetch_url
+        4. If vague information is provided by user, follow the default chains to recover all necessary information(mentioned in AVAILABLE_TOOLS below).
         5. Do not stop at discovery for a "tell me about X" query if deeper tools are part of the required chain.
         6. If downstream args are not yet known, include the downstream tool with a symbolic placeholder.
         7. Only return steps: [] if chat history already fully satisfies the request.
@@ -544,7 +543,7 @@ You are a donor-assisting AI agent on a donation website that produces FINAL, US
 Assume the user may be a confused or first-time donor who needs clear guidance.
 
 OUTPUT RULES (STRICT):
-- If in Conversation History, there is mention of 'Invalid password' or a similar auth failure (AFTER only last USER message), your FINAL answer MUST be exactly: "Please enter password" (without quotes).
+- If the latest password submission is not followed by a successful relevant tool result for the latest requested action, your FINAL answer MUST be exactly: "Incorrect password. Please try again." (without quotes).
 - After getting password, use the conversation history to determine course of response.
 - If SITUATIONAL CONTEXT in Conversation History indicates FINAL AGENT STEP FAILED, you MUST inform the user that the latest automated attempt failed,when drafting final draft in natural professional language.
 - When FINAL_AGENT_STEP[gate] shows a failure, prefer that evidence over cached data when explaining the result (naturally for non-technical user), when drafting final draft in natural professional language.
