@@ -647,9 +647,19 @@ def list_charity_active_campaigns(charity_id: str):
         - user intends to donate to a campaign
         - donation type selection is still required
 
-        AGENT INSTRUCTION:
-        - After retrieving campaigns, present the donationTypes for the selected campaign.
-        - Ask the user to choose a donation type before calling campaign_donation.
+        AGENT INSTRUCTION (STRICT):
+        1. Show campaigns.
+        2. Show allowed donationTypes for the selected campaign.
+        3. STOP and ask the user:
+
+        "Please choose a donation type for this campaign."
+
+        4. Wait for user input.
+
+        5. ONLY after the user explicitly selects a donation type
+        should campaign_donation be called.
+
+        The agent MUST NOT assume or infer a donation type.
     """
     try:
         headers = {
@@ -889,7 +899,7 @@ def get_transaction_history():
 
         CHAIN_OUTPUT_FOR_NEXT_TOOL:
         - transaction _id can be used for support, dispute, or transaction detail tools
-        - if planning before execution, planner should use placeholder:
+        - if planning before execution, planner should use placeholder: 
         "<SELECTED_TRANSACTION_ID_FROM_TRANSACTION_HISTORY>"
 
         DO NOT STOP HERE WHEN:
@@ -1151,6 +1161,12 @@ def campaign_donation(
         - after obtaining campaignId from list_charity_active_campaigns
         - after obtaining donationTypeId from list_campaign_donation_types
         - after verifying the user's password for transaction authorization
+
+        CRITICAL RULE:
+        - The agent MUST NEVER guess or auto-select donationTypeId.
+        - The agent MUST ask the user to select one of the allowed donationTypes returned
+        by list_charity_active_campaigns.
+        - If donationTypeId was not explicitly chosen by the user, DO NOT call this tool.
 
         DEFAULT_CHAIN:
         - list_charity_active_campaigns -> list_campaign_donation_types -> campaign_donation -> get_transaction_history
