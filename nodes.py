@@ -114,6 +114,14 @@ def make_planner_node(tools_by_name: dict):
         8. If the previous round already asked for missing inputs, shrink that list if the latest user message or prior successful tool outputs now cover some of them.
         9. If the Conversation History's last FINAL AGENT STEP shows a previous tool call returned any HTTP 4xx or HTTP 5xx error related to password authentication, do NOT schedule that same tool again. These are server-side errors that cannot be fixed by retrying. Set steps to [] and missing_args to [].
 
+        JSON VALIDITY RULES:
+          - Output must be valid JSON parseable by json.loads with no preprocessing.
+          - Every placeholder must be a JSON string, never a bare token.
+          - Example valid placeholder: "<BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>"
+          - Example invalid placeholder: <BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>
+          - If a value is unknown and should be filled later, use a quoted placeholder string.
+          - Do not use comments, trailing commas, or markdown code fences.
+
         SITUATIONAL CONTEXT USAGE:
         The conversation history may include a section labeled "SITUATIONAL CONTEXT".
 
