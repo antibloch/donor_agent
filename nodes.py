@@ -100,7 +100,7 @@ def make_planner_node(tools_by_name: dict):
 
         MISSING-ARG POLICY:
         - For action tools like donations, bids, wallet funding, or other write operations: if any required final argument is not already known and not recoverable from earlier tools, add its exact field name to missing_args.
-        - Do not ask for args already supplied in the latest user message.
+        - Do not ask for args already supplied in the latest user message, BUT: if the user provided a value for an enum/option arg and that value does not closely match any of the valid options listed in AVAILABLE TOOLS (e.g. "Sadqh" vs valid options "Sadqah, hadya, fitra, chanda"), you MUST fuzzy-correct it to the closest valid option. If no close match exists, treat the arg as still missing and include it in missing_args.
         - Do not include any arg in missing_args if it can be grounded from prior successful tool outputs already present in chat history.
 
         PLANNING RULES:
@@ -1060,6 +1060,7 @@ VERY IMPORTANT:
 - Prefer repairing missing prerequisites before retrying downstream tools.
 - Reuse grounded values from cached successful outputs.
 - Do NOT invent ids, names, urls, passwords, numeric values, or other arguments not present in history/cache.
+- Do NOT hallucinate entity names, grant titles, campaign names, or any identifiers not explicitly present in the user's current request or in cached tool outputs.
 - Return exactly ONE next repair action or mark done.
 - You are responsible for maintaining the CURRENT unresolved user-input list across repair steps.
 - Any `missing_args` you output must be the current authoritative list after considering all successful repair steps so far.
@@ -1068,10 +1069,16 @@ VERY IMPORTANT:
 - Use prior FINAL_AGENT_STEP[gate] entries as grounded context about what was last attempted, what succeeded, and what failed in earlier rounds.
 - Prefer continuity with the most recent FINAL_AGENT_STEP[gate] when the user is continuing an unfinished workflow.
 
+ID AUTO-SELECTION RULE:
+- When a list tool (e.g., list_charity_grants, list_charity_active_campaigns) succeeds and returns one or more items, you MUST auto-select an ID from that list to resolve the downstream ID argument. Do NOT add that ID to missing_args if the list returned results.
+- If the user specified a name/title, select the item whose title/name best matches. If the user did not specify, select the first active item in the list.
+- Only add an ID arg to missing_args if the list tool returned an EMPTY list (no items at all).
+- Do NOT conclude that an ID is unresolvable just because no item matches a name you assumed — use the first available item if no explicit match exists.
+
 COMPLEX ARGUMENT ASSEMBLY RULE:
 - When a failed tool requires structured arguments (lists, nested objects), you MUST actively extract concrete values from CACHED TOOL OUTPUTS to build those arguments.
 - Do NOT pass empty lists, empty objects, or zero values as a shortcut to satisfy type validation. An empty list is not a valid repair — it will fail at the API level.
-- Walk through the cached outputs field by field. Match the user's original request (e.g., product name, campaign title) to items in the cached data to select the correct records.
+- Walk through the cached outputs field by field. Match the user's original request (e.g., product name, campaign title) to items in the cached data to select the correct records. Only match against names/titles that the user EXPLICITLY stated in the current request — do NOT invent or assume a name.
 - For list-of-object arguments (e.g., products: [{{"partner": "...", "charityProd": "..."}}]), construct each object by extracting real field values (_id, pricePerUnit, category, partner, etc.) from the cached tool output that returned those records.
 - If the cached data does not contain a required field value and no other available tool can provide it, add that field name to missing_args and set done: true. Do NOT substitute a placeholder, empty value, or guess.
 
