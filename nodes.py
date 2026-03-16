@@ -1248,6 +1248,8 @@ RULES:
                 gate_notes.append(
                     f"Skipped duplicate repair step for `{tool_name}` targeting `{target_error_id}`."
                 )
+                if "password" in (step.get("args") or {}) and "password" not in missing_args:                                                                                
+                    missing_args = _normalize_missing_args(missing_args + ["password"])  
                 break
 
             seen_step_signatures.add(sig)
