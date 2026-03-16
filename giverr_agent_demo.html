@@ -3,12 +3,29 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Giverr Agent Demo</title>
+    <title>Giverr Agent</title>
     <link
-      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=DM+Mono&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <style>
+      :root {
+        --green: #16a06a;
+        --green-light: #e8f7f1;
+        --green-dark: #0d6e49;
+        --amber: #f59e0b;
+        --amber-light: #fef3c7;
+        --bg: #f7f8fa;
+        --surface: #ffffff;
+        --border: #e8eaed;
+        --border-strong: #d1d5db;
+        --text: #111827;
+        --text-muted: #6b7280;
+        --text-light: #9ca3af;
+        --radius: 14px;
+        --radius-sm: 8px;
+      }
+
       * {
         box-sizing: border-box;
         margin: 0;
@@ -16,62 +33,111 @@
       }
 
       body {
-        font-family: "DM Sans", sans-serif;
-        background: #f5f5f3;
-        height: 100vh;
+        font-family: "Sora", sans-serif;
+        background: var(--bg);
+        min-height: 100vh;
         display: flex;
         align-items: center;
         justify-content: center;
+        padding: 20px;
       }
 
       #app {
-        width: 520px;
-        height: 680px;
-        background: #ffffff;
-        border-radius: 16px;
-        border: 0.5px solid #e0e0dc;
+        width: 560px;
+        height: 700px;
+        background: var(--surface);
+        border-radius: 20px;
+        border: 1px solid var(--border);
         display: flex;
         flex-direction: column;
         overflow: hidden;
         position: relative;
-        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07);
+        box-shadow:
+          0 8px 40px rgba(0, 0, 0, 0.08),
+          0 2px 8px rgba(0, 0, 0, 0.04);
       }
 
+      /* Header */
       #header {
-        padding: 14px 20px;
-        border-bottom: 0.5px solid #e0e0dc;
+        padding: 16px 20px;
+        border-bottom: 1px solid var(--border);
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 12px;
+        background: var(--surface);
       }
 
-      #header-dot {
-        width: 8px;
-        height: 8px;
-        border-radius: 50%;
-        background: #1d9e75;
+      .header-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 10px;
+        background: linear-gradient(135deg, #16a06a, #0d9488);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
       }
 
-      #header-title {
+      .header-icon svg {
+        width: 18px;
+        height: 18px;
+        fill: white;
+      }
+
+      .header-text {
+        flex: 1;
+      }
+      .header-name {
         font-size: 14px;
-        font-weight: 500;
-        color: #1a1a1a;
+        font-weight: 600;
+        color: var(--text);
+      }
+      .header-status {
+        font-size: 11px;
+        color: var(--green);
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        margin-top: 1px;
+      }
+      .status-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--green);
       }
 
-      #header-sub {
+      .header-actions {
+        display: flex;
+        gap: 6px;
+      }
+      .icon-btn {
+        width: 30px;
+        height: 30px;
+        border-radius: var(--radius-sm);
+        border: 1px solid var(--border);
+        background: transparent;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: var(--text-muted);
         font-size: 12px;
-        color: #888;
-        margin-left: auto;
-        font-family: "DM Mono", monospace;
+        transition: all 0.15s;
+      }
+      .icon-btn:hover {
+        background: var(--bg);
+        color: var(--text);
       }
 
+      /* Messages */
       #messages {
         flex: 1;
         overflow-y: auto;
-        padding: 16px;
+        padding: 20px;
         display: flex;
         flex-direction: column;
-        gap: 12px;
+        gap: 16px;
       }
 
       #messages::-webkit-scrollbar {
@@ -81,95 +147,257 @@
         background: transparent;
       }
       #messages::-webkit-scrollbar-thumb {
-        background: #ddd;
+        background: var(--border-strong);
         border-radius: 4px;
       }
 
-      .msg {
-        max-width: 82%;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
+      /* User message */
+      .msg-user {
+        align-self: flex-end;
+        max-width: 75%;
       }
 
-      .msg.user {
-        align-self: flex-end;
-        align-items: flex-end;
+      .msg-user .bubble {
+        background: linear-gradient(135deg, #16a06a, #0d9488);
+        color: white;
+        padding: 10px 14px;
+        border-radius: 16px 16px 4px 16px;
+        font-size: 13.5px;
+        line-height: 1.55;
       }
-      .msg.agent {
+
+      .msg-user .bubble.password-bubble {
+        background: linear-gradient(135deg, #374151, #1f2937);
+        font-family: "JetBrains Mono", monospace;
+        letter-spacing: 2px;
+      }
+
+      /* Agent message */
+      .msg-agent {
         align-self: flex-start;
+        max-width: 88%;
+        display: flex;
+        gap: 8px;
         align-items: flex-start;
       }
 
-      .msg-label {
-        font-size: 11px;
-        color: #aaa;
-        padding: 0 4px;
-      }
-
-      .bubble {
-        padding: 10px 14px;
-        border-radius: 14px;
-        font-size: 13.5px;
-        line-height: 1.65;
-        white-space: pre-wrap;
-      }
-
-      .msg.user .bubble {
-        background: #1d9e75;
-        color: #ffffff;
-        border-bottom-right-radius: 4px;
-      }
-
-      .msg.agent .bubble {
-        background: #f5f5f3;
-        color: #1a1a1a;
-        border: 0.5px solid #e0e0dc;
-        border-bottom-left-radius: 4px;
-      }
-
-      .tag-badge {
-        display: inline-block;
-        font-size: 10px;
-        padding: 2px 8px;
-        border-radius: 10px;
-        font-family: "DM Mono", monospace;
+      .agent-avatar {
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        background: linear-gradient(135deg, #16a06a, #0d9488);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
         margin-top: 2px;
       }
 
+      .agent-avatar svg {
+        width: 14px;
+        height: 14px;
+        fill: white;
+      }
+
+      .agent-content {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      /* Simple bubble for short responses */
+      .simple-bubble {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px 16px 16px 16px;
+        padding: 10px 14px;
+        font-size: 13.5px;
+        line-height: 1.6;
+        color: var(--text);
+      }
+
+      /* Structured response cards */
+      .response-card {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px 14px 14px 14px;
+        overflow: hidden;
+      }
+
+      .section {
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .section:last-child {
+        border-bottom: none;
+      }
+
+      .section-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        margin-bottom: 8px;
+      }
+
+      .section-label.answer {
+        color: var(--green);
+      }
+      .section-label.insights {
+        color: #7c3aed;
+      }
+      .section-label.recommendations {
+        color: var(--amber);
+      }
+
+      .section-icon {
+        width: 16px;
+        height: 16px;
+        border-radius: 4px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 9px;
+      }
+
+      .section-icon.answer {
+        background: var(--green-light);
+      }
+      .section-icon.insights {
+        background: #ede9fe;
+      }
+      .section-icon.recommendations {
+        background: var(--amber-light);
+      }
+
+      .section-body {
+        font-size: 13px;
+        line-height: 1.65;
+        color: var(--text);
+      }
+
+      .section-body p {
+        margin-bottom: 6px;
+      }
+      .section-body p:last-child {
+        margin-bottom: 0;
+      }
+
+      .section-body ul,
+      .section-body ol {
+        padding-left: 16px;
+        margin: 4px 0;
+      }
+
+      .section-body li {
+        margin-bottom: 4px;
+        line-height: 1.55;
+      }
+
+      .section-body strong {
+        font-weight: 600;
+        color: var(--text);
+      }
+
+      /* Auction item list */
+      .auction-item {
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-sm);
+        padding: 10px 12px;
+        margin-bottom: 6px;
+      }
+
+      .auction-item:last-child {
+        margin-bottom: 0;
+      }
+
+      .auction-title {
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--text);
+        margin-bottom: 4px;
+      }
+
+      .auction-meta {
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .auction-tag {
+        font-size: 11px;
+        color: var(--text-muted);
+        background: var(--bg);
+        padding: 2px 7px;
+        border-radius: 4px;
+        border: 1px solid var(--border);
+      }
+
+      .auction-tag.price {
+        color: var(--green-dark);
+        background: var(--green-light);
+        border-color: #a7f3d0;
+        font-weight: 600;
+      }
+
+      /* Tag badge */
+      .tag-row {
+        display: flex;
+        gap: 6px;
+        margin-top: 4px;
+      }
+
+      .tag-badge {
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 6px;
+        font-family: "JetBrains Mono", monospace;
+      }
+
       .tag-false {
-        background: #e2efda;
-        color: #3b6d11;
+        background: var(--green-light);
+        color: var(--green-dark);
       }
       .tag-true {
-        background: #faeeda;
-        color: #854f0b;
+        background: var(--amber-light);
+        color: #92400e;
+      }
+
+      /* Thinking animation */
+      .thinking-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
 
       .thinking {
         display: flex;
         align-items: center;
-        gap: 5px;
+        gap: 4px;
         padding: 10px 14px;
-        background: #f5f5f3;
-        border: 0.5px solid #e0e0dc;
-        border-radius: 14px;
-        border-bottom-left-radius: 4px;
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 4px 14px 14px 14px;
       }
 
       .dot {
-        width: 6px;
-        height: 6px;
+        width: 5px;
+        height: 5px;
         border-radius: 50%;
-        background: #aaa;
-        animation: bounce 1.2s infinite;
+        background: var(--text-light);
+        animation: bounce 1.3s ease-in-out infinite;
       }
-
       .dot:nth-child(2) {
-        animation-delay: 0.2s;
+        animation-delay: 0.15s;
       }
       .dot:nth-child(3) {
-        animation-delay: 0.4s;
+        animation-delay: 0.3s;
       }
 
       @keyframes bounce {
@@ -177,104 +405,125 @@
         60%,
         100% {
           transform: translateY(0);
+          opacity: 0.5;
         }
         30% {
-          transform: translateY(-5px);
+          transform: translateY(-4px);
+          opacity: 1;
         }
       }
 
+      /* Input area */
       #input-area {
         padding: 12px 16px;
-        border-top: 0.5px solid #e0e0dc;
+        border-top: 1px solid var(--border);
         display: flex;
         gap: 8px;
         align-items: flex-end;
-        background: #ffffff;
+        background: var(--surface);
       }
 
       #msg-input {
         flex: 1;
         padding: 10px 14px;
         font-size: 13.5px;
-        font-family: "DM Sans", sans-serif;
-        border: 0.5px solid #ccc;
+        font-family: "Sora", sans-serif;
+        border: 1px solid var(--border-strong);
         border-radius: 10px;
-        background: #ffffff;
-        color: #1a1a1a;
+        background: var(--bg);
+        color: var(--text);
         resize: none;
         outline: none;
         min-height: 40px;
         max-height: 100px;
         line-height: 1.5;
+        transition: border-color 0.15s;
       }
 
       #msg-input:focus {
-        border-color: #1d9e75;
+        border-color: var(--green);
+        background: var(--surface);
+      }
+      #msg-input::placeholder {
+        color: var(--text-light);
       }
 
       #send-btn {
-        padding: 10px 18px;
-        background: #1d9e75;
-        color: #fff;
+        width: 40px;
+        height: 40px;
+        background: linear-gradient(135deg, #16a06a, #0d9488);
+        color: white;
         border: none;
         border-radius: 10px;
-        font-size: 13px;
-        font-weight: 500;
         cursor: pointer;
-        font-family: "DM Sans", sans-serif;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.15s;
+        flex-shrink: 0;
       }
 
       #send-btn:hover {
-        background: #0f6e56;
+        transform: scale(1.05);
       }
       #send-btn:disabled {
-        background: #e0e0dc;
-        color: #aaa;
+        background: var(--border-strong);
         cursor: not-allowed;
+        transform: none;
+      }
+      #send-btn svg {
+        width: 16px;
+        height: 16px;
+        fill: white;
       }
 
-      #reset-btn {
-        padding: 10px 12px;
-        background: transparent;
-        color: #888;
-        border: 0.5px solid #e0e0dc;
-        border-radius: 10px;
-        font-size: 12px;
-        cursor: pointer;
-        font-family: "DM Sans", sans-serif;
-      }
-
-      #reset-btn:hover {
-        background: #f5f5f3;
-      }
-
+      /* Modal */
       .modal-overlay {
         position: absolute;
         inset: 0;
-        background: rgba(0, 0, 0, 0.35);
+        background: rgba(17, 24, 39, 0.5);
         display: flex;
         align-items: center;
         justify-content: center;
         z-index: 10;
+        backdrop-filter: blur(2px);
       }
 
       .modal {
-        background: #ffffff;
-        border: 0.5px solid #e0e0dc;
-        border-radius: 14px;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 16px;
         padding: 24px;
         width: 300px;
         display: flex;
         flex-direction: column;
-        gap: 14px;
-        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+        gap: 16px;
+        box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15);
+        animation: modalIn 0.2s ease-out;
       }
 
-      .modal-icon {
+      @keyframes modalIn {
+        from {
+          opacity: 0;
+          transform: scale(0.95) translateY(8px);
+        }
+        to {
+          opacity: 1;
+          transform: scale(1) translateY(0);
+        }
+      }
+
+      .modal-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .modal-lock-icon {
         width: 36px;
         height: 36px;
-        border-radius: 50%;
-        background: #faeeda;
+        border-radius: 10px;
+        background: var(--amber-light);
         display: flex;
         align-items: center;
         justify-content: center;
@@ -283,30 +532,33 @@
 
       .modal-title {
         font-size: 15px;
-        font-weight: 500;
-        color: #1a1a1a;
+        font-weight: 600;
+        color: var(--text);
       }
-
       .modal-sub {
-        font-size: 13px;
-        color: #888;
+        font-size: 12.5px;
+        color: var(--text-muted);
+        line-height: 1.5;
         margin-top: -8px;
       }
 
       .modal input {
         width: 100%;
         padding: 10px 14px;
-        font-size: 13.5px;
-        font-family: "DM Sans", sans-serif;
-        border: 0.5px solid #ccc;
+        font-size: 14px;
+        font-family: "JetBrains Mono", monospace;
+        border: 1px solid var(--border-strong);
         border-radius: 10px;
-        background: #ffffff;
-        color: #1a1a1a;
+        background: var(--bg);
+        color: var(--text);
         outline: none;
+        letter-spacing: 1px;
+        transition: border-color 0.15s;
       }
 
       .modal input:focus {
-        border-color: #1d9e75;
+        border-color: var(--green);
+        background: var(--surface);
       }
 
       .modal-btns {
@@ -317,46 +569,93 @@
       .modal-submit {
         flex: 1;
         padding: 10px;
-        background: #1d9e75;
-        color: #fff;
+        background: linear-gradient(135deg, #16a06a, #0d9488);
+        color: white;
         border: none;
         border-radius: 10px;
-        font-size: 13px;
-        font-weight: 500;
+        font-size: 13.5px;
+        font-weight: 600;
+        font-family: "Sora", sans-serif;
         cursor: pointer;
-        font-family: "DM Sans", sans-serif;
+        transition: all 0.15s;
       }
 
       .modal-submit:hover {
-        background: #0f6e56;
+        transform: scale(1.02);
       }
 
       .modal-cancel {
         padding: 10px 14px;
         background: transparent;
-        color: #888;
-        border: 0.5px solid #e0e0dc;
+        color: var(--text-muted);
+        border: 1px solid var(--border);
         border-radius: 10px;
         font-size: 13px;
+        font-family: "Sora", sans-serif;
         cursor: pointer;
-        font-family: "DM Sans", sans-serif;
+        transition: all 0.15s;
+      }
+
+      .modal-cancel:hover {
+        background: var(--bg);
+      }
+
+      /* Timestamp */
+      .msg-time {
+        font-size: 10px;
+        color: var(--text-light);
+        padding: 0 4px;
+        margin-top: 2px;
+      }
+
+      .msg-user .msg-time {
+        text-align: right;
       }
     </style>
   </head>
   <body>
     <div id="app">
       <div id="header">
-        <div id="header-dot"></div>
-        <span id="header-title">Giverr Agent</span>
-        <span id="header-sub">localhost:8000</span>
+        <div class="header-icon">
+          <svg viewBox="0 0 24 24">
+            <path
+              d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 14H9V8h2v8zm4 0h-2V8h2v8z"
+            />
+          </svg>
+        </div>
+        <div class="header-text">
+          <div class="header-name">Giverr Agent</div>
+          <div class="header-status">
+            <div class="status-dot"></div>
+            Online
+          </div>
+        </div>
+        <div class="header-actions">
+          <button
+            class="icon-btn"
+            onclick="resetSession()"
+            title="Reset session"
+          >
+            ↺
+          </button>
+        </div>
       </div>
 
       <div id="messages">
-        <div class="msg agent">
-          <span class="msg-label">Agent</span>
-          <div class="bubble">
-            Hi! I can help you browse auctions, place bids, explore charities,
-            and manage donations. What would you like to do?
+        <div class="msg-agent">
+          <div class="agent-avatar">
+            <svg viewBox="0 0 24 24">
+              <path
+                d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"
+              />
+            </svg>
+          </div>
+          <div class="agent-content">
+            <div class="simple-bubble">
+              Hi! I can help you browse auctions, place bids, explore charities,
+              and manage donations. What would you like to do today?
+            </div>
+            <div class="msg-time">Just now</div>
           </div>
         </div>
       </div>
@@ -364,21 +663,42 @@
       <div id="input-area">
         <textarea
           id="msg-input"
-          placeholder="Type a message..."
+          placeholder="Ask me anything..."
           rows="1"
         ></textarea>
-        <button id="reset-btn" onclick="resetSession()">Reset</button>
-        <button id="send-btn" onclick="sendMessage()">Send</button>
+        <button id="send-btn" onclick="sendMessage()">
+          <svg viewBox="0 0 24 24">
+            <path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z" />
+          </svg>
+        </button>
       </div>
 
       <div class="modal-overlay" id="pw-modal" style="display: none">
         <div class="modal">
-          <div class="modal-icon">🔒</div>
-          <div class="modal-title">Password required</div>
-          <div class="modal-sub">
-            Enter your account password to authorize this action.
+          <div class="modal-header">
+            <div class="modal-lock-icon">🔐</div>
+            <div>
+              <div class="modal-title">Password required</div>
+            </div>
           </div>
-          <input type="password" id="pw-input" placeholder="Your password" />
+          <div class="modal-sub">
+            Enter your account password to authorize this transaction.
+          </div>
+          <div
+            id="pw-error"
+            style="
+              display: none;
+              font-size: 12px;
+              color: #dc2626;
+              background: #fef2f2;
+              border: 1px solid #fecaca;
+              border-radius: 8px;
+              padding: 8px 10px;
+            "
+          >
+            Incorrect password. Please try again.
+          </div>
+          <input type="password" id="pw-input" placeholder="••••••••" />
           <div class="modal-btns">
             <button class="modal-cancel" onclick="closeModal()">Cancel</button>
             <button class="modal-submit" onclick="submitPassword()">
@@ -403,7 +723,6 @@
           sendMessage();
         }
       });
-
       pwInput.addEventListener("keydown", (e) => {
         if (e.key === "Enter") submitPassword();
       });
@@ -412,46 +731,199 @@
         messagesEl.scrollTop = messagesEl.scrollHeight;
       }
 
-      function addMessage(role, text, requiresPassword) {
-        const div = document.createElement("div");
-        div.className = "msg " + role;
+      function getTime() {
+        return new Date().toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
+      }
 
-        const label = document.createElement("span");
-        label.className = "msg-label";
-        label.textContent = role === "user" ? "You" : "Agent";
+      // ── Parse response into sections ──────────────────────
+      function parseResponse(text) {
+        text = (text || "").trim();
 
-        const bubble = document.createElement("div");
-        bubble.className = "bubble";
-        bubble.textContent = text;
-
-        div.appendChild(label);
-        div.appendChild(bubble);
-
-        if (role === "agent" && requiresPassword !== undefined) {
-          const badge = document.createElement("span");
-          badge.className =
-            "tag-badge " + (requiresPassword ? "tag-true" : "tag-false");
-          badge.textContent = "requires_password: " + requiresPassword;
-          div.appendChild(badge);
+        // Short/simple responses — no sections
+        const simple = [
+          "please enter password",
+          "incorrect password",
+          "sorry, your request",
+          "session reset",
+        ];
+        if (simple.some((s) => text.toLowerCase().startsWith(s))) {
+          return { type: "simple", text };
         }
 
+        // Try to extract Direct Answer / Insights / Recommendations
+        const sections = {};
+
+        const directMatch = text.match(
+          /\*?\*?Direct Answer\*?\*?\s*([\s\S]*?)(?=\*?\*?Insights\*?\*?|\*?\*?Recommendations\*?\*?|$)/i,
+        );
+        const insightsMatch = text.match(
+          /\*?\*?Insights\*?\*?\s*([\s\S]*?)(?=\*?\*?Recommendations\*?\*?|$)/i,
+        );
+        const recsMatch = text.match(
+          /\*?\*?Recommendations\*?\*?\s*([\s\S]*?)$/i,
+        );
+
+        if (directMatch) sections.answer = directMatch[1].trim();
+        if (insightsMatch) sections.insights = insightsMatch[1].trim();
+        if (recsMatch) sections.recommendations = recsMatch[1].trim();
+
+        if (sections.answer || sections.insights || sections.recommendations) {
+          return { type: "structured", sections };
+        }
+
+        // Fallback — render as simple
+        return { type: "simple", text };
+      }
+
+      // ── Convert markdown-like text to HTML ────────────────
+      function mdToHtml(text) {
+        if (!text) return "";
+        // Bold
+        text = text.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>");
+        // Bullet points
+        const lines = text.split("\n");
+        let html = "";
+        let inList = false;
+        let listTag = "ul";
+
+        for (let line of lines) {
+          line = line.trim();
+          if (!line) {
+            if (inList) {
+              html += `</${listTag}>`;
+              inList = false;
+            }
+            continue;
+          }
+          // Numbered list
+          if (/^\d+[\.\)]\s/.test(line)) {
+            if (!inList || listTag !== "ol") {
+              if (inList) html += `</ul>`;
+              html += "<ol>";
+              inList = true;
+              listTag = "ol";
+            }
+            html += `<li>${line.replace(/^\d+[\.\)]\s/, "")}</li>`;
+          }
+          // Bullet
+          else if (/^[\-\•\*]\s/.test(line)) {
+            if (!inList || listTag !== "ul") {
+              if (inList) html += `</ol>`;
+              html += "<ul>";
+              inList = true;
+              listTag = "ul";
+            }
+            html += `<li>${line.replace(/^[\-\•\*]\s/, "")}</li>`;
+          } else {
+            if (inList) {
+              html += `</${listTag}>`;
+              inList = false;
+            }
+            html += `<p>${line}</p>`;
+          }
+        }
+        if (inList) html += `</${listTag}>`;
+        return html;
+      }
+
+      // ── Add user message ───────────────────────────────────
+      function addUserMessage(text, isPassword) {
+        const div = document.createElement("div");
+        div.className = "msg-user";
+        div.innerHTML = `
+        <div class="bubble ${isPassword ? "password-bubble" : ""}">${isPassword ? "••••••••" : escapeHtml(text)}</div>
+        <div class="msg-time">${getTime()}</div>
+      `;
+        messagesEl.appendChild(div);
+        scrollBottom();
+      }
+
+      // ── Add agent message ──────────────────────────────────
+      function addAgentMessage(text, requiresPassword) {
+        const parsed = parseResponse(text);
+        const div = document.createElement("div");
+        div.className = "msg-agent";
+
+        let contentHtml = "";
+
+        if (parsed.type === "simple") {
+          contentHtml = `<div class="simple-bubble">${mdToHtml(parsed.text)}</div>`;
+        } else {
+          const s = parsed.sections;
+          let cardsHtml = '<div class="response-card">';
+
+          if (s.answer) {
+            cardsHtml += `
+            <div class="section">
+              <div class="section-label answer">
+                <div class="section-icon answer">✦</div>
+                Direct Answer
+              </div>
+              <div class="section-body">${mdToHtml(s.answer)}</div>
+            </div>`;
+          }
+          if (s.insights) {
+            cardsHtml += `
+            <div class="section">
+              <div class="section-label insights">
+                <div class="section-icon insights">◈</div>
+                Insights
+              </div>
+              <div class="section-body">${mdToHtml(s.insights)}</div>
+            </div>`;
+          }
+          if (s.recommendations) {
+            cardsHtml += `
+            <div class="section">
+              <div class="section-label recommendations">
+                <div class="section-icon recommendations">→</div>
+                Recommendations
+              </div>
+              <div class="section-body">${mdToHtml(s.recommendations)}</div>
+            </div>`;
+          }
+
+          cardsHtml += "</div>";
+          contentHtml = cardsHtml;
+        }
+
+        // Tag
+        const tagHtml =
+          requiresPassword !== undefined
+            ? `<div class="tag-row"><span class="tag-badge ${requiresPassword ? "tag-true" : "tag-false"}">requires_password: ${requiresPassword}</span></div>`
+            : "";
+
+        div.innerHTML = `
+        <div class="agent-avatar">
+          <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+        </div>
+        <div class="agent-content">
+          ${contentHtml}
+          ${tagHtml}
+          <div class="msg-time">${getTime()}</div>
+        </div>
+      `;
         messagesEl.appendChild(div);
         scrollBottom();
       }
 
       function showThinking() {
         const div = document.createElement("div");
-        div.className = "msg agent";
+        div.className = "msg-agent";
         div.id = "thinking";
-        const label = document.createElement("span");
-        label.className = "msg-label";
-        label.textContent = "Agent";
-        const bubble = document.createElement("div");
-        bubble.className = "thinking";
-        bubble.innerHTML =
-          '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
-        div.appendChild(label);
-        div.appendChild(bubble);
+        div.innerHTML = `
+        <div class="agent-avatar">
+          <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+        </div>
+        <div class="thinking-wrap">
+          <div class="thinking">
+            <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+          </div>
+        </div>
+      `;
         messagesEl.appendChild(div);
         scrollBottom();
       }
@@ -461,12 +933,19 @@
         if (t) t.remove();
       }
 
+      function escapeHtml(text) {
+        return text
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;");
+      }
+
       async function sendMessage() {
         const text = inputEl.value.trim();
         if (!text) return;
         inputEl.value = "";
         sendBtn.disabled = true;
-        addMessage("user", text);
+        addUserMessage(text, false);
         showThinking();
         try {
           const res = await fetch(API + "/chat", {
@@ -476,22 +955,35 @@
           });
           const data = await res.json();
           removeThinking();
-          addMessage("agent", data.response, data.requires_password);
-          if (data.requires_password) openModal();
+          addAgentMessage(data.response, data.requires_password);
+          if (
+            data.requires_password ||
+            (data.response || "")
+              .toLowerCase()
+              .includes("please enter password") ||
+            (data.response || "").toLowerCase().includes("incorrect password")
+          ) {
+            const isError = (data.response || "")
+              .toLowerCase()
+              .includes("incorrect password");
+            openModal();
+          }
         } catch (e) {
           removeThinking();
-          addMessage(
-            "agent",
-            "Could not connect to the agent. Make sure uvicorn is running on localhost:8000.",
+          addAgentMessage(
+            "Could not connect to the agent. Make sure the server is running on localhost:8000.",
           );
         }
         sendBtn.disabled = false;
         inputEl.focus();
       }
 
-      function openModal() {
+      function openModal(showError) {
         pwModal.style.display = "flex";
         pwInput.value = "";
+        document.getElementById("pw-error").style.display = showError
+          ? "block"
+          : "none";
         setTimeout(() => pwInput.focus(), 100);
       }
 
@@ -504,7 +996,7 @@
         if (!pw) return;
         closeModal();
         sendBtn.disabled = true;
-        addMessage("user", "••••••••");
+        addUserMessage(pw, true);
         showThinking();
         try {
           const res = await fetch(API + "/chat", {
@@ -514,11 +1006,23 @@
           });
           const data = await res.json();
           removeThinking();
-          addMessage("agent", data.response, data.requires_password);
+          addAgentMessage(data.response, data.requires_password);
+          if (
+            data.requires_password ||
+            (data.response || "")
+              .toLowerCase()
+              .includes("please enter password") ||
+            (data.response || "").toLowerCase().includes("incorrect password")
+          ) {
+            const isError = (data.response || "")
+              .toLowerCase()
+              .includes("incorrect password");
+            openModal();
+          }
           if (data.requires_password) openModal();
         } catch (e) {
           removeThinking();
-          addMessage("agent", "Connection error.");
+          addAgentMessage("Connection error.");
         }
         sendBtn.disabled = false;
       }
@@ -528,7 +1032,7 @@
           await fetch(API + "/reset", { method: "POST" });
         } catch (e) {}
         messagesEl.innerHTML = "";
-        addMessage("agent", "Session reset. How can I help you?");
+        addAgentMessage("Session reset. How can I help you?");
       }
     </script>
   </body>
