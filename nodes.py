@@ -1373,7 +1373,7 @@ RULES:
             last_agentic_step = attempt_log[-1]
 
             # if output of last_agentic_step contains "Invalid password" or "Missing password" or similar, then break agentic loop
-            if isinstance(semantic_output, str) and re.search(r"(invalid|missing).{0,20}password", semantic_output, re.IGNORECASE):
+            if len(missing_args) == 1 and isinstance(semantic_output, str) and re.search(r"(invalid|missing).{0,20}password", semantic_output, re.IGNORECASE):
                 if "password" not in missing_args:
                     missing_args = _normalize_missing_args(missing_args + ["password"])
                 gate_notes.append(
