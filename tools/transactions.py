@@ -630,7 +630,13 @@ def list_charity_active_campaigns(charity_id: str):
     AGENT FORMAT RULE:
     - For every campaign returned, ALWAYS display the allowed donation types under the campaign title.
     - Never display donationTypeId to the user.
-    - Always show donation type **names** (e.g., Zakat, Sadaqah, Fitra).
+    - Always show donation type **names** (e.g., 'chanda', 'fitra', 'saqdah' and 'hadya').
+
+    AGENT INSTRUCTION (STRICT):
+    1. Show campaigns.
+    2. Show allowed donationTypes for the selected campaign.
+    3. STOP and ask the user:
+    "Please choose a donation type for this campaign."
 
     CHAIN_OUTPUT_FOR_NEXT_TOOL:
     - campaign _id -> campaignId for campaign_donation
@@ -642,18 +648,19 @@ def list_charity_active_campaigns(charity_id: str):
     USER INTERACTION RULE (STRICT):
     1. Show campaigns.
     2. Show allowed donation types (names) for the selected campaign.
-    3. Ask the user:
-
+    3. Always Ask the user:
        "Which donation type would you like to use?
-       • Zakat
-       • Sadaqah
-       • Fitra"
+       • Hadya
+       • Sadqah
+       • Fitra
+       • Chanda"
 
     4. Wait for user input.
     5. Only after the user explicitly selects a donation type name,
        map it internally to donationTypeId before calling campaign_donation.
     6. If the input is invalid or misspelled, agent should re-prompt the user
        until a valid donation type is selected.
+    7. Always show the donation types.
     """
     try:
         headers = {
@@ -1114,6 +1121,16 @@ def campaign_donation(
       by list_charity_active_campaigns.
     - If the user-provided donation_type does not match any available type (even via fuzzy match),
       DO NOT call this tool and instead prompt the user to select again.
+    - Always show the allowed donation types (e.g., 'chanda', 'fitra', 'saqdah' and 'hadya') for the selected campaign.
+
+    USER INTERACTION RULE (STRICT):
+    1. Show allowed donation types (names) for the selected campaign.
+    2. Always Ask the user:
+       "Which donation type would you like to use?
+       • Hadya
+       • Sadqah
+       • Fitra
+       • Chanda"
 
     DEFAULT_CHAIN:
     - list_charity_active_campaigns -> campaign_donation -> get_transaction_history
@@ -1160,6 +1177,7 @@ def campaign_donation(
       before calling this tool.
     - Minor spelling mistakes (like 'sadqa' instead of 'saqdah') are handled via fuzzy matching,
       but if no match is found, prompt the user to select a valid donation type.
+    - Always show the allowed donation types (e.g., 'chanda', 'fitra', 'saqdah' and 'hadya')
     """
     # Verify user password
     auth = verify_user_password(password)
