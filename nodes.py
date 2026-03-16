@@ -1073,7 +1073,7 @@ CACHED TOOL OUTPUTS:
 {cache}
 
 PLANNER/STATE MISSING INPUTS CARRIED INTO GATE:
-{_compact_json(missing_args, max_chars=500)}
+{_compact_json(missing_args, max_chars=1000)}
 
 So far errors fixed:
 {_serialize_errors_for_prompt(fixed_errors)}
@@ -1185,14 +1185,8 @@ RULES:
             reason = decision["reason"]
             mark_target_fixed_if_success = decision["mark_target_fixed_if_success"]
 
-            if decision["missing_args"]:
-                if done or step is None:
-                    missing_args = _normalize_missing_args(decision["missing_args"])
-                else:
-                    missing_args = _normalize_missing_args(missing_args + decision["missing_args"])
-
-
             if done and step is None:
+                missing_args = _normalize_missing_args(decision["missing_args"])
                 gate_notes.append(reason or "Repair model stopped.")
                 break
 
@@ -1291,6 +1285,10 @@ RULES:
             )
             emitted_messages.append(tool_msg)
 
+            # Update missing_args to reflect what this step resolved.
+            # Only applied on success so a failed step leaves the list unchanged.
+            if semantic_ok:
+                missing_args = _normalize_missing_args(decision["missing_args"])
 
             attempt_log.append({
                 "react_step": react_idx + 1,
