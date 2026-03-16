@@ -187,6 +187,11 @@ def get_auction_details(auction_id: str):
     auction_id = (auction_id or "").strip()
     if not auction_id:
         return _fail("auction_id is required.")
+    if auction_id.startswith("<") and auction_id.endswith(">"):
+        return _fail(
+            "auction_id is a placeholder and cannot be used. Call get_active_auctions first to resolve the real auction _id.",
+            endpoint=f"{AGENT_BASE_PATH}/auctions/{auction_id}"
+        )
 
     endpoint = f"{AGENT_BASE_PATH}/auctions/{auction_id}"
     try:
@@ -367,6 +372,11 @@ def place_bid(auction_id: str, amount: float, password: str):
     auction_id = (auction_id or "").strip()
     if not auction_id:
         return _fail("auction_id is required.")
+    if auction_id.startswith("<") and auction_id.endswith(">"):
+        return _fail(
+            "auction_id is a placeholder and cannot be used. Call get_active_auctions first to resolve the real auction _id.",
+            endpoint=f"{AGENT_BASE_PATH}/auctions/{auction_id}/bid"
+        )
     if not amount or amount <= 0:
         return _fail("amount must be a positive number.")
     if not password:
@@ -376,7 +386,7 @@ def place_bid(auction_id: str, amount: float, password: str):
     auth = verify_user_password(password)
     if not auth["success"]:
         return _fail(
-            f"Transaction Denied: {auth['message']}",
+            f"TERMINAL_ERROR: Transaction Denied — password is incorrect. Do NOT retry with a different password. User must re-enter their password.",
             endpoint=f"{AGENT_BASE_PATH}/auctions/{auction_id}/bid"
         )
 
@@ -551,7 +561,11 @@ def get_charities_by_donation_type(donation_type_id: str, country_code: str = "P
     donation_type_id = (donation_type_id or "").strip()
     if not donation_type_id:
         return _fail("donation_type_id is required.")
-
+    if donation_type_id.startswith("<") and donation_type_id.endswith(">"):
+        return _fail(
+            "donation_type_id is a placeholder. Call get_donation_categories first to resolve the real _id.",
+            endpoint=f"{AGENT_BASE_PATH}/charities/by-donation-type"
+        )
     endpoint = f"{AGENT_BASE_PATH}/charities/by-donation-type"
     try:
         response = requests.get(
