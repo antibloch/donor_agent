@@ -1,0 +1,535 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Giverr Agent Demo</title>
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=DM+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      body {
+        font-family: "DM Sans", sans-serif;
+        background: #f5f5f3;
+        height: 100vh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      #app {
+        width: 520px;
+        height: 680px;
+        background: #ffffff;
+        border-radius: 16px;
+        border: 0.5px solid #e0e0dc;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        position: relative;
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.07);
+      }
+
+      #header {
+        padding: 14px 20px;
+        border-bottom: 0.5px solid #e0e0dc;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      #header-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #1d9e75;
+      }
+
+      #header-title {
+        font-size: 14px;
+        font-weight: 500;
+        color: #1a1a1a;
+      }
+
+      #header-sub {
+        font-size: 12px;
+        color: #888;
+        margin-left: auto;
+        font-family: "DM Mono", monospace;
+      }
+
+      #messages {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+
+      #messages::-webkit-scrollbar {
+        width: 4px;
+      }
+      #messages::-webkit-scrollbar-track {
+        background: transparent;
+      }
+      #messages::-webkit-scrollbar-thumb {
+        background: #ddd;
+        border-radius: 4px;
+      }
+
+      .msg {
+        max-width: 82%;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .msg.user {
+        align-self: flex-end;
+        align-items: flex-end;
+      }
+      .msg.agent {
+        align-self: flex-start;
+        align-items: flex-start;
+      }
+
+      .msg-label {
+        font-size: 11px;
+        color: #aaa;
+        padding: 0 4px;
+      }
+
+      .bubble {
+        padding: 10px 14px;
+        border-radius: 14px;
+        font-size: 13.5px;
+        line-height: 1.65;
+        white-space: pre-wrap;
+      }
+
+      .msg.user .bubble {
+        background: #1d9e75;
+        color: #ffffff;
+        border-bottom-right-radius: 4px;
+      }
+
+      .msg.agent .bubble {
+        background: #f5f5f3;
+        color: #1a1a1a;
+        border: 0.5px solid #e0e0dc;
+        border-bottom-left-radius: 4px;
+      }
+
+      .tag-badge {
+        display: inline-block;
+        font-size: 10px;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-family: "DM Mono", monospace;
+        margin-top: 2px;
+      }
+
+      .tag-false {
+        background: #e2efda;
+        color: #3b6d11;
+      }
+      .tag-true {
+        background: #faeeda;
+        color: #854f0b;
+      }
+
+      .thinking {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        padding: 10px 14px;
+        background: #f5f5f3;
+        border: 0.5px solid #e0e0dc;
+        border-radius: 14px;
+        border-bottom-left-radius: 4px;
+      }
+
+      .dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: #aaa;
+        animation: bounce 1.2s infinite;
+      }
+
+      .dot:nth-child(2) {
+        animation-delay: 0.2s;
+      }
+      .dot:nth-child(3) {
+        animation-delay: 0.4s;
+      }
+
+      @keyframes bounce {
+        0%,
+        60%,
+        100% {
+          transform: translateY(0);
+        }
+        30% {
+          transform: translateY(-5px);
+        }
+      }
+
+      #input-area {
+        padding: 12px 16px;
+        border-top: 0.5px solid #e0e0dc;
+        display: flex;
+        gap: 8px;
+        align-items: flex-end;
+        background: #ffffff;
+      }
+
+      #msg-input {
+        flex: 1;
+        padding: 10px 14px;
+        font-size: 13.5px;
+        font-family: "DM Sans", sans-serif;
+        border: 0.5px solid #ccc;
+        border-radius: 10px;
+        background: #ffffff;
+        color: #1a1a1a;
+        resize: none;
+        outline: none;
+        min-height: 40px;
+        max-height: 100px;
+        line-height: 1.5;
+      }
+
+      #msg-input:focus {
+        border-color: #1d9e75;
+      }
+
+      #send-btn {
+        padding: 10px 18px;
+        background: #1d9e75;
+        color: #fff;
+        border: none;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        font-family: "DM Sans", sans-serif;
+      }
+
+      #send-btn:hover {
+        background: #0f6e56;
+      }
+      #send-btn:disabled {
+        background: #e0e0dc;
+        color: #aaa;
+        cursor: not-allowed;
+      }
+
+      #reset-btn {
+        padding: 10px 12px;
+        background: transparent;
+        color: #888;
+        border: 0.5px solid #e0e0dc;
+        border-radius: 10px;
+        font-size: 12px;
+        cursor: pointer;
+        font-family: "DM Sans", sans-serif;
+      }
+
+      #reset-btn:hover {
+        background: #f5f5f3;
+      }
+
+      .modal-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.35);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+      }
+
+      .modal {
+        background: #ffffff;
+        border: 0.5px solid #e0e0dc;
+        border-radius: 14px;
+        padding: 24px;
+        width: 300px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        box-shadow: 0 8px 32px rgba(0, 0, 0, 0.12);
+      }
+
+      .modal-icon {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        background: #faeeda;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+      }
+
+      .modal-title {
+        font-size: 15px;
+        font-weight: 500;
+        color: #1a1a1a;
+      }
+
+      .modal-sub {
+        font-size: 13px;
+        color: #888;
+        margin-top: -8px;
+      }
+
+      .modal input {
+        width: 100%;
+        padding: 10px 14px;
+        font-size: 13.5px;
+        font-family: "DM Sans", sans-serif;
+        border: 0.5px solid #ccc;
+        border-radius: 10px;
+        background: #ffffff;
+        color: #1a1a1a;
+        outline: none;
+      }
+
+      .modal input:focus {
+        border-color: #1d9e75;
+      }
+
+      .modal-btns {
+        display: flex;
+        gap: 8px;
+      }
+
+      .modal-submit {
+        flex: 1;
+        padding: 10px;
+        background: #1d9e75;
+        color: #fff;
+        border: none;
+        border-radius: 10px;
+        font-size: 13px;
+        font-weight: 500;
+        cursor: pointer;
+        font-family: "DM Sans", sans-serif;
+      }
+
+      .modal-submit:hover {
+        background: #0f6e56;
+      }
+
+      .modal-cancel {
+        padding: 10px 14px;
+        background: transparent;
+        color: #888;
+        border: 0.5px solid #e0e0dc;
+        border-radius: 10px;
+        font-size: 13px;
+        cursor: pointer;
+        font-family: "DM Sans", sans-serif;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="header">
+        <div id="header-dot"></div>
+        <span id="header-title">Giverr Agent</span>
+        <span id="header-sub">localhost:8000</span>
+      </div>
+
+      <div id="messages">
+        <div class="msg agent">
+          <span class="msg-label">Agent</span>
+          <div class="bubble">
+            Hi! I can help you browse auctions, place bids, explore charities,
+            and manage donations. What would you like to do?
+          </div>
+        </div>
+      </div>
+
+      <div id="input-area">
+        <textarea
+          id="msg-input"
+          placeholder="Type a message..."
+          rows="1"
+        ></textarea>
+        <button id="reset-btn" onclick="resetSession()">Reset</button>
+        <button id="send-btn" onclick="sendMessage()">Send</button>
+      </div>
+
+      <div class="modal-overlay" id="pw-modal" style="display: none">
+        <div class="modal">
+          <div class="modal-icon">🔒</div>
+          <div class="modal-title">Password required</div>
+          <div class="modal-sub">
+            Enter your account password to authorize this action.
+          </div>
+          <input type="password" id="pw-input" placeholder="Your password" />
+          <div class="modal-btns">
+            <button class="modal-cancel" onclick="closeModal()">Cancel</button>
+            <button class="modal-submit" onclick="submitPassword()">
+              Confirm
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const API = "http://localhost:8000";
+      const messagesEl = document.getElementById("messages");
+      const inputEl = document.getElementById("msg-input");
+      const sendBtn = document.getElementById("send-btn");
+      const pwModal = document.getElementById("pw-modal");
+      const pwInput = document.getElementById("pw-input");
+
+      inputEl.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          sendMessage();
+        }
+      });
+
+      pwInput.addEventListener("keydown", (e) => {
+        if (e.key === "Enter") submitPassword();
+      });
+
+      function scrollBottom() {
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+      }
+
+      function addMessage(role, text, requiresPassword) {
+        const div = document.createElement("div");
+        div.className = "msg " + role;
+
+        const label = document.createElement("span");
+        label.className = "msg-label";
+        label.textContent = role === "user" ? "You" : "Agent";
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.textContent = text;
+
+        div.appendChild(label);
+        div.appendChild(bubble);
+
+        if (role === "agent" && requiresPassword !== undefined) {
+          const badge = document.createElement("span");
+          badge.className =
+            "tag-badge " + (requiresPassword ? "tag-true" : "tag-false");
+          badge.textContent = "requires_password: " + requiresPassword;
+          div.appendChild(badge);
+        }
+
+        messagesEl.appendChild(div);
+        scrollBottom();
+      }
+
+      function showThinking() {
+        const div = document.createElement("div");
+        div.className = "msg agent";
+        div.id = "thinking";
+        const label = document.createElement("span");
+        label.className = "msg-label";
+        label.textContent = "Agent";
+        const bubble = document.createElement("div");
+        bubble.className = "thinking";
+        bubble.innerHTML =
+          '<div class="dot"></div><div class="dot"></div><div class="dot"></div>';
+        div.appendChild(label);
+        div.appendChild(bubble);
+        messagesEl.appendChild(div);
+        scrollBottom();
+      }
+
+      function removeThinking() {
+        const t = document.getElementById("thinking");
+        if (t) t.remove();
+      }
+
+      async function sendMessage() {
+        const text = inputEl.value.trim();
+        if (!text) return;
+        inputEl.value = "";
+        sendBtn.disabled = true;
+        addMessage("user", text);
+        showThinking();
+        try {
+          const res = await fetch(API + "/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: text }),
+          });
+          const data = await res.json();
+          removeThinking();
+          addMessage("agent", data.response, data.requires_password);
+          if (data.requires_password) openModal();
+        } catch (e) {
+          removeThinking();
+          addMessage(
+            "agent",
+            "Could not connect to the agent. Make sure uvicorn is running on localhost:8000.",
+          );
+        }
+        sendBtn.disabled = false;
+        inputEl.focus();
+      }
+
+      function openModal() {
+        pwModal.style.display = "flex";
+        pwInput.value = "";
+        setTimeout(() => pwInput.focus(), 100);
+      }
+
+      function closeModal() {
+        pwModal.style.display = "none";
+      }
+
+      async function submitPassword() {
+        const pw = pwInput.value.trim();
+        if (!pw) return;
+        closeModal();
+        sendBtn.disabled = true;
+        addMessage("user", "••••••••");
+        showThinking();
+        try {
+          const res = await fetch(API + "/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ message: pw }),
+          });
+          const data = await res.json();
+          removeThinking();
+          addMessage("agent", data.response, data.requires_password);
+          if (data.requires_password) openModal();
+        } catch (e) {
+          removeThinking();
+          addMessage("agent", "Connection error.");
+        }
+        sendBtn.disabled = false;
+      }
+
+      async function resetSession() {
+        try {
+          await fetch(API + "/reset", { method: "POST" });
+        } catch (e) {}
+        messagesEl.innerHTML = "";
+        addMessage("agent", "Session reset. How can I help you?");
+      }
+    </script>
+  </body>
+</html>
