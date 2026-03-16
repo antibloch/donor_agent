@@ -943,19 +943,26 @@ def make_gate_node(
 
     def _format_attempt_log(attempt_log: List[Dict[str, Any]]) -> str:
         if not attempt_log:
-            return "[]"
+            return "(none)"
 
-        rows = []
+        lines = []
         for row in attempt_log:
-            rows.append({
-                "react_step": row["react_step"],
-                "target_error_id": row["target_error_id"],
-                "tool": row["tool"],
-                "args": row["args"],
-                "ok": row["ok"],
-                "output": row["output"],
-            })
-        return json.dumps(rows, ensure_ascii=False, indent=2)
+            ok_label = "SUCCESS" if row["ok"] else "FAILED"
+            args_str = _compact_json(row.get("args") or {}, max_chars=10000)
+            output_str = _compact_json(row.get("output"), max_chars=10000)
+            reason_str = (row.get("reason") or "").strip()
+            missing = row.get("missing_args") or []
+            done_label = " [done=true]" if row.get("done") else ""
+
+            lines.append(
+                f"[Step {row['react_step']}] target={row['target_error_id']} "
+                f"tool={row['tool']} status={ok_label}{done_label}\n"
+                f"  args    : {args_str}\n"
+                f"  output  : {output_str}\n"
+                f"  reason  : {reason_str or '—'}\n"
+                f"  missing : {json.dumps(missing, ensure_ascii=False) if missing else '[]'}"
+            )
+        return "\n\n".join(lines)
 
     def _serialize_errors_for_prompt(errors: List[Dict[str, Any]]) -> str:
         rows = []
@@ -1038,7 +1045,7 @@ def make_gate_node(
             valid_error_ids = {err["error_id"] for err in unresolved_errors}
 
             react_prompt = f"""
-You are AGENTIC_GATE, a repair executor for a tool-using LangGraph pipeline.
+You are an AGENTIC GATE node, a repair executor for a tool-using LangGraph pipeline.
 
 Your job is to reactively choose:
 1. which unresolved error to work on next
@@ -1092,7 +1099,7 @@ CURRENT ROUND HISTORY:
 CACHED TOOL OUTPUTS:
 {cache}
 
-PLANNER/STATE MISSING INPUTS CARRIED INTO GATE:
+SO FAR PLANNER/STATE MISSING INPUTS CARRIED INTO GATE:
 {_compact_json(missing_args, max_chars=1000)}
 
 So far errors fixed:
