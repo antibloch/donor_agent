@@ -67,7 +67,7 @@ async def build_graph():
     workflow.add_node("validator", make_validator_node(tools_by_name))
     workflow.add_node("executor", make_executor_node(tools_by_name))
     workflow.add_node("gate", make_gate_node(tools_by_name, max_react_steps=GATE_MAX_REACT_STEPS))
-    workflow.add_node("responder", make_responder_node())
+    workflow.add_node("responder", make_responder_node(tools_by_name))
 
     workflow.set_entry_point("planner")
     workflow.add_edge("planner", "validator")

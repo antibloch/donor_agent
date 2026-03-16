@@ -348,7 +348,7 @@ def make_executor_node(tools_by_name: dict):
     return executor_node
 
 
-def make_responder_node():
+def make_responder_node(tools_by_name: dict):
     model = make_model(temperature=0.0)
 
     # Auth-gated tools — these require a password parameter and represent
@@ -539,6 +539,8 @@ def make_responder_node():
                     "final_answer": "Please enter password",
                 }
 
+        # Build tool context for grounding missing-arg options 
+        tool_context = build_tool_context(tools_by_name)  
         # Build situational context from programmatic signals
         current_round = get_current_round_messages(messages)
         current_round_tool_msgs = [
@@ -554,7 +556,7 @@ Assume the user may be a confused or first-time donor who needs clear guidance.
 
 OUTPUT RULES (STRICT):
 - If the Conversation History's most recent FINAL AGENT STEP or SITUATIONAL CONTEXT contains a tool error with an HTTP 4xx or HTTP 5xx status code related to authentication or authorization, your FINAL answer MUST be exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for any missing arg again. Do NOT retry the action.
-- Otherwise, if the user's most recent message submitted one or more required values (e.g., password, country, country code) AND that submission was NOT followed by a successful relevant tool result in the Conversation History, your FINAL answer MUST be exactly: "The following required information is either incorrect or not provided: [arg list]. Please try again." — where [arg list] is a comma-separated human-readable list of the arg names taken directly from the MISSING USER INPUT line in SITUATIONAL CONTEXT, with each name converted to natural language (snake_case and camelCase converted to spaced words, e.g., donation_type → "donation type", countryCode → "country code", password → "password"). Do NOT add any other text.
+- Otherwise, if the user's most recent message submitted one or more required values (e.g., password, country, country code) AND that submission was NOT followed by a successful relevant tool result in the Conversation History, your response MUST begin with: "The following required information is either incorrect or not provided: [arg list]." — where [arg list] is a comma-separated human-readable list of the arg names taken directly from the MISSING USER INPUT line in SITUATIONAL CONTEXT, with each name converted to natural language (snake_case and camelCase → spaced words, e.g., donation_type → "donation type", countryCode → "country code"). Then, for each missing arg that has a known set of valid values in the TOOL CONTEXT below (e.g., donation_type lists accepted values in its parameter description), append: "Available [arg name] options: [comma-separated list from TOOL CONTEXT]." Do this for every missing arg that has enumerable options. End with "Please try again."
 - If SITUATIONAL CONTEXT in Conversation History indicates FINAL AGENT STEP FAILED, you MUST inform the user that the latest automated attempt failed,when drafting final draft in natural professional language.
 - When FINAL_AGENT_STEP[gate] shows a failure, prefer that evidence over cached data when explaining the result (naturally for non-technical user), when drafting final draft in natural professional language.
 - Do NOT present information as verified if the most recent gate step indicates a failed verification attempt.
@@ -625,7 +627,7 @@ Now write the final answer based strictly on the Conversation History below, inc
         )
         final_prompt = [
             HumanMessage(
-                content=f"{system_prompt}{situational_block}\n\nConversation History:\n{transcript}"
+                content=f"{system_prompt}\n\nTOOL CONTEXT (parameter descriptions and valid values for all available tools):\n{tool_context}{situational_block}\n\nConversation History:\n{transcript}"
             )
         ]
 
