@@ -36,7 +36,6 @@ async def setup_tools():
         list_charity_products, 
         product_donation, 
         list_charity_active_campaigns,
-        list_campaign_donation_types,
         campaign_donation,
         list_charity_grants, 
         grant_donation, 
