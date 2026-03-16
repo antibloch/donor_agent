@@ -112,7 +112,16 @@ def make_planner_node(tools_by_name: dict):
         6. If downstream args are not yet known, include the downstream tool with a symbolic placeholder.
         7. Only return steps: [] if chat history already fully satisfies the request.
         8. If the previous round already asked for missing inputs, shrink that list if the latest user message or prior successful tool outputs now cover some of them.
-        9. If the Conversation History's last FINAL AGENT STEP shows a previous tool call returned any HTTP 4xx or HTTP 5xx error related to password authentication, do NOT schedule that same tool again. These are server-side errors that cannot be fixed by retrying. Set steps to [] and missing_args to [].
+           IMPORTANT — when the user's latest message supplies value(s) for previously requested missing args:
+           - You MUST re-schedule the tool that required those args.
+           - Look at the SITUATIONAL CONTEXT or UNRESOLVED ERROR to identify which tool was blocked and what its other args were.
+           - Reconstruct the full tool call using the known args from prior history PLUS the new value(s) from the user.
+           - A bare user message like "Google@123" or "mypassword" that follows a "Previously Requested Missing Inputs: [password]" means that value IS the password — treat it as password="<that value>".
+           - Do NOT output steps: [] in this case.
+        9. If the Conversation History's last FINAL AGENT STEP shows a previous tool call returned an HTTP 4xx or HTTP 5xx status code error related to password authentication (i.e. the server rejected the credentials), do NOT schedule that same tool again. These are server-side authentication failures that cannot be fixed by retrying. Set steps to [] and missing_args to [].
+           CRITICAL DISTINCTION — Rule 9 does NOT apply when:
+           - The previous failure was a schema/validation error such as "Field required" or "validation error for <tool>\npassword" — that means the password was simply missing, NOT that the server rejected it.
+           - In that case, if the user has now provided the password, apply Rule 8 and re-schedule the tool.
 
         JSON VALIDITY RULES:
           - Output must be valid JSON parseable by json.loads with no preprocessing.
@@ -1394,18 +1403,6 @@ RULES:
             # of meaningful context fields is exposed to planner/responder.
             last_agentic_step = attempt_log[-1]
 
-            # if output of last_agentic_step contains "Invalid password" or "Missing password" or similar, then break agentic loop
-            if len(missing_args) == 1 and isinstance(semantic_output, str) and re.search(r"(invalid|missing).{0,20}password", semantic_output, re.IGNORECASE):
-                if "password" not in missing_args:
-                    missing_args = _normalize_missing_args(missing_args + ["password"])
-                gate_notes.append(
-                    f"Repair step `{tool_name}` output indicates a password issue: {semantic_output}. Stopping automatic repair."
-                )
-                last_agentic_step["reason"] = "Detected password-related issue in tool output; halting further automatic repair."
-                last_agentic_step["missing_args"] = missing_args
-                last_agentic_step["done"] = True
-                break
-
             trunc_lim_tool = TRUNCATION_LIMIT_GATE_TOOL_OUTPUT
 
             if DEBUG_MESSAGES == 1 and SHOW_GATE_TOOL_OUTPUTS == 1:
@@ -1414,6 +1411,17 @@ RULES:
                     f"ok={semantic_ok} "
                     f"output={str(semantic_output)[:trunc_lim_tool]}"
                 )
+
+            # if output of last_agentic_step contains "Invalid password" or "Missing password" or similar, then break agentic loop
+            if not semantic_ok and isinstance(semantic_output, str) and re.search(r"(invalid|missing).{0,20}password", semantic_output, re.IGNORECASE):
+                missing_args = _normalize_missing_args(["password"])
+                gate_notes.append(
+                    f"Repair step `{tool_name}` output indicates a password issue: {semantic_output}. Stopping automatic repair."
+                )
+                last_agentic_step["reason"] = "Detected password-related issue in tool output; halting further automatic repair."
+                last_agentic_step["missing_args"] = missing_args
+                last_agentic_step["done"] = True
+                break
                 
 
             if not semantic_ok:
