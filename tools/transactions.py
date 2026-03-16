@@ -1126,7 +1126,7 @@ def campaign_donation(
     REQUIRES (Intuitive Schema):
     - campaignId (str): campaign identifier
     - amount (float): donation amount
-    - donation_type (str): human-readable donation type name (e.g., 'chanda', 'fitra', 'saqdah')
+    - donation_type (str): human-readable donation type name (e.g., 'chanda', 'fitra', 'saqdah' and 'hadya')
     - password (str): user password for authorization
     - campaignType (str, optional): type of campaign (default 'CharityOrganization')
 
