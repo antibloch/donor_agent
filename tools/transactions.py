@@ -1,6 +1,7 @@
 import requests
 from langchain_core.tools import tool
 from tools.tool_helpers import _ok, _fail, _get
+import difflib 
 
 BASE_URL = "https://giverr-api.verior.co"
 DONATION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhOTVkMTIwZGI2MWFmYWYwM2UiLCJyb2xlIjoiRG9ub3IiLCJwcm9maWxlVHlwZSI6IkRvbm9yIiwiaWF0IjoxNzcxNDg1NzYyLCJleHAiOjQ5MjcyNDU3NjJ9.9bTr--7-iHIemenKrFRYL3uTDx9auCY98GvYa0NnaOg"
@@ -578,88 +579,81 @@ def list_charity_grants(charity_id: str):
 @tool
 def list_charity_active_campaigns(charity_id: str):
     """
-        PURPOSE:
-        Retrieve all active campaigns for a specific charity and return campaign details
-        including the valid donation types allowed for each campaign.
+    PURPOSE:
+    Retrieve all active campaigns for a specific charity and return campaign details
+    including the valid donation types allowed for each campaign.
 
-        MUST_CALL_FIRST:
-        - after obtaining a valid charity_id from list_charities_in_country or discover_charities
-        - before making a campaign donation
+    MUST_CALL_FIRST:
+    - after obtaining a valid charity_id from list_charities_in_country or discover_charities
+    - before making a campaign donation
 
-        DEFAULT_CHAIN:
-        - list_charities_in_country -> list_charity_active_campaigns -> campaign_donation
+    DEFAULT_CHAIN:
+    - list_charities_in_country -> list_charity_active_campaigns -> campaign_donation
 
-        WHEN TO USE:
-        - user wants to see active campaigns for a charity
-        - user asks what campaigns they can donate to
-        - user wants to know which donation types are valid for each campaign
-        - user intends to donate to a campaign but has not selected a donation type yet
+    WHEN TO USE:
+    - user wants to see active campaigns for a charity
+    - user asks what campaigns they can donate to
+    - user wants to know which donation types are valid for each campaign
+    - user intends to donate to a campaign but has not selected a donation type yet
 
-        REQUIRES (Intuitive Schema):
-        - charity_id (str): unique identifier of the charity
+    REQUIRES (Intuitive Schema):
+    - charity_id (str): unique identifier of the charity
 
-        REQUIRES (Detailed Schema):
-            - charity_id (str): ID of the charity obtained from list_charities_in_country
+    REQUIRES (Detailed Schema):
+    - charity_id (str): ID of the charity obtained from list_charities_in_country
 
-        RETURNS (Intuitive Schema):
-        - list of active campaigns with their allowed donation types
-        - Always list the allowed donation types in response
+    RETURNS (Intuitive Schema):
+    - list of active campaigns with their allowed donation types (names)
+    - Always show the allowed donation types to the user in bullet format
 
-        RETURNS (Detailed Schema):
-            - success (bool)
-            - campaigns (list) -> each item contains:
-                _id (str): campaign identifier
-                title (str)
-                expectedAmount (float)
-                raisedAmount (float)
-                status (str)
+    RETURNS (Detailed Schema):
+    - success (bool)
+    - campaigns (list) -> each item contains:
+        _id (str): campaign identifier
+        title (str)
+        expectedAmount (float)
+        raisedAmount (float)
+        status (str)
+        donationTypes (list):
+            - donationTypeId (str)
+            - name (str)
+        startDate (str)
+        endDate (str)
+        charityId (str)
+    - pagination (dict):
+        page (int)
+        limit (int)
+        total (int)
+        hasMore (bool)
+    - message (str)
 
-                donationTypes (list):
-                    - donationTypeId (str)
-                    - name (str)
+    AGENT FORMAT RULE:
+    - For every campaign returned, ALWAYS display the allowed donation types under the campaign title.
+    - Never display donationTypeId to the user.
+    - Always show donation type **names** (e.g., Zakat, Sadaqah, Fitra).
 
-                startDate (str)
-                endDate (str)
-                charityId (str)
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - campaign _id -> campaignId for campaign_donation
+    - donationTypeId -> mapped internally after user selects donation type name
 
-            - pagination (dict):
-                page (int)
-                limit (int)
-                total (int)
-                hasMore (bool)
+    PLANNER PLACEHOLDERS:
+    "<SELECTED_CAMPAIGN_ID>"
 
-            - message (str)
+    USER INTERACTION RULE (STRICT):
+    1. Show campaigns.
+    2. Show allowed donation types (names) for the selected campaign.
+    3. Ask the user:
 
-        AGENT FORMAT RULE:
-        - For every campaign returned, ALWAYS display the allowed donation types
-        - directly under the campaign title in bullet format.
-        - Do not omit donationTypes from the response.
-        
-        CHAIN_OUTPUT_FOR_NEXT_TOOL:
-        - campaign _id -> campaignId for campaign_donation
-        - donationTypeId -> donationTypeId for campaign_donation
+       "Which donation type would you like to use?
+       • Zakat
+       • Sadaqah
+       • Fitra"
 
-        - planner placeholders:
-        "<SELECTED_CAMPAIGN_ID>"
-        "<SELECTED_DONATION_TYPE_ID>"
-
-        DO NOT STOP HERE WHEN:
-        - user intends to donate to a campaign
-        - donation type selection is still required
-
-        AGENT INSTRUCTION (STRICT):
-        1. Show campaigns.
-        2. Show allowed donationTypes for the selected campaign.
-        3. STOP and ask the user:
-
-        "Please choose a donation type for this campaign."
-
-        4. Wait for user input.
-
-        5. ONLY after the user explicitly selects a donation type
-        should campaign_donation be called.
-
-        The agent MUST NOT assume or infer a donation type.
+    4. Wait for user input.
+    5. Only after the user explicitly selects a donation type name,
+       map it internally to donationTypeId before calling campaign_donation.
+    6. If the input is invalid or misspelled, agent should re-prompt the user
+       until a valid donation type is selected.
     """
     try:
         headers = {
@@ -756,69 +750,21 @@ def list_charity_active_campaigns(charity_id: str):
             "message": f"Unexpected error: {str(e)}"
         }
 
-@tool
-def list_campaign_donation_types():
+def get_campaign_donation_types():
     """
-    PURPOSE:
-    Retrieve all available donation types that can be used when donating to campaigns.
-
-    MUST_CALL_FIRST:
-    - when the user wants to donate to a campaign and needs to choose a donation type
-    - when the user asks what types of donations are supported for campaigns
-
-    DEFAULT_CHAIN:
-    - list_campaign_donation_types -> select_campaign_donation_type -> campaign_donation
-
-    WHEN TO USE:
-    - user asks for available campaign donation categories
-    - user mentions types like chanda, fitra, hadya, sadaqah, zakat, etc.
-    - user wants to know what donation types they can select while donating
-    - donation flow requires selecting a valid campaign donation type
-
-    REQUIRES (Intuitive Schema):
-    - no arguments required
-
-    REQUIRES (Detailed Schema):
-    - none (donation types are retrieved from the system)
-
-    RETURNS (Intuitive Schema):
-    - list of available donation types that can be used for campaign donations
-
-    RETURNS (Detailed Schema):
-        - success (bool): indicates whether the request was successful
-        - donation_types (list) -> each item contains:
-            _id (str): unique identifier of the donation type
-            name (str): name of the donation type (e.g., chanda, fitra, hadya, sadaqah)
-            createdBy (str): identifier of the entity who created the donation type
-            createdByModel (str): model type of the creator
-            isDeleted (bool): indicates whether the donation type has been deleted
-            createdAt (str): timestamp when the donation type was created
-            updatedAt (str): timestamp when the donation type was last updated
-        - pagination (dict):
-            currentPage (int)
-            totalPages (int)
-            totalItems (int)
-            itemsPerPage (int)
-            hasNextPage (bool)
-            hasPrevPage (bool)
-        - message (str): informational or status message
-
-    CHAIN_OUTPUT_FOR_NEXT_TOOL:
-    - donation type _id should be used in the campaign donation tool
-    - if planning before execution, planner should use placeholder:
-    "<SELECTED_CAMPAIGN_DONATION_TYPE_ID>"
-
-    DO NOT STOP HERE WHEN:
-    - the user intends to donate to a campaign
-    - proceed to campaign selection and donation execution after the user selects a donation type
+    Helper function to fetch available campaign donation types.
+    Used internally by the agent to map donation type name → donationTypeId.
     """
+
     params = {
         "page": 1,
         "limit": 50
     }
+
     headers = {
-    "X-API-KEY": xApiKey
+        "X-API-KEY": xApiKey
     }
+
     try:
         response = requests.get(
             f"{BASE_URL}/api/v3/agent/campaign/donation-types",
@@ -826,26 +772,24 @@ def list_campaign_donation_types():
             params=params
         )
         response.raise_for_status()
-        data = response.json()
+
+        data = response.json().get("data", {})
+        categories = data.get("categories", [])
+
+        donation_map = {d["name"].lower(): d["_id"] for d in categories}
 
         return {
             "success": True,
-            "message": "Donation types retrieved successfully",
-            "data": data
-        }
-
-    except requests.exceptions.RequestException as e:
-        return {
-            "success": False,
-            "message": f"Request failed: {str(e)}",
-            "data": []
+            "donation_map": donation_map,
+            "donation_types": categories
         }
 
     except Exception as e:
         return {
             "success": False,
-            "message": f"Unexpected error: {str(e)}",
-            "data": []
+            "donation_map": {},
+            "donation_types": [],
+            "message": str(e)
         }
 
 @tool
@@ -1149,63 +1093,73 @@ def product_donation(
 def campaign_donation(
     campaignId: str,
     amount: float,
-    donationTypeId: str,
+    donation_type: str,
     password: str,
     campaignType: str = 'CharityOrganization'
 ):
     """
-        PURPOSE:
-        Make a monetary donation to a specific campaign and confirm the donation details.
+    PURPOSE:
+    Make a monetary donation to a specific campaign and confirm the donation details,
+    using a human-readable donation type name. The tool internally maps the donation type
+    name to the required donationTypeId, handling minor spelling variations.
 
-        MUST_CALL_FIRST:
-        - after obtaining campaignId from list_charity_active_campaigns
-        - after obtaining donationTypeId from list_campaign_donation_types
-        - after verifying the user's password for transaction authorization
+    MUST_CALL_FIRST:
+    - after obtaining campaignId from list_charity_active_campaigns
+    - after obtaining donation_type from the user (human-readable name)
+    - after verifying the user's password for transaction authorization
 
-        CRITICAL RULE:
-        - The agent MUST NEVER guess or auto-select donationTypeId.
-        - The agent MUST ask the user to select one of the allowed donationTypes returned
-        by list_charity_active_campaigns.
-        - If donationTypeId was not explicitly chosen by the user, DO NOT call this tool.
+    CRITICAL RULE:
+    - The agent MUST NEVER guess or auto-select donationTypeId.
+    - The agent MUST ask the user to select one of the allowed donationTypes returned
+      by list_charity_active_campaigns.
+    - If the user-provided donation_type does not match any available type (even via fuzzy match),
+      DO NOT call this tool and instead prompt the user to select again.
 
-        DEFAULT_CHAIN:
-        - list_charity_active_campaigns -> list_campaign_donation_types -> campaign_donation -> get_transaction_history
+    DEFAULT_CHAIN:
+    - list_charity_active_campaigns -> campaign_donation -> get_transaction_history
 
-        WHEN TO USE:
-        - user wants to donate money to a specific campaign
-        - user has already seen valid donation types for the campaign
-        - user requires confirmation of the donation transaction
+    WHEN TO USE:
+    - user wants to donate money to a specific campaign
+    - user has already seen valid donation types for the campaign
+    - user requires confirmation of the donation transaction
 
-        REQUIRES (Intuitive Schema):
-        - campaignId (str): campaign identifier
-        - amount (float): donation amount
-        - donationTypeId (str): selected donation type ID (from LIST_CAMPAIGN_DONATION_TYPES)
-        - password (str): user password for authorization
-        - campaignType (str, optional): type of campaign (default 'CharityOrganization')
+    REQUIRES (Intuitive Schema):
+    - campaignId (str): campaign identifier
+    - amount (float): donation amount
+    - donation_type (str): human-readable donation type name (e.g., 'chanda', 'fitra', 'saqdah')
+    - password (str): user password for authorization
+    - campaignType (str, optional): type of campaign (default 'CharityOrganization')
 
-        REQUIRES (Detailed Schema):
-            - campaignId (str): unique identifier of the campaign
-            - amount (float): monetary amount to donate
-            - donationTypeId (str): ID of the selected donation type (from LIST_CAMPAIGN_DONATION_TYPES)
-            - password (str): authenticated user's password for transaction authorization
-            - campaignType (str, optional): campaign type; default is 'CharityOrganization'
+    REQUIRES (Detailed Schema):
+    - campaignId (str): unique identifier of the campaign
+    - amount (float): monetary amount to donate
+    - donation_type (str): name of the selected donation type
+    - password (str): authenticated user's password for transaction authorization
+    - campaignType (str, optional): campaign type; default is 'CharityOrganization'
 
-        RETURNS (Intuitive Schema):
-        - success status and confirmation of the monetary donation
+    RETURNS (Intuitive Schema):
+    - success status and confirmation of the monetary donation
 
-        RETURNS (Detailed Schema):
-            - success (bool): indicates whether the donation was successfully processed
-            - message (str): confirmation or error message
-            - data (dict): donation details returned by the backend if successful
+    RETURNS (Detailed Schema):
+    - success (bool): indicates whether the donation was successfully processed
+    - message (str): confirmation, error, or guidance message
+    - data (dict): donation details returned by the backend if successful
 
-        CHAIN_OUTPUT_FOR_NEXT_TOOL:
-        - data can be used to track the donation or generate a receipt
-        - planner placeholder if needed:
-        "<CAMPAIGN_DONATION_TRANSACTION_ID>"
+    CHAIN_OUTPUT_FOR_NEXT_TOOL:
+    - data can be used to track the donation or generate a receipt
+    - planner placeholder if needed: "<CAMPAIGN_DONATION_TRANSACTION_ID>"
 
-        DO NOT STOP HERE WHEN:
-        - user wants to make additional donations or check donation history
-        - follow-up actions such as receipt generation or reporting are required
+    DO NOT STOP HERE WHEN:
+    - user wants to make additional donations or check donation history
+    - follow-up actions such as receipt generation or reporting are required
+
+    USER INPUT RULE:
+    - The user should NEVER be asked for donationTypeId.
+    - The agent must ask for the donation type NAME
+      (e.g., 'chanda', 'fitra', 'saqdah') and internally map it to the correct donationTypeId
+      before calling this tool.
+    - Minor spelling mistakes (like 'sadqa' instead of 'saqdah') are handled via fuzzy matching,
+      but if no match is found, prompt the user to select a valid donation type.
     """
     # Verify user password
     auth = verify_user_password(password)
@@ -1213,9 +1167,27 @@ def campaign_donation(
         return {"success": False, "message": f"Transaction Denied: {auth['message']}", "data": {}}
 
     try:
-        response = requests.post(
+        # Fetch donation types using helper
+        donation_data = get_campaign_donation_types()
+        if not donation_data["success"]:
+            return {"success": False, "message": "Failed to fetch donation types.", "data": {}}
+
+        name_to_id = donation_data["donation_map"]
+        available_names = list(name_to_id.keys())
+
+        # Fuzzy match user input
+        donation_name_lower = donation_type.lower()
+        if donation_name_lower in name_to_id:
+            donationTypeId = name_to_id[donation_name_lower]
+        else:
+            closest = difflib.get_close_matches(donation_name_lower, available_names, n=1, cutoff=0.6)
+            if closest:
+                donationTypeId = name_to_id[closest[0]]  # pick the closest match
+
+        # Call backend API
+        donation_response = requests.post(
             f"{BASE_URL}/api/v1/donors/campaign/donate",
-            headers=headers,
+            headers={"X-API-KEY": xApiKey},
             json={
                 "compaignId": campaignId,
                 "amount": amount,
@@ -1223,9 +1195,8 @@ def campaign_donation(
                 "donationTypeId": donationTypeId
             }
         )
-        response.raise_for_status()
-        data = response.json()
-        return data
+        donation_response.raise_for_status()
+        return donation_response.json()
 
     except requests.exceptions.RequestException as e:
         return {"success": False, "message": f"Request failed: {str(e)}", "data": {}}
