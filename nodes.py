@@ -112,7 +112,7 @@ def make_planner_node(tools_by_name: dict):
         6. If downstream args are not yet known, include the downstream tool with a symbolic placeholder.
         7. Only return steps: [] if chat history already fully satisfies the request.
         8. If the previous round already asked for missing inputs, shrink that list if the latest user message or prior successful tool outputs now cover some of them.
-        9. If the recent Conversation History shows a previous tool call returned any HTTP 4xx or HTTP 5xx error related to password authentication, do NOT schedule that same tool again. These are server-side errors that cannot be fixed by retrying. Set steps to [] and missing_args to [].
+        9. If the Conversation History's last FINAL AGENT STEP shows a previous tool call returned any HTTP 4xx or HTTP 5xx error related to password authentication, do NOT schedule that same tool again. These are server-side errors that cannot be fixed by retrying. Set steps to [] and missing_args to [].
 
         SITUATIONAL CONTEXT USAGE:
         The conversation history may include a section labeled "SITUATIONAL CONTEXT".
@@ -552,7 +552,6 @@ OUTPUT RULES (STRICT):
 - Always show the money in USD.
 - Authentication for the latest user request must be grounded only in tool outputs that occur AFTER the latest USER password submission.
 - A USER message containing a password is NOT itself evidence of successful authentication.
-- - If the latest password submission is not followed by a successful relevant tool result for the latest requested action, your FINAL answer MUST be exactly: "Incorrect password. Please try again." (without quotes).
 - Do NOT reuse older successful auth-sensitive tool outputs from earlier turns as proof that the latest password worked.
 - Do NOT reveal your chain-of-thought, reasoning, internal steps, or analysis.
 - Do NOT describe tool usage steps.
@@ -563,7 +562,7 @@ OUTPUT RULES (STRICT):
 - Treat `CACHED_SUCCESS[...]` as reusable factual evidence from prior successful tool execution.
 - ONLY use information explicitly present in the Conversation History (especially `CACHED_SUCCESS[...]` entries and other tool outputs), do NOT invent or assume any facts not in the history.
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
-- If the recent Conversation History contains a tool error with a HTTP 4xx or HTTP 5xx status code in relationship to password authentication, respond with exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for password again. Do NOT retry the action.
+- If the Conversation History's recent FINAL AGENT STEP contains a tool error with a HTTP 4xx or HTTP 5xx status code in relationship to password authentication, respond with exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for password again. Do NOT retry the action.
 
 EMPTY AND MISSING DATA RULES (STRICT):
 - If a tool returned successfully but its data payload is empty (e.g., an empty list, zero count, or null records), you MUST tell the user clearly that no records were found. Do NOT invent, assume, or fabricate records that are not present in the tool output.
