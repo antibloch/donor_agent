@@ -1187,7 +1187,7 @@ def campaign_donation(
         # Call backend API
         donation_response = requests.post(
             f"{BASE_URL}/api/v1/donors/campaign/donate",
-            headers={"X-API-KEY": xApiKey},
+            headers=headers,
             json={
                 "compaignId": campaignId,
                 "amount": amount,
