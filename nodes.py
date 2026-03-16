@@ -1195,12 +1195,34 @@ RULES:
             if done and step is None:
                 missing_args = _normalize_missing_args(decision["missing_args"])
                 gate_notes.append(reason or "Repair model stopped.")
+                last_agentic_step = {
+                    "react_step": react_idx + 1,
+                    "target_error_id": target_error_id,
+                    "tool": "gate_decision",
+                    "args": {},
+                    "ok": False,
+                    "output": reason or "Gate decided no further automatic repair is possible.",
+                    "reason": reason or "Gate decided no further automatic repair is possible.",
+                    "missing_args": missing_args,
+                    "done": True,
+                }
                 break
 
             if target_error_id is None:
                 gate_notes.append(
                     reason or "Repair model did not choose a valid unresolved error."
                 )
+                last_agentic_step = {
+                    "react_step": react_idx + 1,
+                    "target_error_id": None,
+                    "tool": "gate_decision",
+                    "args": {},
+                    "ok": False,
+                    "output": reason or "Gate could not identify a valid error target.",
+                    "reason": reason or "Gate could not identify a valid error target.",
+                    "missing_args": missing_args,
+                    "done": True,
+                }
                 break
 
             target_error = next(
@@ -1231,12 +1253,34 @@ RULES:
                 gate_notes.append(
                     f"Repair model selected invalid target error id `{target_error_id}`."
                 )
+                last_agentic_step = {
+                    "react_step": react_idx + 1,
+                    "target_error_id": target_error_id,
+                    "tool": "gate_decision",
+                    "args": {},
+                    "ok": False,
+                    "output": f"Invalid target error id `{target_error_id}` — not in unresolved set.",
+                    "reason": f"Repair model selected an invalid target error id.",
+                    "missing_args": missing_args,
+                    "done": True,
+                }
                 break
 
             if step is None:
                 gate_notes.append(
                     reason or f"No safe repair step returned for target error `{target_error_id}`."
                 )
+                last_agentic_step = {
+                    "react_step": react_idx + 1,
+                    "target_error_id": target_error_id,
+                    "tool": "gate_decision",
+                    "args": {},
+                    "ok": False,
+                    "output": reason or f"No safe repair step available for `{target_error_id}`.",
+                    "reason": reason or f"No safe repair step returned for target error `{target_error_id}`.",
+                    "missing_args": missing_args,
+                    "done": True,
+                }
                 break
 
             tool_name = step["tool"]
@@ -1249,8 +1293,20 @@ RULES:
                 gate_notes.append(
                     f"Skipped duplicate repair step for `{tool_name}` targeting `{target_error_id}`."
                 )
-                if "password" in (step.get("args") or {}) and "password" not in missing_args:                                                                                
-                    missing_args = _normalize_missing_args(missing_args + ["password"])  
+                if "password" in (step.get("args") or {}) and "password" not in missing_args:
+                    missing_args = _normalize_missing_args(missing_args + ["password"])
+                    
+                last_agentic_step = {
+                    "react_step": react_idx + 1,
+                    "target_error_id": target_error_id,
+                    "tool": tool_name,
+                    "args": raw_args,
+                    "ok": False,
+                    "output": "Repair step skipped — identical step already attempted this gate run.",
+                    "reason": "Duplicate repair step detected; no further automatic repair attempted.",
+                    "missing_args": missing_args,
+                    "done": True,
+                }
                 break
 
             seen_step_signatures.add(sig)
