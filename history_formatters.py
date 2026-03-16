@@ -70,14 +70,18 @@ def _extract_first_json_object(text: str) -> str:
 def _parse_plan(raw: str) -> Dict:
     if not raw:
         return {"steps": [], "missing_args": []}
+    def _quote_bare_placeholders(s: str) -> str:
+        # Make planner placeholders JSON-safe when the model emits bare <TOKEN> values.
+        return re.sub(r'(?<=:\s)(<[^<>\n]+>)(?=\s*[,}\]])', r'"\1"', s)
     try:
         json_str = _extract_first_json_object(raw)
+        json_str = _quote_bare_placeholders(json_str)
         return json.loads(json_str)
     except:
         try:
             match = re.search(r"\{.*\}", raw, re.DOTALL)
             if match:
-                return json.loads(match.group(0))
+                return json.loads(_quote_bare_placeholders(match.group(0)))
         except:
             pass
     return {"steps": [], "missing_args": []}
