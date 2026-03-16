@@ -112,7 +112,7 @@ def make_planner_node(tools_by_name: dict):
         6. If downstream args are not yet known, include the downstream tool with a symbolic placeholder.
         7. Only return steps: [] if chat history already fully satisfies the request.
         8. If the previous round already asked for missing inputs, shrink that list if the latest user message or prior successful tool outputs now cover some of them.
-        9. If the Chat History shows a previous tool call returned any HTTP 4xx or HTTP 5xx error, do NOT schedule that same tool again. These are server-side errors that cannot be fixed by retrying. Set steps to [] and missing_args to [].
+        9. If the recent Conversation History shows a previous tool call returned any HTTP 4xx or HTTP 5xx error related to password authentication, do NOT schedule that same tool again. These are server-side errors that cannot be fixed by retrying. Set steps to [] and missing_args to [].
 
         SITUATIONAL CONTEXT USAGE:
         The conversation history may include a section labeled "SITUATIONAL CONTEXT".
@@ -563,7 +563,7 @@ OUTPUT RULES (STRICT):
 - Treat `CACHED_SUCCESS[...]` as reusable factual evidence from prior successful tool execution.
 - ONLY use information explicitly present in the Conversation History (especially `CACHED_SUCCESS[...]` entries and other tool outputs), do NOT invent or assume any facts not in the history.
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
-- If the Conversation History contains a tool error with any HTTP 4xx or HTTP 5xx status code, respond with exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for password again. Do NOT retry the action.
+- If the recent Conversation History contains a tool error with a HTTP 4xx or HTTP 5xx status code in relationship to password authentication, respond with exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for password again. Do NOT retry the action.
 
 EMPTY AND MISSING DATA RULES (STRICT):
 - If a tool returned successfully but its data payload is empty (e.g., an empty list, zero count, or null records), you MUST tell the user clearly that no records were found. Do NOT invent, assume, or fabricate records that are not present in the tool output.
@@ -1004,24 +1004,6 @@ def make_gate_node(
             enriched["error_id"] = f"E{idx}"
             original_errors.append(enriched)
 
-        # Immediately mark HTTP 4xx/5xx errors as unrepayable — skip gate entirely
-        http_error_ids = set()
-        for err in original_errors:
-            err_text = str(err.get("error", ""))
-            if any(f"HTTP {code}" in err_text for code in [
-                "400", "401", "403", "404", "405", "422", "429",
-                "500", "501", "502", "503", "504"
-            ]):
-                http_error_ids.add(err["error_id"])
-
-        if http_error_ids and len(http_error_ids) == len(original_errors):
-            return {
-                "plan": {"steps": [], "missing_args": base_missing_args},
-                "messages": [AIMessage(content="System Note: Agentic gate stopped. All errors are HTTP server errors that cannot be repaired automatically.")],
-                "last_tool_error": original_errors[0],
-                "last_agentic_step": None,
-            }
-
         fixed_error_ids: set[str] = set()
         last_agentic_step: Dict[str, Any] | None = None
 
@@ -1138,10 +1120,9 @@ RULES:
 5. If your chosen repair step is only a prerequisite and does not yet directly fix the chosen error, set `mark_target_fixed_if_success` to false.
 6. Do not repeat an identical or semantically equivalent repair step already attempted in this gate run.
 7. If no safe automatic repair is possible, set `done`: true.
-8. If the error contains HTTP 4xx or HTTP 5xx, set done: true immediately. These are server-side errors that cannot be repaired by calling other tools. Do NOT attempt any repair steps.
-9. NEVER pass empty lists or empty objects for arguments that require real data. If the original error was caused by placeholder strings, the repair MUST replace them with actual values from cached outputs, not with empty containers.
-10. When a prior missing arg becomes recoverable from a successful repair step or cached tool output, remove it from `missing_args`.
-11. When `done` is true, do not return a partial list. Return the full remaining unresolved set the user must provide next.
+8. NEVER pass empty lists or empty objects for arguments that require real data. If the original error was caused by placeholder strings, the repair MUST replace them with actual values from cached outputs, not with empty containers.
+9. When a prior missing arg becomes recoverable from a successful repair step or cached tool output, remove it from `missing_args`.
+10. When `done` is true, do not return a partial list. Return the full remaining unresolved set the user must provide next.
 """.strip()
             
             if DEBUG_MESSAGES == 1 and (SHOW_GATE_HISTORY == 1 or 
