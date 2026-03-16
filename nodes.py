@@ -3,6 +3,7 @@ from uuid import uuid4
 from typing import Dict, List, Any
 from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
 from rich import print as rich_print
+import re
 
 from llm import make_model       
 from history_formatters import (
@@ -1370,6 +1371,18 @@ RULES:
             # reflect actual execution outcomes (ok, output) and only the whitelist
             # of meaningful context fields is exposed to planner/responder.
             last_agentic_step = attempt_log[-1]
+
+            # if output of last_agentic_step contains "Invalid password" or "Missing password" or similar, then break agentic loop
+            if isinstance(semantic_output, str) and re.search(r"(invalid|missing).{0,20}password", semantic_output, re.IGNORECASE):
+                if "password" not in missing_args:
+                    missing_args = _normalize_missing_args(missing_args + ["password"])
+                gate_notes.append(
+                    f"Repair step `{tool_name}` output indicates a password issue: {semantic_output}. Stopping automatic repair."
+                )
+                last_agentic_step["reason"] = "Detected password-related issue in tool output; halting further automatic repair."
+                last_agentic_step["missing_args"] = missing_args
+                last_agentic_step["done"] = True
+                break
 
             trunc_lim_tool = TRUNCATION_LIMIT_GATE_TOOL_OUTPUT
 
