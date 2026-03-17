@@ -1222,6 +1222,15 @@ MANDATORY REASONING PROTOCOL (perform internally before producing output):
         PRIORITY: always prefer repairing failed planner steps in their original order
         over running tools outside the planner's sequence.
 
+        AVAILABLE TOOLS FALLBACK (applies when neither B1–B4 nor the planner plan resolves the arg):
+        If the planner's original plan did NOT include a step that would produce the missing
+        entity id, inspect AVAILABLE TOOLS descriptions for a tool whose output is known to
+        return that entity type (e.g., "list_charity_grants" returns grantId values).
+        If that tool's required inputs (e.g., charityId) are resolvable from any source,
+        emit it as the next prerequisite step (mark_target_fixed_if_success=false).
+        Never skip this fallback just because the tool was absent from the original plan —
+        an entity id that can be fetched via an available tool is NEVER truly missing.
+
   STEP C — BUILD THE REPAIR ARGS
     • Only include args for which you found a concrete grounded value.
     • Never substitute placeholders, empty lists, empty objects, or invented values.
@@ -1353,7 +1362,12 @@ MANDATORY REASONING PROTOCOL (perform internally before producing output):
          → Search SOURCE 3 (cached tool outputs) for the same.
          → If a non-empty array is found in EITHER source, you are NOT allowed to mark
            grantId/campaignId as missing. Apply ARRAY MATCH immediately and emit the step.
-
+         → If NO array is found in either source, scan AVAILABLE TOOLS for a tool that
+           lists the entity type (e.g., list_charity_grants for grantId). If such a tool
+           exists AND its required inputs (e.g., charityId) are grounded from any source,
+           you MUST emit that tool as the next prerequisite step instead of marking the
+           arg as missing. done=true is only valid when no such tool exists or its inputs
+           are also unresolvable.
     6. NEVER REPEAT: if the exact same tool+args already appear in SOURCE 4, skip it.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
