@@ -698,14 +698,14 @@ Now write the final answer based strictly on the Conversation History below, the
             f"\n\nTOOL CONTEXT (parameter descriptions and valid values for all available tools):\n{tool_context}"
         )
         final_prompt = [
+            SystemMessage(content=system_prompt.strip()),
             HumanMessage(
                 content=(
-                    f"{system_prompt.strip()}\n\n"
                     f"Conversation History:\n{transcript}\n\n"
                     f"{situational_section}\n\n"
                     f"{final_instruction}"
                 )
-            )
+            ),
         ]
 
         trunc_limit_hist = TRUNCATION_LIMIT_RESPONDER_HISTORY
