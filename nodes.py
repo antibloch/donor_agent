@@ -19,6 +19,7 @@ from history_formatters import (
     _compact_json, 
     _safe_json_loads, 
     _extract_tool_error,
+    _format_previous_agentic_step,
     _format_last_agentic_step, 
     _detect_semantic_error,
 )
@@ -81,9 +82,9 @@ def make_planner_node(tools_by_name: dict):
 
         VERY IMPORTANT:
         - Tool descriptions contain dependency chains and required ordering.
-        - Use any FINAL_AGENT_STEP[gate] context in Chat History as grounded execution context when choosing the next plan.
-        - FINAL_AGENT_STEP[gate] may include reason and missing_args from the last gate decision; use them to continue unfinished repair work correctly.
-        - The most recent FINAL_AGENT_STEP[gate] and r is especially important when continuing or repairing a multi-round workflow.
+        - Use any FINAL_AGENT_STEP[gate] and PREVIOUS_AGENT_STEP[gate] context in Chat History as grounded execution context when choosing the next plan.
+        - FINAL_AGENT_STEP[gate] and PREVIOUS_AGENT_STEP[gate] may include reason, output, and missing_args from recent gate activity; use them to continue unfinished repair work correctly.
+        - The most recent FINAL_AGENT_STEP[gate], and when present its paired PREVIOUS_AGENT_STEP[gate], are especially important when continuing or repairing a multi-round workflow.
         - You must follow those dependency chains.
         - If a later tool depends on an earlier tool's result, you must still include the later tool in the plan when it is part of the required chain.
         - When an argument is not yet known because it will come from a previous tool result, use a symbolic placeholder instead of omitting the dependent tool.
@@ -108,6 +109,13 @@ def make_planner_node(tools_by_name: dict):
         - For action tools like donations, bids, wallet funding, or other write operations: if any required final argument is not already known and not recoverable from earlier tools, add its exact field name to missing_args.
         - Do not ask for args already supplied in the latest user message.
         - Do not include any arg in missing_args if it can be grounded from prior successful tool outputs already present in chat history.
+        - Entity ids such as charityId, grantId, campaignId, productId, auction_id, and similar backend identifiers are NOT user-facing missing args when a prior successful tool output in chat history already contains a non-empty array of candidate entities for that type.
+        - If prior successful output already contains candidate entities for a needed id:
+          1. first try to match the user's requested name/title semantically,
+          2. if no semantic match is clear, select the first item,
+          3. use that item's _id/id directly in the planned tool args,
+          4. do NOT put that id field into missing_args.
+        - Example: if list_charity_grants already returned one or more grants, you must plan grant_donation with a concrete grantId from that cached output rather than returning missing_args=["grantId"].
 
         CONTINUING A PRIOR INCOMPLETE ACTION (highest priority rule — check this first):
         - If Chat History contains a FINAL_AGENT_STEP[gate] with done=true and non-empty missing_args,
@@ -116,7 +124,7 @@ def make_planner_node(tools_by_name: dict):
           (a) the newly provided values substituted for their placeholders,
           (b) all previously resolved values (ids, amounts, etc.) reused from Chat History.
           Do NOT return steps: [] in this case — the action was never completed and must be retried.
-        - Look at the FINAL_AGENT_STEP[gate] reason field and missing_args to understand what was pending.
+        - Look at the FINAL_AGENT_STEP[gate] and PREVIOUS_AGENT_STEP[gate] reason/output/missing_args fields to understand what was pending and what was already attempted.
         - Do not re-run discovery tools (discover_charities, list_charity_active_campaigns, etc.) if
           their outputs are already present in Chat History — reuse those cached values directly.
         - Use Python_REPL ONLY for genuine computation (math, data transformation). NEVER use it to
@@ -489,6 +497,28 @@ def make_responder_node():
         empty_data_notes = _detect_empty_results(current_round_tool_msgs)
         lines = []
 
+        effective_missing_args = list(missing_args)
+        effective_step = dict(last_agentic_step) if isinstance(last_agentic_step, dict) else {}
+        prev_attempt = effective_step.get("previous_attempt") if isinstance(effective_step, dict) else None
+
+        # Duplicate-step terminal states should inherit the previous executed attempt's
+        # grounded context. Otherwise stale planner missing_args (e.g. grantId) leak
+        # into responder behavior even after the gate already resolved them.
+        if (
+            isinstance(effective_step, dict)
+            and effective_step.get("reason") == "Duplicate repair step detected; no further automatic repair attempted."
+            and isinstance(prev_attempt, dict)
+        ):
+            prev_missing = list(prev_attempt.get("missing_args") or [])
+            prev_output = str(prev_attempt.get("output", ""))
+            prev_reason = str(prev_attempt.get("reason", "")).strip()
+            if not prev_missing and re.search(r"(request failed:?\s*(?:4|5)\d\d|client error|server error|http\s*(?:4|5)\d\d)", prev_output, re.IGNORECASE):
+                effective_missing_args = []
+                effective_step["tool"] = prev_attempt.get("tool") or effective_step.get("tool")
+                effective_step["reason"] = prev_reason or effective_step.get("reason", "")
+                effective_step["output"] = prev_output or effective_step.get("output", "")
+                effective_step["missing_args"] = []
+
         # Only emit ACTIVE USER REQUEST when the gate didn't succeed — if the
         # gate succeeded the responder should use FINAL AGENT STEP SUCCEEDED instead.
         gate_ok = isinstance(last_agentic_step, dict) and last_agentic_step.get("ok") is True
@@ -502,25 +532,25 @@ def make_responder_node():
             lines.append(recent_auth_context)
 
         # 1) Missing user input
-        if missing_args:
+        if effective_missing_args:
             lines.append(
                 f"MISSING USER INPUT: The system determined the following inputs "
                 f"are required from the user before the requested action can proceed: "
-                f"{', '.join(missing_args)}. "
+                f"{', '.join(effective_missing_args)}. "
                 f"Ask the user for ONLY these specific values. "
                 f"Do NOT attempt the action without them."
             )
 
         # 2) Final gate step for this round (preferred over coarse tool heuristics)
-        has_final_gate_step = isinstance(last_agentic_step, dict) and bool(last_agentic_step)
+        has_final_gate_step = isinstance(effective_step, dict) and bool(effective_step)
 
         if has_final_gate_step:
-            step_ok = last_agentic_step.get("ok")
-            step_tool = last_agentic_step.get("tool") or "gate_decision"
-            step_output = str(last_agentic_step.get("output", ""))[:250]
-            step_reason = str(last_agentic_step.get("reason", "")).strip()
-            step_missing_args = list(last_agentic_step.get("missing_args") or [])
-            step_done = bool(last_agentic_step.get("done"))
+            step_ok = effective_step.get("ok")
+            step_tool = effective_step.get("tool") or "gate_decision"
+            step_output = str(effective_step.get("output", ""))[:250]
+            step_reason = str(effective_step.get("reason", "")).strip()
+            step_missing_args = list(effective_step.get("missing_args") or [])
+            step_done = bool(effective_step.get("done"))
 
             if step_ok is False:
                 msg = (
@@ -611,9 +641,9 @@ Assume the user may be a confused or first-time donor who needs clear guidance.
 
 OUTPUT RULES (STRICT — apply in this exact priority order):
 - RULE 1 (MISSING USER INPUT — highest priority): If the SITUATIONAL CONTEXT contains a MISSING USER INPUT line, your response MUST begin with: "The following required information is either incorrect or not provided: [arg list]." — where [arg list] is a comma-separated human-readable list of arg names taken EXCLUSIVELY from that MISSING USER INPUT line (do NOT infer, add, or derive additional args from TOOL CONTEXT, UNRESOLVED ERROR, or any other source), converted to natural language (snake_case/camelCase → spaced words, e.g., donation_type → "donation type", countryCode → "country code"). Then, for each arg in that list that has a known set of valid values described in TOOL CONTEXT or in relevant successful Giver tool outputs in the Conversation History, append on a new line: "Available [arg name] options: [comma-separated list]." Do this for every arg in the MISSING USER INPUT list that has enumerable options. Base those options on Giver tool outputs first. End with "Please try again." Do NOT apply RULE 2 when this rule fires.
-- RULE 2 (SERVER / AUTH ERROR — only when RULE 1 does not apply): If the SITUATIONAL CONTEXT or most recent FINAL AGENT STEP contains a tool error with an HTTP 401, HTTP 403, or HTTP 5xx status code AND there is no MISSING USER INPUT in SITUATIONAL CONTEXT, your FINAL answer MUST be exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for any missing arg. Do NOT retry the action.
+- RULE 2 (SERVER / AUTH ERROR — only when RULE 1 does not apply): If the SITUATIONAL CONTEXT or most recent FINAL AGENT STEP contains a tool error with an HTTP 401, HTTP 403, HTTP 5xx, or a grounded duplicate-retry HTTP 4xx failure (for example 400 Bad Request after all required args were already grounded) AND there is no MISSING USER INPUT in SITUATIONAL CONTEXT, your FINAL answer MUST be exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for any missing arg. Do NOT retry the action.
 - If SITUATIONAL CONTEXT in Conversation History indicates FINAL AGENT STEP FAILED, you MUST inform the user that the latest automated attempt failed,when drafting final draft in natural professional language.
-- When FINAL_AGENT_STEP[gate] shows a failure, prefer that evidence over cached data when explaining the result (naturally for non-technical user), when drafting final draft in natural professional language.
+- When FINAL_AGENT_STEP[gate] or PREVIOUS_AGENT_STEP[gate] shows a failure or relevant attempted repair context, prefer that evidence over cached data when explaining the result (naturally for non-technical user), when drafting final draft in natural professional language.
 - Do NOT present information as verified if the most recent gate step indicates a failed verification attempt.
 - Always show the money in USD.
 - Authentication for the latest user request must be grounded only in tool outputs that occur AFTER the latest USER password submission.
@@ -623,13 +653,13 @@ OUTPUT RULES (STRICT — apply in this exact priority order):
 - Do NOT describe tool usage steps.
 - Do NOT output any code blocks or code snippets.
 - The Conversation History may contain cached tool traces labeled as `CACHED_TOOL_CALL[...]` and cached successful results labeled as `CACHED_SUCCESS[...]`.
-- The Conversation History may contain FINAL_AGENT_STEP[gate] entries from the current and prior rounds. Use them as grounded execution context for the final response.
-- Give highest priority to the most recent FINAL_AGENT_STEP[gate], but use earlier ones too when they help explain or continue an ongoing workflow.
+- The Conversation History may contain FINAL_AGENT_STEP[gate] and PREVIOUS_AGENT_STEP[gate] entries from the current and prior rounds. Use them as grounded execution context for the final response.
+- Give highest priority to the most recent FINAL_AGENT_STEP[gate], and when present its paired PREVIOUS_AGENT_STEP[gate], but use earlier ones too when they help explain or continue an ongoing workflow.
 - The SITUATIONAL CONTEXT is authoritative programmatic state. Use it together with Conversation History, with special attention to the latest unresolved USER request and any still-unanswered USER queries carried forward in the workflow.
 - Treat `CACHED_SUCCESS[...]` as reusable factual evidence from prior successful tool execution.
 - ONLY use information explicitly present in the Conversation History (especially `CACHED_SUCCESS[...]` entries and other tool outputs), do NOT invent or assume any facts not in the history.
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
-- If the Conversation History's recent FINAL AGENT STEP or SITUATIONAL CONTEXT contains a tool error with a HTTP 4xx or HTTP 5xx status code in relationship to password authentication, respond with exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for password again. Do NOT retry the action.
+- If the Conversation History's recent FINAL AGENT STEP or SITUATIONAL CONTEXT contains a tool error with a HTTP 4xx or HTTP 5xx status code in relationship to password authentication, or a grounded action retry that still failed with HTTP 4xx/5xx after required args were already resolved, respond with exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for password again. Do NOT retry the action.
 - If the SITUATIONAL CONTEXT contains a RECENT AUTHENTICATION line showing a successful auth-sensitive tool result after the latest password-bearing USER message, treat that as authoritative evidence that the most recent authentication succeeded.
 - ACTION COMPLETION RULE (highest priority for action requests): When the user's request was an action (donate, place a bid, fund wallet, etc.) and the corresponding action tool (grant_donation, campaign_donation, product_donation, place_bid, fund_wallet) returned a success response anywhere in the Conversation History — including inside gate repair steps — report that action as COMPLETED. Entity name or title mismatches between the user's requested entity and the system's best-match selection are NOT failures. Do NOT say the entity was not found or the action failed if the action tool itself succeeded.
 
@@ -708,7 +738,7 @@ Now write the final answer based strictly on the Conversation History below, the
             ),
         ]
 
-        trunc_limit_hist = TRUNCATION_LIMIT_RESPONDER_HISTORY
+        trunc_limit_hist = 100000
         if DEBUG_MESSAGES == 1 and SHOW_RESPONDER_HISTORY == 1:
             rich_print("\n" + "=" * 80)
             rich_print("RESPONDER CONVERSATION HISTORY")
@@ -764,6 +794,14 @@ def make_gate_node(
     """
 
     model = make_model(temperature=0.0)
+
+    def _debug_gate_terminal(react_step: int, label: str, payload: Dict[str, Any]) -> None:
+        if DEBUG_MESSAGES != 1:
+            return
+        rich_print(
+            f"[GATE STEP {react_step} TERMINAL] {label} "
+            f"{_compact_json(payload, max_chars=500)}"
+        )
 
     def _strip_code_fences(text: str) -> str:
         text = (text or "").strip()
@@ -1536,6 +1574,7 @@ RULES:
                     "missing_args": missing_args,
                     "done": True,
                 }
+                _debug_gate_terminal(react_idx + 1, "decision", last_agentic_step)
                 break
 
             if target_error_id is None:
@@ -1553,6 +1592,7 @@ RULES:
                     "missing_args": missing_args,
                     "done": True,
                 }
+                _debug_gate_terminal(react_idx + 1, "invalid_target", last_agentic_step)
                 break
 
             target_error = next(
@@ -1576,6 +1616,7 @@ RULES:
                     "done": True,
                 }
                 gate_notes.append(f"No safe automatic repair available for `{target_error_id}`.")
+                _debug_gate_terminal(react_idx + 1, "done_without_step", last_agentic_step)
                 break
 
 
@@ -1594,6 +1635,7 @@ RULES:
                     "missing_args": missing_args,
                     "done": True,
                 }
+                _debug_gate_terminal(react_idx + 1, "unknown_target", last_agentic_step)
                 break
 
             if step is None:
@@ -1611,6 +1653,7 @@ RULES:
                     "missing_args": missing_args,
                     "done": True,
                 }
+                _debug_gate_terminal(react_idx + 1, "missing_step", last_agentic_step)
                 break
 
             tool_name = step["tool"]
@@ -1623,9 +1666,14 @@ RULES:
                 gate_notes.append(
                     f"Skipped duplicate repair step for `{tool_name}` targeting `{target_error_id}`."
                 )
-                if "password" in (step.get("args") or {}) and "password" not in missing_args:
-                    missing_args = _normalize_missing_args(missing_args + ["password"])
-                    
+                previous_attempt = attempt_log[-1] if attempt_log else None
+                # A duplicate retry should not resurrect stale planner missing_args.
+                # Reuse the previous executed attempt's missing_args, which reflect
+                # what was actually unresolved after grounding.
+                if previous_attempt:
+                    missing_args = _normalize_missing_args(previous_attempt.get("missing_args"))
+                else:
+                    missing_args = []
                 last_agentic_step = {
                     "react_step": react_idx + 1,
                     "target_error_id": target_error_id,
@@ -1637,6 +1685,18 @@ RULES:
                     "missing_args": missing_args,
                     "done": True,
                 }
+                if previous_attempt:
+                    last_agentic_step["previous_attempt"] = {
+                        "react_step": previous_attempt.get("react_step"),
+                        "tool": previous_attempt.get("tool"),
+                        "args": previous_attempt.get("args"),
+                        "ok": previous_attempt.get("ok"),
+                        "reason": previous_attempt.get("reason", ""),
+                        "missing_args": previous_attempt.get("missing_args") or [],
+                        "done": previous_attempt.get("done"),
+                        "output": previous_attempt.get("output"),
+                    }
+                _debug_gate_terminal(react_idx + 1, "duplicate_step", last_agentic_step)
                 break
 
             seen_step_signatures.add(sig)
@@ -1752,6 +1812,27 @@ RULES:
         # Persist the final gate step as a normal AIMessage so it becomes part
         # of durable conversation history for future planner/responder/gate turns.
         if last_agentic_step:
+            if len(attempt_log) >= 2 and not isinstance(last_agentic_step.get("previous_attempt"), dict):
+                prev = attempt_log[-1]
+                if (
+                    last_agentic_step.get("tool") == prev.get("tool")
+                    and last_agentic_step.get("react_step") == prev.get("react_step")
+                    and len(attempt_log) >= 2
+                ):
+                    prev = attempt_log[-2]
+                last_agentic_step["previous_attempt"] = {
+                    "react_step": prev.get("react_step"),
+                    "tool": prev.get("tool"),
+                    "args": prev.get("args"),
+                    "ok": prev.get("ok"),
+                    "reason": prev.get("reason", ""),
+                    "missing_args": prev.get("missing_args") or [],
+                    "done": prev.get("done"),
+                    "output": prev.get("output"),
+                }
+            prev_gate_step_line = _format_previous_agentic_step(last_agentic_step)
+            if prev_gate_step_line:
+                emitted_messages.append(AIMessage(content=prev_gate_step_line))
             gate_step_line = _format_last_agentic_step(last_agentic_step)
             if gate_step_line:
                 emitted_messages.append(AIMessage(content=gate_step_line))

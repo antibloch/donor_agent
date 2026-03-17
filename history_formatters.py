@@ -67,21 +67,66 @@ def _extract_first_json_object(text: str) -> str:
                     return cleaned[start : i + 1].strip()
     raise ValueError("Unbalanced JSON braces in LLM output")
 
-def _parse_plan(raw: str) -> Dict:
+def _normalize_plan_shape(raw_obj: Any) -> Dict[str, Any]:
+    if not isinstance(raw_obj, dict):
+        return {"steps": [], "missing_args": []}
+
+    steps = raw_obj.get("steps", [])
+    missing_args = raw_obj.get("missing_args", [])
+
+    if not isinstance(steps, list):
+        steps = []
+    if not isinstance(missing_args, list):
+        missing_args = []
+
+    return {
+        "steps": [step for step in steps if isinstance(step, dict)],
+        "missing_args": [item for item in missing_args if isinstance(item, str)],
+    }
+
+def _coerce_model_content_to_text(raw: Any) -> str:
+    if raw is None:
+        return ""
+    if isinstance(raw, str):
+        return raw
+    if isinstance(raw, dict):
+        return json.dumps(raw, ensure_ascii=False)
+    if isinstance(raw, list):
+        chunks = []
+        for item in raw:
+            if isinstance(item, str):
+                chunks.append(item)
+            elif isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str):
+                    chunks.append(text)
+                else:
+                    chunks.append(json.dumps(item, ensure_ascii=False))
+            else:
+                chunks.append(str(item))
+        return "\n".join(chunk for chunk in chunks if chunk)
+    return str(raw)
+
+def _parse_plan(raw: Any) -> Dict:
     if not raw:
         return {"steps": [], "missing_args": []}
     def _quote_bare_placeholders(s: str) -> str:
         # Make planner placeholders JSON-safe when the model emits bare <TOKEN> values.
         return re.sub(r'(?<=:\s)(<[^<>\n]+>)(?=\s*[,}\]])', r'"\1"', s)
+
+    if isinstance(raw, dict):
+        return _normalize_plan_shape(raw)
+
+    raw_text = _coerce_model_content_to_text(raw)
     try:
-        json_str = _extract_first_json_object(raw)
+        json_str = _extract_first_json_object(raw_text)
         json_str = _quote_bare_placeholders(json_str)
-        return json.loads(json_str)
+        return _normalize_plan_shape(json.loads(json_str))
     except:
         try:
-            match = re.search(r"\{.*\}", raw, re.DOTALL)
+            match = re.search(r"\{.*\}", raw_text, re.DOTALL)
             if match:
-                return json.loads(_quote_bare_placeholders(match.group(0)))
+                return _normalize_plan_shape(json.loads(_quote_bare_placeholders(match.group(0))))
         except:
             pass
     return {"steps": [], "missing_args": []}
@@ -519,9 +564,26 @@ def _format_synthetic_cached_tool_call(tool_name: str, tool_call_id: str | None 
 def _looks_like_final_gate_step_message(text: str) -> bool:
     return isinstance(text, str) and text.strip().startswith("FINAL_AGENT_STEP[gate] -> ")
 
+def _looks_like_previous_gate_step_message(text: str) -> bool:
+    return isinstance(text, str) and text.strip().startswith("PREVIOUS_AGENT_STEP[gate] -> ")
+
 def _history_already_has_final_gate_step(messages: Sequence[BaseMessage]) -> bool:
     for m in reversed(messages or []):
         if isinstance(m, AIMessage) and _looks_like_final_gate_step_message((m.content or "").strip()):
+            return True
+    return False
+
+def _history_already_has_previous_gate_step(messages: Sequence[BaseMessage]) -> bool:
+    for m in reversed(messages or []):
+        if isinstance(m, AIMessage) and _looks_like_previous_gate_step_message((m.content or "").strip()):
+            return True
+    return False
+
+def _history_has_exact_ai_text(messages: Sequence[BaseMessage], text: str) -> bool:
+    if not text:
+        return False
+    for m in messages or []:
+        if isinstance(m, AIMessage) and (m.content or "").strip() == text.strip():
             return True
     return False
 
@@ -550,6 +612,9 @@ def _truncate_last_gate_output(output: Any, max_chars: int | None = None) -> Any
 def _is_final_agent_step_text(text: str) -> bool:
     return isinstance(text, str) and text.strip().startswith("FINAL_AGENT_STEP[gate] -> ")
 
+def _is_previous_agent_step_text(text: str) -> bool:
+    return isinstance(text, str) and text.strip().startswith("PREVIOUS_AGENT_STEP[gate] -> ")
+
 def _format_last_agentic_step(last_agentic_step: Dict[str, Any] | None) -> str:
     if not isinstance(last_agentic_step, dict) or not last_agentic_step:
         return ""
@@ -565,7 +630,35 @@ def _format_last_agentic_step(last_agentic_step: Dict[str, Any] | None) -> str:
         "done": last_agentic_step.get("done"),
         "output": last_agentic_step.get("output"),
     }
+    previous_attempt = last_agentic_step.get("previous_attempt")
+    if isinstance(previous_attempt, dict) and previous_attempt:
+        payload["previous_attempt"] = {
+            "react_step": previous_attempt.get("react_step"),
+            "tool": previous_attempt.get("tool"),
+            "ok": previous_attempt.get("ok"),
+            "output": previous_attempt.get("output"),
+        }
     return f"FINAL_AGENT_STEP[gate] -> {_compact_json(payload, max_chars=TRUNCATION_TOOL_LIMIT)}"
+
+def _format_previous_agentic_step(last_agentic_step: Dict[str, Any] | None) -> str:
+    if not isinstance(last_agentic_step, dict) or not last_agentic_step:
+        return ""
+
+    previous_attempt = last_agentic_step.get("previous_attempt")
+    if not isinstance(previous_attempt, dict) or not previous_attempt:
+        return ""
+
+    payload = {
+        "react_step": previous_attempt.get("react_step"),
+        "tool": previous_attempt.get("tool"),
+        "args": _sanitize_sensitive_data(dict(previous_attempt.get("args") or {})),
+        "ok": previous_attempt.get("ok"),
+        "reason": previous_attempt.get("reason", ""),
+        "missing_args": list(previous_attempt.get("missing_args") or []),
+        "done": previous_attempt.get("done"),
+        "output": previous_attempt.get("output"),
+    }
+    return f"PREVIOUS_AGENT_STEP[gate] -> {_compact_json(payload, max_chars=TRUNCATION_TOOL_LIMIT)}"
 
 def _inject_before_latest_assistant(lines: List[str], injected_line: str) -> List[str]:
     """
@@ -612,6 +705,16 @@ def _inject_before_latest_user(lines: List[str], injected_line: str) -> List[str
     # Defensive fallback: append at end if no USER: line exists
     return lines + [injected_line]
 
+def _inject_before_latest_final_gate_step(lines: List[str], injected_line: str) -> List[str]:
+    if not injected_line:
+        return lines
+
+    for i in range(len(lines) - 1, -1, -1):
+        if _is_final_agent_step_text(lines[i]):
+            return lines[:i] + [injected_line] + lines[i:]
+
+    return lines + [injected_line]
+
 def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
     """Provides history for the repair node (Gate)."""
     best_tool_by_call_id = get_best_tool_message_by_call_id(messages)
@@ -637,7 +740,7 @@ def format_history_for_gate(messages: Sequence[BaseMessage]) -> str:
 
             content = (m.content or "").strip()
             if content:
-                if _is_final_agent_step_text(content):
+                if _is_final_agent_step_text(content) or _is_previous_agent_step_text(content):
                     lines.append(content)
                 else:
                     lines.append(f"ASSISTANT: {_redact_passwords(content)}")
@@ -725,7 +828,7 @@ def format_history_for_planner(
                             seen_call_ids.add(tcid)
             content = (m.content or "").strip()
             if content:
-                if _is_final_agent_step_text(content):
+                if _is_final_agent_step_text(content) or _is_previous_agent_step_text(content):
                     lines.append(content)
                 else:
                     lines.append(f"ASSISTANT: {_redact_passwords(content)}")
@@ -743,10 +846,22 @@ def format_history_for_planner(
 
     # Fallback injection only when the current gate step has not yet been
     # persisted as a normal AIMessage in history.
-    if not _history_already_has_final_gate_step(msgs):
+    previous_line = _format_previous_agentic_step(last_agentic_step)
+    final_line = _format_last_agentic_step(last_agentic_step)
+    if _history_has_exact_ai_text(msgs, previous_line):
+        previous_line = ""
+    current_final_exists = _history_has_exact_ai_text(msgs, final_line)
+    if previous_line and current_final_exists:
+        lines = _inject_before_latest_final_gate_step(lines, previous_line)
+        previous_line = ""
+    injected_gate_lines = "\n".join(filter(None, [
+        previous_line,
+        "" if current_final_exists else final_line,
+    ]))
+    if injected_gate_lines:
         lines = _inject_before_latest_assistant(
             lines,
-            _format_last_agentic_step(last_agentic_step),
+            injected_gate_lines,
         )
     return "\n".join(lines) if lines else "(no prior history)"
 
@@ -806,7 +921,7 @@ def format_history_for_responder(
                             lines.append(_format_cached_tool_output(tm.name, tm.content))
             content = (m.content or "").strip()
             if content:
-                if _is_final_agent_step_text(content):
+                if _is_final_agent_step_text(content) or _is_previous_agent_step_text(content):
                     lines.append(content)
                 else:
                     lines.append(f"ASSISTANT: {_redact_passwords(content)}")
@@ -826,9 +941,21 @@ def format_history_for_responder(
 
     # Fallback injection only when the current gate step has not yet been
     # persisted as a normal AIMessage in history.
-    if not _history_already_has_final_gate_step(messages):
+    previous_line = _format_previous_agentic_step(last_agentic_step)
+    final_line = _format_last_agentic_step(last_agentic_step)
+    if _history_has_exact_ai_text(messages, previous_line):
+        previous_line = ""
+    current_final_exists = _history_has_exact_ai_text(messages, final_line)
+    if previous_line and current_final_exists:
+        lines = _inject_before_latest_final_gate_step(lines, previous_line)
+        previous_line = ""
+    injected_gate_lines = "\n".join(filter(None, [
+        previous_line,
+        "" if current_final_exists else final_line,
+    ]))
+    if injected_gate_lines:
         lines = _inject_before_latest_user(
             lines,
-            _format_last_agentic_step(last_agentic_step),
+            injected_gate_lines,
         )
     return "\n".join(lines) if lines else "(empty)"
