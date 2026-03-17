@@ -90,6 +90,17 @@ def check_wallet_balance():
             "lockedBalance": wallet.get("lockedBalance"),
             "message": "Wallet balance retrieved successfully."
         }
+    
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
 
     except requests.exceptions.RequestException as e:
         return {
@@ -183,7 +194,18 @@ def list_saved_payment_methods():
             "count": len(cleaned_methods),
             "message": "Saved payment methods retrieved successfully."
         }
-
+    
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
+        
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
@@ -251,6 +273,17 @@ def create_payment_method_url():
         response.raise_for_status()
         data = response.json()
         return data
+    
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
 
     except requests.exceptions.RequestException as e:
         return {
@@ -362,6 +395,17 @@ def list_charities_in_country(country_code: str):
             "charities": cleaned_charities,
             "message": f"{len(cleaned_charities)} charities found in {country_code}."
         }
+    
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
 
     except requests.exceptions.RequestException as e:
         return {
@@ -437,6 +481,17 @@ def list_charity_products(charity_id: str):
         response.raise_for_status()
         return response.json()  
 
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
+
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
@@ -462,7 +517,7 @@ def list_charity_grants(charity_id: str):
         - after obtaining a valid charity_id from list_charities_in_country or discover_charities
 
         DEFAULT_CHAIN:
-        - discover_charities -> charity_details -> list_charity_grants
+        - discover_charities -> list_charity_grants
 
         WHEN TO USE:
         - user wants to see grants available for a selected charity
@@ -470,35 +525,37 @@ def list_charity_grants(charity_id: str):
         - user wants details like raised amount, title, status, and location
 
         REQUIRES (Intuitive Schema):
-        - charity_id (str): unique identifier of the charity
+        - charity_id (str): Unique identifier of the charity whose grants need to be retrieved.
 
         REQUIRES (Detailed Schema):
-        - charity_id (str): ID of the charity, obtained from list_charities_in_country or discover_charities
+        - charity_id (str): Unique ID of the charity. This value should be obtained from the output of 
+        `list_charities_in_country` or `discover_charities`.
 
         RETURNS (Intuitive Schema):
-        - list of grants for the charity including id, title, and status
+        - A list of grants associated with the specified charity. Each grant includes basic information 
+        such as id, title, and status.
 
         RETURNS (Detailed Schema):
-            - success (bool): indicates if the request was successful
-            - grants (list) -> each item contains:
-                _id (str): grant identifier
-                title (str)
-                description (str)
-                expectedAmount (float)
-                raisedAmount (float)
-                status (str)
-                location (dict):
-                    city (str)
-                    state (str)
-                    country (str)
-                    countryCode (str)
-                    latitude (float)
-                    longitude (float)
-                charityId (str): reference to the charity
-                createdAt (str)
-                updatedAt (str)
-            - totalGrants (int): total number of grants returned
-            - message (str): any status or informational message
+        - success (bool): Indicates whether the request was executed successfully.
+        - grants (list): List of grant objects returned by the API. Each grant contains:
+            - _id (str): Unique identifier of the grant.
+            - title (str): Title of the grant.
+            - description (str): Detailed description of the grant.
+            - expectedAmount (float): Total amount expected to be raised for the grant.
+            - raisedAmount (float): Amount raised so far.
+            - status (str): Current status of the grant (e.g., active, completed, closed).
+            - location (dict): Geographic information related to the grant:
+                - city (str): City where the grant activity is located.
+                - state (str): State or province of the grant location.
+                - country (str): Country where the grant is located.
+                - countryCode (str): ISO country code of the country.
+                - latitude (float): Latitude coordinate of the grant location.
+                - longitude (float): Longitude coordinate of the grant location.
+            - charityId (str): ID of the charity associated with this grant.
+            - createdAt (str): Timestamp when the grant was created.
+            - updatedAt (str): Timestamp when the grant was last updated.
+        - totalGrants (int): Total number of grants returned in the response.
+        - message (str): Optional informational or status message returned by the API.
 
         CHAIN_OUTPUT_FOR_NEXT_TOOL:
         - grant _id can be used for tools requiring grant selection or checkout
@@ -559,6 +616,17 @@ def list_charity_grants(charity_id: str):
             "totalGrants": len(cleaned_grants),
             "message": f"{len(cleaned_grants)} grants found for charity {charity_id}."
         }
+    
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
 
     except requests.exceptions.RequestException as e:
         return {
@@ -742,6 +810,17 @@ def list_charity_active_campaigns(charity_id: str):
             "message": f"{len(cleaned_campaigns)} active campaigns retrieved."
         }
 
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
+
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
@@ -790,6 +869,17 @@ def get_campaign_donation_types():
             "donation_map": donation_map,
             "donation_types": categories
         }
+    
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
 
     except Exception as e:
         return {
@@ -878,6 +968,16 @@ def get_transaction_history():
             "transactions": data.get("data", []),
             "pagination": data.get("pagination", {})
         }
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
 
     except requests.exceptions.RequestException as e:
         return {
@@ -973,6 +1073,16 @@ def fund_wallet(amount: float, paymentMethodId: str, password: str):
             "message": data.get("message", "Wallet funded successfully"),
             "data": data.get("data", {})
         }
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
 
     except requests.exceptions.RequestException as e:
         return {
@@ -1082,6 +1192,18 @@ def product_donation(
         response.raise_for_status()
         data = response.json()
         return data
+    
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
+        
 
     except requests.exceptions.RequestException as e:
         return {
@@ -1216,6 +1338,17 @@ def campaign_donation(
         donation_response.raise_for_status()
         return donation_response.json()
 
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = donation_response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
+        
     except requests.exceptions.RequestException as e:
         return {"success": False, "message": f"Request failed: {str(e)}", "data": {}}
     except Exception as e:
@@ -1247,8 +1380,8 @@ def grant_donation(charityId: str, amount: float, grantId: str, password: str):
         - password (str): user password for authorization
 
         REQUIRES (Detailed Schema):
-            - charityId (str): unique identifier of the charity (from list_charity_grants)
-            - grantId (str): unique identifier of the grant (from list_charity_grants)
+            - charityId (str): unique identifier of the charity (from charity_details)
+            - grantId (str): unique identifier of the grant (_id from list_charity_grants)
             - amount (float): monetary amount to donate toward the grant
             - password (str): authenticated user's password for transaction authorization
 
@@ -1298,6 +1431,17 @@ def grant_donation(charityId: str, amount: float, grantId: str, password: str):
         data = response.json()
         return data
     
+    except requests.exceptions.HTTPError as e:
+        try:
+            error_data = response.json()
+            return error_data
+        except Exception:
+            return {
+                "success": False,
+                "message": f"HTTP error: {str(e)}",
+                "data": {}
+            }
+        
     except requests.exceptions.RequestException as e:
         return {
             "success": False,
