@@ -1340,10 +1340,15 @@ MANDATORY REASONING PROTOCOL (perform internally before producing output):
                           1. If the user explicitly named a grant/campaign/product/auction,
                              you may use an item only when a clear semantic match exists.
                           2. If no clear match exists for an explicitly named entity, do NOT
-                             pick the first item. Treat the target entity as unresolved.
+                          pick the first item, do NOT emit the downstream write/action tool,
+                          and do NOT reinterpret any other item as "close enough".
+                          Treat the target entity as unresolved.
                           3. Only when the user did NOT specify a distinct entity title/name
                              and the request is generic may you choose the first item.
                           4. Extract the matched item's _id field as the resolved entity id.
+                             Example: if the user asked for "Community Library Renovation" and
+                             the grants list only contains "dsad" and "testss", then grantId
+                             remains unresolved and grant_donation must NOT be emitted.
     • LABEL-TO-ID MATCH — if a tool output pairs a human label with a backend id
                           (e.g., donationTypeName + donationTypeId), map the user's
                           label to the corresponding backend id.
@@ -1610,6 +1615,9 @@ RULES:
 11. When the user explicitly named a grant/campaign/product/auction and no grounded title/name
     match exists in the returned entity list, do NOT pick the first item. Keep that entity id
     unresolved so the user can clarify or be told no matching entity was found.
+12. For write/action tools (donations, bids, wallet funding, or similar), an explicitly named
+    entity with no grounded match is a HARD BLOCK: return step=null, done=true, and keep the
+    entity arg in missing_args. Never execute the action against a different entity.
 """.strip()
             
 
