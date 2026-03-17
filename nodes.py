@@ -109,13 +109,13 @@ def make_planner_node(tools_by_name: dict):
         - For action tools like donations, bids, wallet funding, or other write operations: if any required final argument is not already known and not recoverable from earlier tools, add its exact field name to missing_args.
         - Do not ask for args already supplied in the latest user message.
         - Do not include any arg in missing_args if it can be grounded from prior successful tool outputs already present in chat history.
-        - Entity ids such as charityId, grantId, campaignId, productId, auction_id, and similar backend identifiers are NOT user-facing missing args when a prior successful tool output in chat history already contains a non-empty array of candidate entities for that type.
+        - Entity ids such as charityId, grantId, campaignId, productId, auction_id, and similar backend identifiers are NOT user-facing missing args when a prior successful tool output in chat history already contains a clearly matching candidate entity for that type.
         - If prior successful output already contains candidate entities for a needed id:
           1. first try to match the user's requested name/title semantically,
-          2. if no semantic match is clear, select the first item,
-          3. use that item's _id/id directly in the planned tool args,
-          4. do NOT put that id field into missing_args.
-        - Example: if list_charity_grants already returned one or more grants, you must plan grant_donation with a concrete grantId from that cached output rather than returning missing_args=["grantId"].
+          2. if the user explicitly named a grant/campaign/product/auction and no clear semantic match exists, do NOT select an arbitrary first item,
+          3. in that case keep the entity unresolved so the system can ask the user to clarify or report that no matching entity was found,
+          4. only use an item's _id/id directly when the match is grounded by the tool output.
+        - Example: if list_charity_grants already returned one or more grants, you may plan grant_donation with a concrete grantId only when one of those grants clearly matches the user's requested grant.
 
         CONTINUING A PRIOR INCOMPLETE ACTION (highest priority rule — check this first):
         - If Chat History contains a FINAL_AGENT_STEP[gate] with done=true and non-empty missing_args,
@@ -421,7 +421,24 @@ def make_responder_node():
             "there is no successful auth-sensitive tool output after it yet."
         )
 
-    def _build_active_user_request_context(messages: List[BaseMessage]) -> str:
+    def _looks_like_missing_arg_reply(text: str, pending_missing_args: List[str]) -> bool:
+        if not isinstance(text, str):
+            return False
+        value = text.strip()
+        if not value or not pending_missing_args:
+            return False
+        lowered = value.lower()
+        if _message_may_contain_password(value):
+            return True
+        if len(value.split()) <= 6:
+            return True
+        for arg in pending_missing_args:
+            arg_name = str(arg).strip().lower()
+            if arg_name and lowered.startswith(arg_name):
+                return True
+        return False
+
+    def _build_active_user_request_context(messages: List[BaseMessage], pending_missing_args: List[str]) -> str:
         for i in range(len(messages) - 1, -1, -1):
             current = messages[i]
             if isinstance(current, HumanMessage):
@@ -433,6 +450,8 @@ def make_responder_node():
                 request = stripped if stripped else content
                 # Skip pure password submissions (nothing left after stripping)
                 if not stripped and _message_may_contain_password(content):
+                    continue
+                if _looks_like_missing_arg_reply(request, pending_missing_args):
                     continue
                 return (
                     "ACTIVE USER REQUEST: The latest unresolved user message that the final "
@@ -476,6 +495,77 @@ def make_responder_node():
                         f"Tool '{m.name}' returned successfully but '{key}' is 0."
                     )
         return notes
+
+    def _unwrap_success_payload(payload: Any) -> Any:
+        if not isinstance(payload, dict):
+            return payload
+        result = payload.get("result", payload)
+        if isinstance(result, dict) and "result" in result:
+            result = result.get("result")
+        return result
+
+    def _collect_entity_options(messages: List[BaseMessage], missing_args: List[str]) -> Dict[str, List[str]]:
+        options: Dict[str, List[str]] = {}
+        wanted = set(missing_args or [])
+        if not wanted:
+            return options
+
+        entity_specs = {
+            "grantId": ("grants", "title", "grant"),
+            "grant_id": ("grants", "title", "grant"),
+            "campaignId": ("campaigns", "title", "campaign"),
+            "campaign_id": ("campaigns", "title", "campaign"),
+            "productId": ("products", "name", "product"),
+            "product_id": ("products", "name", "product"),
+            "auction_id": ("auctions", "title", "auction"),
+            "auctionId": ("auctions", "title", "auction"),
+            "charityId": ("items", "name", "charity"),
+            "charity_id": ("items", "name", "charity"),
+        }
+
+        for arg_name, (list_key, label_key, label_name) in entity_specs.items():
+            if arg_name not in wanted:
+                continue
+
+            labels: List[str] = []
+            for msg in reversed(messages):
+                if not isinstance(msg, ToolMessage):
+                    continue
+                payload = _safe_json_loads((msg.content or "").strip())
+                if payload is None or _extract_tool_error(payload) is not None:
+                    continue
+                result = _unwrap_success_payload(payload)
+                if not isinstance(result, dict):
+                    continue
+                items = result.get(list_key)
+                if not isinstance(items, list):
+                    nested_data = result.get("data")
+                    if isinstance(nested_data, dict):
+                        items = nested_data.get(list_key)
+                if not isinstance(items, list) or not items:
+                    continue
+
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    label = item.get(label_key)
+                    if not label and label_key != "name":
+                        label = item.get("name")
+                    if not label and label_key != "title":
+                        label = item.get("title")
+                    if isinstance(label, str):
+                        value = label.strip()
+                        if value and value not in labels:
+                            labels.append(value)
+
+                if labels:
+                    options[arg_name] = labels
+                    break
+
+            if labels:
+                options[f"{arg_name}__label"] = [label_name]
+
+        return options
 
     def _build_situational_block(state, current_round_tool_msgs):
         """
@@ -523,13 +613,15 @@ def make_responder_node():
         # gate succeeded the responder should use FINAL AGENT STEP SUCCEEDED instead.
         gate_ok = isinstance(last_agentic_step, dict) and last_agentic_step.get("ok") is True
         if not gate_ok:
-            active_user_request = _build_active_user_request_context(all_messages)
+            active_user_request = _build_active_user_request_context(all_messages, effective_missing_args)
             if active_user_request:
                 lines.append(active_user_request)
 
         recent_auth_context = _build_recent_auth_context(all_messages, current_round_tool_msgs)
         if recent_auth_context:
             lines.append(recent_auth_context)
+
+        entity_options = _collect_entity_options(all_messages, effective_missing_args)
 
         # 1) Missing user input
         if effective_missing_args:
@@ -540,6 +632,15 @@ def make_responder_node():
                 f"Ask the user for ONLY these specific values. "
                 f"Do NOT attempt the action without them."
             )
+            for missing_arg in effective_missing_args:
+                readable_options = entity_options.get(missing_arg) or []
+                label_hint = (entity_options.get(f"{missing_arg}__label") or [""])[0]
+                if readable_options:
+                    lines.append(
+                        f"MISSING INPUT OPTIONS: For '{missing_arg}', ask the user to choose the "
+                        f"{label_hint or 'item'} by human-readable title/name, not by backend id. "
+                        f"Available options: {', '.join(readable_options)}."
+                    )
 
         # 2) Final gate step for this round (preferred over coarse tool heuristics)
         has_final_gate_step = isinstance(effective_step, dict) and bool(effective_step)
@@ -640,7 +741,7 @@ Your role is to help donors discover charities, products, campaigns, and auction
 Assume the user may be a confused or first-time donor who needs clear guidance.
 
 OUTPUT RULES (STRICT — apply in this exact priority order):
-- RULE 1 (MISSING USER INPUT — highest priority): If the SITUATIONAL CONTEXT contains a MISSING USER INPUT line, your response MUST begin with: "The following required information is either incorrect or not provided: [arg list]." — where [arg list] is a comma-separated human-readable list of arg names taken EXCLUSIVELY from that MISSING USER INPUT line (do NOT infer, add, or derive additional args from TOOL CONTEXT, UNRESOLVED ERROR, or any other source), converted to natural language (snake_case/camelCase → spaced words, e.g., donation_type → "donation type", countryCode → "country code"). Then, for each arg in that list that has a known set of valid values described in TOOL CONTEXT or in relevant successful Giver tool outputs in the Conversation History, append on a new line: "Available [arg name] options: [comma-separated list]." Do this for every arg in the MISSING USER INPUT list that has enumerable options. Base those options on Giver tool outputs first. End with "Please try again." Do NOT apply RULE 2 when this rule fires.
+- RULE 1 (MISSING USER INPUT — highest priority): If the SITUATIONAL CONTEXT contains a MISSING USER INPUT line, your response MUST begin with: "The following required information is either incorrect or not provided: [arg list]." — where [arg list] is a comma-separated human-readable list of arg names taken EXCLUSIVELY from that MISSING USER INPUT line (do NOT infer, add, or derive additional args from TOOL CONTEXT, UNRESOLVED ERROR, or any other source), converted to natural language (snake_case/camelCase → spaced words, e.g., donation_type → "donation type", countryCode → "country code"). Then, for each arg in that list that has a known set of valid values described in TOOL CONTEXT, relevant successful Giver tool outputs, or `MISSING INPUT OPTIONS` lines in SITUATIONAL CONTEXT, append a human-friendly options line. For entity-id args like grantId/campaignId/productId/auctionId/charityId, never ask the user for a raw backend id if human-readable title/name options are available; ask them to choose the grant/campaign/product/auction/charity by title or name instead. Do not print an "Available ... options" line when no real options exist. End with "Please try again." Do NOT apply RULE 2 when this rule fires.
 - RULE 2 (SERVER / AUTH ERROR — only when RULE 1 does not apply): If the SITUATIONAL CONTEXT or most recent FINAL AGENT STEP contains a tool error with an HTTP 401, HTTP 403, HTTP 5xx, or a grounded duplicate-retry HTTP 4xx failure (for example 400 Bad Request after all required args were already grounded) AND there is no MISSING USER INPUT in SITUATIONAL CONTEXT, your FINAL answer MUST be exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for any missing arg. Do NOT retry the action.
 - If SITUATIONAL CONTEXT in Conversation History indicates FINAL AGENT STEP FAILED, you MUST inform the user that the latest automated attempt failed,when drafting final draft in natural professional language.
 - When FINAL_AGENT_STEP[gate] or PREVIOUS_AGENT_STEP[gate] shows a failure or relevant attempted repair context, prefer that evidence over cached data when explaining the result (naturally for non-technical user), when drafting final draft in natural professional language.
@@ -661,7 +762,7 @@ OUTPUT RULES (STRICT — apply in this exact priority order):
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
 - If the Conversation History's recent FINAL AGENT STEP or SITUATIONAL CONTEXT contains a tool error with a HTTP 4xx or HTTP 5xx status code in relationship to password authentication, or a grounded action retry that still failed with HTTP 4xx/5xx after required args were already resolved, respond with exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for password again. Do NOT retry the action.
 - If the SITUATIONAL CONTEXT contains a RECENT AUTHENTICATION line showing a successful auth-sensitive tool result after the latest password-bearing USER message, treat that as authoritative evidence that the most recent authentication succeeded.
-- ACTION COMPLETION RULE (highest priority for action requests): When the user's request was an action (donate, place a bid, fund wallet, etc.) and the corresponding action tool (grant_donation, campaign_donation, product_donation, place_bid, fund_wallet) returned a success response anywhere in the Conversation History — including inside gate repair steps — report that action as COMPLETED. Entity name or title mismatches between the user's requested entity and the system's best-match selection are NOT failures. Do NOT say the entity was not found or the action failed if the action tool itself succeeded.
+- ACTION COMPLETION RULE (highest priority for action requests): When the user's request was an action (donate, place a bid, fund wallet, etc.) and the corresponding action tool (grant_donation, campaign_donation, product_donation, place_bid, fund_wallet) returned a success response anywhere in the Conversation History — including inside gate repair steps — report that action as COMPLETED only if the acted-on entity is grounded as the same entity the user requested. If the tool succeeded but the chosen entity does not clearly match the user's requested title/name, do not present it as a confirmed match for that requested entity.
 
 SOURCE GROUNDING RULES (STRICT):                                                                                                                         
 - You are exclusively a Giver platform agent. ALL donation-related information, charity data, products, campaigns, and auctions must come from Giver API tool outputs in the Conversation History.                                                                                                          
@@ -672,7 +773,7 @@ EMPTY AND MISSING DATA RULES (STRICT):
 - If a tool returned successfully but its data payload is empty (e.g., an empty list, zero count, or null records), you MUST tell the user clearly that no records were found. Do NOT invent, assume, or fabricate records that are not present in the tool output.
 - If the SITUATIONAL CONTEXT section below contains EMPTY DATA notes, use them as authoritative evidence that the result set is empty. Report this to the user directly.
 - If the SITUATIONAL CONTEXT section contains NO TOOLS EXECUTED or ALL TOOLS FAILED, and the user asked a data-dependent question, inform the user that the data could not be retrieved. Do NOT guess at what the data might contain.
-- If the SITUATIONAL CONTEXT section contains MISSING USER INPUT, your ONLY job is to ask the user for exactly those inputs — nothing else. Do NOT attempt to answer the underlying question without the missing inputs. Do NOT fabricate placeholder values.
+- If the SITUATIONAL CONTEXT section contains MISSING USER INPUT, your ONLY job is to ask the user for exactly those inputs — nothing else. Do NOT attempt to answer the underlying question without the missing inputs. Do NOT fabricate placeholder values. If matching entity options are present, ask for the human-readable entity choice rather than the backend id.
 - If the SITUATIONAL CONTEXT section contains UNRESOLVED ERROR, briefly inform the user that something went wrong and suggest they try again or rephrase. Include the tool name if it helps the user understand the issue.
 - When no data is available, skip the Insights and Recommendations sections entirely. Only provide a Direct Answer stating that no data was found or the request could not be completed.
 - If SITUATIONAL CONTEXT contradicts Conversation History after recent USER message, then prefer Conversation History as the source of truth for the final answer.
@@ -1233,15 +1334,16 @@ MANDATORY REASONING PROTOCOL (perform internally before producing output):
                           so grants[*]._id is the grantId value.
                           Apply to ALL entity types: grants, campaigns, charities, products,
                           auctions, donations, wallets, users, etc.
-    • ARRAY MATCH (MANDATORY — no exceptions):
-                          If the entity list has ≥1 item, you MUST pick an item and use
-                          its _id. This is not optional. Steps:
-                          1. Look for the item whose title/name most closely matches the
-                             user's request (fuzzy: "Community Library" ≈ "library", etc.).
-                          2. If no item semantically matches, pick the FIRST item in the array.
-                          3. Extract its _id field as the resolved entity id.
-                          Returning step=null or adding grantId/campaignId to missing_args
-                          while a non-empty entity array exists in any source is FORBIDDEN.
+    • ARRAY MATCH:
+                          If the entity list has ≥1 item, first look for the item whose
+                          title/name clearly matches the user's request.
+                          1. If the user explicitly named a grant/campaign/product/auction,
+                             you may use an item only when a clear semantic match exists.
+                          2. If no clear match exists for an explicitly named entity, do NOT
+                             pick the first item. Treat the target entity as unresolved.
+                          3. Only when the user did NOT specify a distinct entity title/name
+                             and the request is generic may you choose the first item.
+                          4. Extract the matched item's _id field as the resolved entity id.
     • LABEL-TO-ID MATCH — if a tool output pairs a human label with a backend id
                           (e.g., donationTypeName + donationTypeId), map the user's
                           label to the corresponding backend id.
@@ -1294,8 +1396,8 @@ MANDATORY REASONING PROTOCOL (perform internally before producing output):
       • The entity list is literally empty: [] or grants/campaigns/items array has 0 items.
       • Python_REPL output is a sentinel string ("GRANT_NOT_FOUND", "NOT_FOUND", etc.)
         instead of a real id value.
-      This rule does NOT apply when the list is non-empty. A list with items IS resolvable
-      via ARRAY MATCH even if no item exactly matches the user's requested title.
+      This rule does NOT apply when the list is non-empty. However, a non-empty list does NOT
+      resolve an explicitly named entity unless one item clearly matches the user's requested title.
       When a true NEGATIVE RESULT occurs (empty list):
       • Do NOT treat it as resolving the arg.
       • Add the human-readable arg descriptor to missing_args so the responder can
@@ -1306,7 +1408,12 @@ MANDATORY REASONING PROTOCOL (perform internally before producing output):
       These reference a specific backend entity. Auto-resolve them via NESTED/ALIAS MATCH
       ONLY when a concrete non-null, non-sentinel entity _id was actually found in a source.
       REMOVE from missing_args once their entity _id is found in any source.
-      KEEP in missing_args (apply NEGATIVE RESULT RULE) if the lookup returned no match.
+      KEEP in missing_args if the lookup returned no grounded match for the explicitly named entity.
+      If a successful tool output already contains a non-empty candidate entity list for such an arg,
+      the entity is still explorable. Do not stop at a bare backend-id request. Either:
+      (a) resolve the entity from a grounded match, or
+      (b) if no grounded match exists, keep the unresolved entity as a user-facing selection request
+          based on the available entity titles/names from that list.
 
     TYPE B — USER-CHOICE ARG (NOT auto-resolvable unless user specified):
       Args like donation_type, category, donation_method, payment_method, or any field
@@ -1399,8 +1506,11 @@ MANDATORY REASONING PROTOCOL (perform internally before producing output):
          → Search SOURCE 4 (all repair step outputs) for any key containing "grant" or
            "campaign" with a non-empty array value.
          → Search SOURCE 3 (cached tool outputs) for the same.
-         → If a non-empty array is found in EITHER source, you are NOT allowed to mark
-           grantId/campaignId as missing. Apply ARRAY MATCH immediately and emit the step.
+         → If a non-empty array is found in EITHER source and a grounded entity match exists,
+           apply ARRAY MATCH and emit the step.
+         → If the user explicitly named an entity and no grounded match exists in the array,
+           you may keep grantId/campaignId unresolved and request clarification instead of
+           selecting an arbitrary first item.
          → If NO array is found in either source, scan AVAILABLE TOOLS for a tool that
            lists the entity type (e.g., list_charity_grants for grantId). If such a tool
            exists AND its required inputs (e.g., charityId) are grounded from any source,
@@ -1492,11 +1602,14 @@ RULES:
 7. If no safe automatic repair exists, set done=true with step=null AND target_error_id set.
 8. missing_args is your full authoritative list after applying STEP D above.
    When done=true, it must be complete — every arg still requiring user input, nothing more.
+   For explorable entity ids like grantId/campaignId/productId/auctionId with available
+   candidate lists, this means a user-facing entity choice remains needed; do not treat that
+   as an instruction to ask for a raw backend id.
 9. Never pass empty lists or empty objects for args that require real data.
 10. The "reason" field must cite which source (SOURCE 1/2/3/4) provided the key grounded values used.
-11. When the grants/campaigns list is non-empty and no exact title matches the user's request,
-    apply ARRAY MATCH: pick the best semantic match, or the first item if no semantics match.
-    Do NOT mark grantId/campaignId as missing_args when the entity list has items in it.
+11. When the user explicitly named a grant/campaign/product/auction and no grounded title/name
+    match exists in the returned entity list, do NOT pick the first item. Keep that entity id
+    unresolved so the user can clarify or be told no matching entity was found.
 """.strip()
             
 
