@@ -1830,9 +1830,6 @@ RULES:
                     "done": prev.get("done"),
                     "output": prev.get("output"),
                 }
-            prev_gate_step_line = _format_previous_agentic_step(last_agentic_step)
-            if prev_gate_step_line:
-                emitted_messages.append(AIMessage(content=prev_gate_step_line))
             gate_step_line = _format_last_agentic_step(last_agentic_step)
             if gate_step_line:
                 emitted_messages.append(AIMessage(content=gate_step_line))
