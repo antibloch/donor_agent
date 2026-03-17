@@ -459,6 +459,7 @@ async def Crawler_tool():
 
                         DO NOT USE:
                         - as a search tool
+                        - planner only decides to use this tool as only step (unless user specifically asks about URL)
                         - before charity website is known or expected from charity_details
                         """
             setattr(tool, 'description', description)

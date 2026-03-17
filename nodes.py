@@ -1,7 +1,7 @@
 import json
 from uuid import uuid4
 from typing import Dict, List, Any
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMessage, SystemMessage
 from rich import print as rich_print
 import re
 
@@ -73,6 +73,7 @@ def make_planner_node(tools_by_name: dict):
             model=model,
         )
 
+
         prompt = f"""
         You are a planning module for a charity & donation assistant.
 
@@ -88,62 +89,50 @@ def make_planner_node(tools_by_name: dict):
         - When an argument is not yet known because it will come from a previous tool result, use a symbolic placeholder instead of omitting the dependent tool.
         - If a required value cannot be recovered from prior successful outputs or from tools earlier in THIS plan, do NOT leave it as a placeholder. Put that field name in missing_args.
         - The missing_args list must represent the current unresolved user inputs after considering all reusable prior tool outputs in chat history.
+        - For list-of-object arguments (e.g., products: [{{"partner": "...", "charityProd": "..."}}]), construct each object by extracting real field values (_id, pricePerUnit, category, partner, etc.) from the cached tool output in Conversation History, that returned those records.
+        - Intelligently match and substitute, what available args can be associated with extracted objects like 'id', 'category', etc., so that missing_args contains only truly unrecoverable values that the user must provide.
 
         PLACEHOLDER POLICY:
-        - You may use symbolic placeholders for arguments that will be derived from earlier tool outputs.
+        - For list-of-object arguments (e.g., products: [{{"partner": "...", "charityProd": "..."}}]), construct each object by extracting real field values (_id, pricePerUnit, category, partner, etc.) from the cached tool output in Conversation History, that returned those records.
+        - Intelligently match and substitute, what available args can be associated with extracted objects like 'id', 'category', etc., so that missing_args contains only truly unrecoverable values that the user must provide.
+        - Use placeholders for arguments that are potential missing_args elements.
         - Do NOT invent fake final values.
         - Instead use placeholders such as:
         - "<BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>"
         - "<WEBSITE_URL_FROM_CHARITY_DETAILS>"
-        - Every placeholder must correspond to a value that an earlier tool in the plan or cached history can realistically produce.
         - Prefer a complete dependency-aware plan over a single first-step plan when tool descriptions define a normal chain.
 
         MISSING-ARG POLICY:
+        - For list-of-object arguments (e.g., products: [{{"partner": "...", "charityProd": "..."}}]), construct each object by extracting real field values (_id, pricePerUnit, category, partner, etc.) from the cached tool output in Conversation History, that returned those records.
+        - Intelligently match and substitute, what available args can be associated with extracted objects like 'id', 'category', etc., so that missing_args contains only truly unrecoverable values that the user must provide.
         - For action tools like donations, bids, wallet funding, or other write operations: if any required final argument is not already known and not recoverable from earlier tools, add its exact field name to missing_args.
-        - Do not ask for args already supplied in the latest user message, BUT: if the user provided a value for an enum/option arg and that value does not closely match any of the valid options listed in AVAILABLE TOOLS (e.g. "Sadqh" vs valid options "Sadqah, hadya, fitra, chanda"), you MUST fuzzy-correct it to the closest valid option. If no close match exists, treat the arg as still missing and include it in missing_args.
+        - Do not ask for args already supplied in the latest user message.
         - Do not include any arg in missing_args if it can be grounded from prior successful tool outputs already present in chat history.
+
+        CONTINUING A PRIOR INCOMPLETE ACTION (highest priority rule — check this first):
+        - If Chat History contains a FINAL_AGENT_STEP[gate] with done=true and non-empty missing_args,
+          AND the most recent user message provides one or more of those missing args (e.g., a password,
+          a donation type, a grant title), THEN you MUST re-plan the original pending action with:
+          (a) the newly provided values substituted for their placeholders,
+          (b) all previously resolved values (ids, amounts, etc.) reused from Chat History.
+          Do NOT return steps: [] in this case — the action was never completed and must be retried.
+        - Look at the FINAL_AGENT_STEP[gate] reason field and missing_args to understand what was pending.
+        - Do not re-run discovery tools (discover_charities, list_charity_active_campaigns, etc.) if
+          their outputs are already present in Chat History — reuse those cached values directly.
+        - Use Python_REPL ONLY for genuine computation (math, data transformation). NEVER use it to
+          search or filter arrays — you can do that directly in the plan by reading tool output context.
 
         PLANNING RULES:
         1. Identify all user intents.
         2. Reuse prior successful tool outputs where sufficient.
         3. Read and obey dependency instructions in tool descriptions.
-        4. If vague information is provided by user, follow the default chains to recover all necessary information(mentioned in AVAILABLE_TOOLS below).
+        4. If a vague charity name is mentioned, follow the default charity chain:
+        discover_charities -> charity_details -> fetch_url
         5. Do not stop at discovery for a "tell me about X" query if deeper tools are part of the required chain.
         6. If downstream args are not yet known, include the downstream tool with a symbolic placeholder.
-        7. Only return steps: [] if chat history already fully satisfies the request.
-        8. If the previous round already asked for missing inputs, shrink that list if the latest user message or prior successful tool outputs now cover some of them.
-           IMPORTANT — when the user's latest message supplies value(s) for previously requested missing args:
-           - You MUST re-schedule the tool that required those args.
-           - Look at the SITUATIONAL CONTEXT or UNRESOLVED ERROR to identify which tool was blocked and what its other args were.
-           - Reconstruct the full tool call using the known args from prior history PLUS the new value(s) from the user.
-           - A bare user message like "Google@123" or "mypassword" that follows a "Previously Requested Missing Inputs: [password]" means that value IS the password — treat it as password="<that value>".
-           - Do NOT output steps: [] in this case.
-        9. If the Conversation History's last FINAL AGENT STEP shows a previous tool call returned an HTTP 4xx or HTTP 5xx status code error related to password authentication (i.e. the server rejected the credentials), do NOT schedule that same tool again. These are server-side authentication failures that cannot be fixed by retrying. Set steps to [] and missing_args to [].
-           CRITICAL DISTINCTION — Rule 9 does NOT apply when:
-           - The previous failure was a schema/validation error such as "Field required" or "validation error for <tool>\npassword" — that means the password was simply missing, NOT that the server rejected it.
-           - In that case, if the user has now provided the password, apply Rule 8 and re-schedule the tool.
+        7. Only return steps: [] if BOTH are true: (a) no FINAL_AGENT_STEP[gate] shows a pending
+           incomplete action, AND (b) chat history already fully satisfies the current user request.
 
-        JSON VALIDITY RULES:
-          - Output must be valid JSON parseable by json.loads with no preprocessing.
-          - Every placeholder must be a JSON string, never a bare token.
-          - Example valid placeholder: "<BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>"
-          - Example invalid placeholder: <BEST_MATCH_ID_FROM_DISCOVER_CHARITIES>
-          - If a value is unknown and should be filled later, use a quoted placeholder string.
-          - Do not use comments, trailing commas, or markdown code fences.
-
-        SITUATIONAL CONTEXT USAGE:
-        The conversation history may include a section labeled "SITUATIONAL CONTEXT".
-
-        This context summarizes important state from previous agent rounds, such as:
-        - missing tool arguments
-        - unresolved tool errors
-        - constraints discovered by the gate agent
-
-        When SITUATIONAL CONTEXT contains missing arguments:
-        - Prefer plans that recover those arguments using tools if possible.
-        - If the arguments cannot be recovered from tools, ask the user for them.
-
-        Treat SITUATIONAL CONTEXT as authoritative state from the previous round.
         ---
 
         AVAILABLE TOOLS:
@@ -164,9 +153,6 @@ def make_planner_node(tools_by_name: dict):
 
         Chat History:
         {chat_history}
-
-        Previously Requested Missing Inputs:
-        {_compact_json(prior_missing_args, max_chars=500)}
 
         User Request:
         {state.get("messages", [])[-1].content if state.get("messages") else ""}
@@ -357,7 +343,7 @@ def make_executor_node(tools_by_name: dict):
     return executor_node
 
 
-def make_responder_node(tools_by_name: dict):
+def make_responder_node():
     model = make_model(temperature=0.0)
 
     # Auth-gated tools — these require a password parameter and represent
@@ -371,6 +357,80 @@ def make_responder_node(tools_by_name: dict):
         "campaign_donation",
         "grant_donation",
     })
+
+    def _message_may_contain_password(text: str) -> bool:
+        if not isinstance(text, str):
+            return False
+        lowered = text.lower()
+        if lowered.startswith("password:"):
+            return True
+        return bool(re.search(r"\bpass(?:word)?\b\s*[:;,\-]?", lowered))
+
+    def _latest_password_submission_index(messages: List[BaseMessage]) -> int | None:
+        for i in range(len(messages) - 1, -1, -1):
+            msg = messages[i]
+            if isinstance(msg, HumanMessage) and _message_may_contain_password((msg.content or "").strip()):
+                return i
+        return None
+
+    def _build_recent_auth_context(messages: List[BaseMessage], current_round_tool_msgs: List[ToolMessage]) -> str:
+        # Only emit auth context when an auth-gated tool actually ran this round.
+        if not any(m.name in AUTH_GATED_TOOLS for m in current_round_tool_msgs):
+            return ""
+
+        password_idx = _latest_password_submission_index(messages)
+        if password_idx is None:
+            return ""
+
+        auth_success_tool = None
+        auth_failure_tool = None
+        for msg in messages[password_idx + 1:]:
+            if not isinstance(msg, ToolMessage) or msg.name not in AUTH_GATED_TOOLS:
+                continue
+            payload = _safe_json_loads((msg.content or "").strip())
+            if payload is None:
+                continue
+            if _extract_tool_error(payload) is None:
+                auth_success_tool = msg.name
+                break
+            auth_failure_tool = msg.name
+
+        if auth_success_tool:
+            return (
+                "RECENT AUTHENTICATION: The latest user-provided password is grounded by a "
+                f"successful auth-sensitive tool result after that message. Successful tool: "
+                f"'{auth_success_tool}'."
+            )
+
+        if auth_failure_tool:
+            return (
+                "RECENT AUTHENTICATION: The latest user-provided password was followed by an "
+                f"auth-sensitive tool failure. Latest failing tool: '{auth_failure_tool}'."
+            )
+
+        return (
+            "RECENT AUTHENTICATION: A recent user message appears to provide a password, but "
+            "there is no successful auth-sensitive tool output after it yet."
+        )
+
+    def _build_active_user_request_context(messages: List[BaseMessage]) -> str:
+        for i in range(len(messages) - 1, -1, -1):
+            current = messages[i]
+            if isinstance(current, HumanMessage):
+                content = (current.content or "").strip()
+                if not content:
+                    continue
+                # Strip leading "Password: <value>" prefix so the actual request is shown
+                stripped = re.sub(r"(?i)^pass(?:word)?\s*[:;]\s*\S+\s*[,;]?\s*", "", content).strip()
+                request = stripped if stripped else content
+                # Skip pure password submissions (nothing left after stripping)
+                if not stripped and _message_may_contain_password(content):
+                    continue
+                return (
+                    "ACTIVE USER REQUEST: The latest unresolved user message that the final "
+                    f"response must address is: {request}"
+                )
+        return ""
 
     def _detect_empty_results(tool_messages):
         """
@@ -424,9 +484,22 @@ def make_responder_node(tools_by_name: dict):
         missing_args = plan.get("missing_args", []) or []
         last_tool_error = state.get("last_tool_error")
         last_agentic_step = state.get("last_agentic_step") or {}
+        all_messages = list(state.get("messages", []) or [])
 
         empty_data_notes = _detect_empty_results(current_round_tool_msgs)
         lines = []
+
+        # Only emit ACTIVE USER REQUEST when the gate didn't succeed — if the
+        # gate succeeded the responder should use FINAL AGENT STEP SUCCEEDED instead.
+        gate_ok = isinstance(last_agentic_step, dict) and last_agentic_step.get("ok") is True
+        if not gate_ok:
+            active_user_request = _build_active_user_request_context(all_messages)
+            if active_user_request:
+                lines.append(active_user_request)
+
+        recent_auth_context = _build_recent_auth_context(all_messages, current_round_tool_msgs)
+        if recent_auth_context:
+            lines.append(recent_auth_context)
 
         # 1) Missing user input
         if missing_args:
@@ -506,7 +579,10 @@ def make_responder_node(tools_by_name: dict):
             )
 
         if not lines:
-            return ""
+            lines.append(
+                "NO SPECIAL SITUATIONAL FLAGS: Answer strictly from the Conversation History and "
+                "tool outputs, with priority on the latest unresolved user request."
+            )
 
         return (
             "\n\nSITUATIONAL CONTEXT (system-generated, authoritative):\n"
@@ -516,46 +592,16 @@ def make_responder_node(tools_by_name: dict):
     def responder(state: dict) -> Dict:
         messages = list(state.get("messages", []) or [])
 
-        # Locate the latest user message
-        latest_user_idx = None
-        latest_user_content = ""
-        for i in range(len(messages) - 1, -1, -1):
-            if isinstance(messages[i], HumanMessage):
-                latest_user_idx = i
-                latest_user_content = (messages[i].content or "").strip()
-                break
-
-        # === Programmatic password short-circuit ===
-        # Only fires when the user's message is a password submission.
-        # Now checks specifically for auth-gated tool success rather than
-        # any tool success, so a successful read-only tool (e.g.,
-        # get_active_auctions) alongside a failed auth tool (e.g.,
-        # place_bid with wrong password) won't bypass this check.
-        if latest_user_idx is not None and latest_user_content.lower().startswith("password:"):
-            fresh_auth_tool_success = False
-            for m in messages[latest_user_idx + 1:]:
-                if not isinstance(m, ToolMessage):
-                    continue
-                payload = _safe_json_loads((m.content or "").strip())
-                if payload is not None and _extract_tool_error(payload) is None:
-                    if m.name in AUTH_GATED_TOOLS:
-                        fresh_auth_tool_success = True
-                        break
-
-            if not fresh_auth_tool_success:
-                return {
-                    "messages": [AIMessage(content="Please enter password")],
-                    "final_answer": "Please enter password",
-                }
-
-        # Build tool context for grounding missing-arg options 
-        tool_context = build_tool_context(tools_by_name)  
         # Build situational context from programmatic signals
         current_round = get_current_round_messages(messages)
         current_round_tool_msgs = [
             m for m in current_round if isinstance(m, ToolMessage)
         ]
         situational_block = _build_situational_block(state, current_round_tool_msgs)
+        tool_context = (
+            "Use successful Giver tool outputs in the Conversation History as the primary source "
+            "for valid options and argument values. Treat external web URLs only as supplementary."
+        )
 
         
         system_prompt = """
@@ -564,7 +610,7 @@ Your role is to help donors discover charities, products, campaigns, and auction
 Assume the user may be a confused or first-time donor who needs clear guidance.
 
 OUTPUT RULES (STRICT — apply in this exact priority order):
-- RULE 1 (MISSING USER INPUT — highest priority): If the SITUATIONAL CONTEXT contains a MISSING USER INPUT line, your response MUST begin with: "The following required information is either incorrect or not provided: [arg list]." — where [arg list] is a comma-separated human-readable list of arg names taken EXCLUSIVELY from that MISSING USER INPUT line (do NOT infer, add, or derive additional args from TOOL CONTEXT, UNRESOLVED ERROR, or any other source), converted to natural language (snake_case/camelCase → spaced words, e.g., donation_type → "donation type", countryCode → "country code"). Then, for each arg in that list that has a known set of valid values described in TOOL CONTEXT, append on a new line: "Available [arg name] options: [comma-separated list from TOOL CONTEXT]." Do this for every arg in the MISSING USER INPUT list that has enumerable options. End with "Please try again." Do NOT apply RULE 2 when this rule fires.
+- RULE 1 (MISSING USER INPUT — highest priority): If the SITUATIONAL CONTEXT contains a MISSING USER INPUT line, your response MUST begin with: "The following required information is either incorrect or not provided: [arg list]." — where [arg list] is a comma-separated human-readable list of arg names taken EXCLUSIVELY from that MISSING USER INPUT line (do NOT infer, add, or derive additional args from TOOL CONTEXT, UNRESOLVED ERROR, or any other source), converted to natural language (snake_case/camelCase → spaced words, e.g., donation_type → "donation type", countryCode → "country code"). Then, for each arg in that list that has a known set of valid values described in TOOL CONTEXT or in relevant successful Giver tool outputs in the Conversation History, append on a new line: "Available [arg name] options: [comma-separated list]." Do this for every arg in the MISSING USER INPUT list that has enumerable options. Base those options on Giver tool outputs first. End with "Please try again." Do NOT apply RULE 2 when this rule fires.
 - RULE 2 (SERVER / AUTH ERROR — only when RULE 1 does not apply): If the SITUATIONAL CONTEXT or most recent FINAL AGENT STEP contains a tool error with an HTTP 401, HTTP 403, or HTTP 5xx status code AND there is no MISSING USER INPUT in SITUATIONAL CONTEXT, your FINAL answer MUST be exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for any missing arg. Do NOT retry the action.
 - If SITUATIONAL CONTEXT in Conversation History indicates FINAL AGENT STEP FAILED, you MUST inform the user that the latest automated attempt failed,when drafting final draft in natural professional language.
 - When FINAL_AGENT_STEP[gate] shows a failure, prefer that evidence over cached data when explaining the result (naturally for non-technical user), when drafting final draft in natural professional language.
@@ -579,14 +625,16 @@ OUTPUT RULES (STRICT — apply in this exact priority order):
 - The Conversation History may contain cached tool traces labeled as `CACHED_TOOL_CALL[...]` and cached successful results labeled as `CACHED_SUCCESS[...]`.
 - The Conversation History may contain FINAL_AGENT_STEP[gate] entries from the current and prior rounds. Use them as grounded execution context for the final response.
 - Give highest priority to the most recent FINAL_AGENT_STEP[gate], but use earlier ones too when they help explain or continue an ongoing workflow.
+- The SITUATIONAL CONTEXT is authoritative programmatic state. Use it together with Conversation History, with special attention to the latest unresolved USER request and any still-unanswered USER queries carried forward in the workflow.
 - Treat `CACHED_SUCCESS[...]` as reusable factual evidence from prior successful tool execution.
 - ONLY use information explicitly present in the Conversation History (especially `CACHED_SUCCESS[...]` entries and other tool outputs), do NOT invent or assume any facts not in the history.
 - If the needed value is not present, say what is missing and ask for the minimum needed input.
 - If the Conversation History's recent FINAL AGENT STEP or SITUATIONAL CONTEXT contains a tool error with a HTTP 4xx or HTTP 5xx status code in relationship to password authentication, respond with exactly: "Sorry, your request cannot be completed at this time. Please try again later." Do NOT ask for password again. Do NOT retry the action.
+- If the SITUATIONAL CONTEXT contains a RECENT AUTHENTICATION line showing a successful auth-sensitive tool result after the latest password-bearing USER message, treat that as authoritative evidence that the most recent authentication succeeded.
 
 SOURCE GROUNDING RULES (STRICT):                                                                                                                         
 - You are exclusively a Giver platform agent. ALL donation-related information, charity data, products, campaigns, and auctions must come from Giver API tool outputs in the Conversation History.                                                                                                          
-- If a tool output contains an external URL (e.g., a charity's own website, a third-party donation page, or any non-Giver URL), do NOT direct the user to that URL and do NOT treat it as the basis for donation actions. Such URLs are supplementary reference data only.                                 
+- If a tool output contains an external URL (e.g., a charity's own website, a third-party donation page, or any non-Giver URL), do NOT direct the user to that URL and do NOT treat it as the basis for donation actions or donation recommendations. Such URLs are supplementary reference data only and must never override or conflict with Giver tool outputs.                                 
 - If the user asks to donate or act on something, always ground your response in the cached tool calls, and final agent responses in Conversation History — never suggest the user go to an external site to complete the donation (which is recieved from possible fetch_url tool call in Conversation History).
 
 EMPTY AND MISSING DATA RULES (STRICT):
@@ -596,6 +644,7 @@ EMPTY AND MISSING DATA RULES (STRICT):
 - If the SITUATIONAL CONTEXT section contains MISSING USER INPUT, your ONLY job is to ask the user for exactly those inputs — nothing else. Do NOT attempt to answer the underlying question without the missing inputs. Do NOT fabricate placeholder values.
 - If the SITUATIONAL CONTEXT section contains UNRESOLVED ERROR, briefly inform the user that something went wrong and suggest they try again or rephrase. Include the tool name if it helps the user understand the issue.
 - When no data is available, skip the Insights and Recommendations sections entirely. Only provide a Direct Answer stating that no data was found or the request could not be completed.
+- If SITUATIONAL CONTEXT contradicts Conversation History after recent USER message, then prefer Conversation History as the source of truth for the final answer.
 
 DATA COMPLETENESS RULES (STRICT):
 - Your response must include ALL information from the Conversation History that is relevant to answering the user's current request. Do NOT omit, skip, or summarize away any records or items returned by tool outputs.
@@ -627,16 +676,34 @@ RECOMMENDATION STYLE:
 - Tie each recommendation to evidence from available data.
 - If confidence is limited by missing data, state this clearly and suggest the next best donor action.
 
-Now write the final answer based strictly on the Conversation History below, including any `CACHED_TOOL_CALL[...]` and `CACHED_SUCCESS[...]` entries.
+Now write the final answer based strictly on the Conversation History below, then SITUATIONAL CONTEXT, and finally the instruction block that follows.
 """
 
         transcript = format_history_for_responder(
             messages,
             last_agentic_step=state.get("last_agentic_step"),
         )
+        situational_section = (
+            situational_block.strip()
+            if situational_block.strip()
+            else "SITUATIONAL CONTEXT (system-generated, authoritative):\n- NONE"
+        )
+        final_instruction = (
+            "FINAL INSTRUCTION:\n"
+            "Answer the latest unresolved USER request using the Conversation History first and "
+            "the Conversation history's content after latest USER query second, and the SITUATIONAL CONTEXT third. If user input is still missing, ask only for those "
+            "missing values and include any grounded options you can infer from Giver tool outputs "
+            "or TOOL CONTEXT. Never base donation guidance on external web URLs."
+            f"\n\nTOOL CONTEXT (parameter descriptions and valid values for all available tools):\n{tool_context}"
+        )
         final_prompt = [
             HumanMessage(
-                content=f"{system_prompt}\n\nTOOL CONTEXT (parameter descriptions and valid values for all available tools):\n{tool_context}{situational_block}\n\nConversation History:\n{transcript}"
+                content=(
+                    f"{system_prompt.strip()}\n\n"
+                    f"Conversation History:\n{transcript}\n\n"
+                    f"{situational_section}\n\n"
+                    f"{final_instruction}"
+                )
             )
         ]
 
@@ -661,8 +728,6 @@ Now write the final answer based strictly on the Conversation History below, inc
         return {"messages": [summary], "final_answer": final_text}
 
     return responder
-
-
 
 
 
@@ -1002,7 +1067,9 @@ def make_gate_node(
 
     async def gate_node(state: dict) -> Dict:
         base_messages = list(state.get("messages", []) or [])
-        base_missing_args = _normalize_missing_args((state.get("plan", {}) or {}).get("missing_args", []))
+        base_plan = state.get("plan", {}) or {}
+        base_missing_args = _normalize_missing_args(base_plan.get("missing_args", []))
+        base_plan_steps = base_plan.get("steps", [])
         raw_original_errors = detect_recent_tool_errors(base_messages)
 
         if not raw_original_errors:
@@ -1050,77 +1117,293 @@ def make_gate_node(
             valid_error_ids = {err["error_id"] for err in unresolved_errors}
 
             react_prompt = f"""
-You are an AGENTIC GATE node, a repair executor for a tool-using LangGraph pipeline.
+You are an AGENTIC GATE: a reactive repair executor for a tool-using LangGraph pipeline.
 
-Your job is to reactively choose:
-1. which unresolved error to work on next
-2. which repair step to try next
+MISSION: Inspect each tool error, find grounded values for all required args by exhaustively scanning every available source, emit ONE repair action, and maintain an authoritative list of args that still require user input.
 
-You must make that choice based on:
-- original round history
-- cached outputs
-- attempted repairs so far
-- errors already fixed
-- errors still unresolved
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+INFORMATION SOURCES (scan ALL of these before declaring any arg missing):
 
-VERY IMPORTANT:
-- Tool descriptions contain usage policy, dependency rules, and ordering constraints.
-- You must obey tool dependency rules.
-- Prefer repairing missing prerequisites before retrying downstream tools.
-- Reuse grounded values from cached successful outputs.
-- Do NOT invent ids, names, urls, passwords, numeric values, or other arguments not present in history/cache.
-- Do NOT hallucinate entity names, grant titles, campaign names, or any identifiers not explicitly present in the user's current request or in cached tool outputs.
-- Return exactly ONE next repair action or mark done.
-- You are responsible for maintaining the CURRENT unresolved user-input list across repair steps.
-- Any `missing_args` you output must be the current authoritative list after considering all successful repair steps so far.
-- On the final `done: true` step, `missing_args` must contain every remaining required argument that is still not recoverable from available tool calls or cached successful outputs, and must exclude anything already recovered.
-- CURRENT ROUND HISTORY may contain FINAL_AGENT_STEP[gate] entries from prior rounds.
-- Use prior FINAL_AGENT_STEP[gate] entries as grounded context about what was last attempted, what succeeded, and what failed in earlier rounds.
-- Prefer continuity with the most recent FINAL_AGENT_STEP[gate] when the user is continuing an unfinished workflow.
+  SOURCE 1 — PLANNER'S ORIGINAL PLAN
+    The steps and missing_args the planner produced at the start of this round.
+    Use it to understand original intent and which args were already provided.
 
-ID AUTO-SELECTION RULE:
-- When a list tool (e.g., list_charity_grants, list_charity_active_campaigns) succeeds and returns one or more items, you MUST auto-select an ID from that list to resolve the downstream ID argument. Do NOT add that ID to missing_args if the list returned results.
-- If the user specified a name/title, select the item whose title/name best matches. If the user did not specify, select the first active item in the list.
-- Only add an ID arg to missing_args if the list tool returned an EMPTY list (no items at all).
-- Do NOT conclude that an ID is unresolvable just because no item matches a name you assumed — use the first available item if no explicit match exists.
+  SOURCE 2 — CURRENT ROUND HISTORY
+    Full transcript of tool calls and their responses executed by the executor
+    during this round (before gate repair began). Contains the raw tool outputs
+    that most likely hold the entity ids, names, and values the repair needs.
 
-COMPLEX ARGUMENT ASSEMBLY RULE:
-- When a failed tool requires structured arguments (lists, nested objects), you MUST actively extract concrete values from CACHED TOOL OUTPUTS to build those arguments.
-- Do NOT pass empty lists, empty objects, or zero values as a shortcut to satisfy type validation. An empty list is not a valid repair — it will fail at the API level.
-- Walk through the cached outputs field by field. Match the user's original request (e.g., product name, campaign title) to items in the cached data to select the correct records. Only match against names/titles that the user EXPLICITLY stated in the current request — do NOT invent or assume a name.
-- For list-of-object arguments (e.g., products: [{{"partner": "...", "charityProd": "..."}}]), construct each object by extracting real field values (_id, pricePerUnit, category, partner, etc.) from the cached tool output that returned those records.
-- If the cached data does not contain a required field value and no other available tool can provide it, add that field name to missing_args and set done: true. Do NOT substitute a placeholder, empty value, or guess.
+  SOURCE 3 — CACHED TOOL OUTPUTS
+    Deduplicated latest successful output per tool for the current round.
+    Primary source for entity data (ids, names, amounts, types, etc.).
 
-SELF-CONTAINMENT RULE:
-- Any repaired step must be executable on its own.
-- Do NOT reference implicit variables from previous tool outputs.
-- If a computation tool needs prior tool output, pass grounded required data through valid tool arguments only.
-- If that is not possible for the tool schema, do not emit that repair step.
+  SOURCE 4 — ALREADY ATTEMPTED REPAIR STEPS THIS GATE RUN
+    Every repair step attempted so far — SUCCESS, FAILED, or done=true.
+    Each row's "output" field is a real tool response and may contain values
+    needed by subsequent steps. Read the output of EVERY prior step, even failed ones,
+    because failed steps may have returned partial data or error details that reveal
+    what value is actually needed.
 
-SCHEMA RULE:
-- Output only arguments that belong to the target tool's real schema.
-- Do not include bookkeeping/debug fields such as `tool_name`.
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MANDATORY REASONING PROTOCOL (perform internally before producing output):
 
-INTENT-PRESERVATION RULE:
-- Preserve the original latest user request.
-- Do not switch to a different statistic, easier computation, or different dataset.
+  STEP A — UNDERSTAND THE ERROR AND THE PLANNER'S INTENDED SEQUENCE
+    1. Read the target error from ERRORS STILL UNRESOLVED.
+    2. Identify: the tool that failed, the args it was called with, and the exact error message.
+    3. List every required arg for the repair tool from AVAILABLE TOOLS schema.
+    4. Read PLANNER'S ORIGINAL PLAN (SOURCE 1) and note the intended step order.
+       The planner's steps define the dependency chain: repair them in their original order.
+       If a planner step failed, fix its inputs and retry it BEFORE moving to downstream steps.
+       Do NOT run tools that are not in the planner's step sequence unless they are the only
+       way to fetch a required arg that no source contains.
+
+  STEP B — EXHAUSTIVE ARG RESOLUTION (for every required/missing arg, in source order)
+
+    B0. NORMALIZE THE ARG NAME FIRST (do this before any lookup):
+        Convert the arg name to a canonical entity word by stripping suffixes and
+        normalizing case. Examples:
+          grant_id → "grant"     grantId → "grant"     grant_ID → "grant"
+          charityId → "charity"  charity_id → "charity"
+          campaignId → "campaign" campaign_id → "campaign"
+          productId → "product"  product_id → "product"
+        Also note the planner may write missing_args in snake_case (e.g., "grant_id")
+        while the tool schema uses camelCase (e.g., "grantId"). Treat them as the same arg.
+
+    For each arg, scan sources in this order and stop at the first grounded match:
+
+    B1. SOURCE 4 (repair step outputs) — read EVERY step's "output" field, including
+        failed steps. Extract any field whose name, alias, or entity word matches the arg.
+        CRITICAL: after any successful prerequisite step (e.g., list_charity_grants),
+        immediately check if its output resolves any current missing_arg before
+        declaring that arg still missing.
+    B2. SOURCE 3 (cached tool outputs) — read every tool's output.
+        Extract matching fields by name, alias, or nested-object pattern.
+    B3. SOURCE 2 (current round history) — scan all tool responses.
+        Extract matching fields.
+    B4. SOURCE 1 (planner plan) — the original plan's tool args often contain already-
+        resolved values (e.g., amount, password). Extract any non-placeholder value
+        directly from the plan's args dict for the target tool.
+
+    For each candidate value, apply these matching rules:
+    • DIRECT MATCH      — field name exactly equals arg name (e.g., arg=grantId, field=grantId)
+    • SNAKE↔CAMEL MATCH — normalize both sides: grant_id == grantId == grant_ID.
+                          Always normalize before comparing.
+    • ALIAS MATCH       — _id ↔ id ↔ {{entity}}Id ↔ {{entity}}ID ↔ {{entity}}_id
+    • NESTED MATCH      — if output has {{"grants": {{"_id": "..."}}}} and arg is grantId or grant_id,
+                          the entity key ("grants") contains the entity word ("grant"),
+                          so grants[*]._id is the grantId value.
+                          Apply to ALL entity types: grants, campaigns, charities, products,
+                          auctions, donations, wallets, users, etc.
+    • ARRAY MATCH (MANDATORY — no exceptions):
+                          If the entity list has ≥1 item, you MUST pick an item and use
+                          its _id. This is not optional. Steps:
+                          1. Look for the item whose title/name most closely matches the
+                             user's request (fuzzy: "Community Library" ≈ "library", etc.).
+                          2. If no item semantically matches, pick the FIRST item in the array.
+                          3. Extract its _id field as the resolved entity id.
+                          Returning step=null or adding grantId/campaignId to missing_args
+                          while a non-empty entity array exists in any source is FORBIDDEN.
+    • LABEL-TO-ID MATCH — if a tool output pairs a human label with a backend id
+                          (e.g., donationTypeName + donationTypeId), map the user's
+                          label to the corresponding backend id.
+    • PLANNER-VALUE     — if the planner's original plan args for the target tool already
+                          contain a non-placeholder concrete value (e.g., "password": "Google@123",
+                          "amount": 50), use that value directly.
+
+    B5. PLANNER STEP AS PREREQUISITE (use this when B1–B4 all fail to find the value):
+        If an arg value was not found in any source, look at PLANNER'S ORIGINAL PLAN (SOURCE 1)
+        to identify which planner step was supposed to produce that value.
+        Example: if grantId is missing and the planner had a step "list_charity_grants",
+        that tool's output is the intended source of grantId.
+        If that planner step failed (due to placeholder args) and its required input
+        (e.g., charity_id) is now available from a prior repair step — run that planner
+        step next with the corrected input. Set mark_target_fixed_if_success=false since
+        this is a prerequisite, not the final repair.
+        PRIORITY: always prefer repairing failed planner steps in their original order
+        over running tools outside the planner's sequence.
+
+  STEP C — BUILD THE REPAIR ARGS
+    • Only include args for which you found a concrete grounded value.
+    • Never substitute placeholders, empty lists, empty objects, or invented values.
+    • For structured/array args: assemble the full object from cached records field by field.
+    • If a required arg remains unresolvable from all sources AND no planner step can
+      fetch it → add that arg to missing_args and set done=true instead.
+
+  STEP D — UPDATE missing_args (AUTHORITATIVE — apply every step)
+    Start from: SO FAR PLANNER/STATE MISSING INPUTS CARRIED INTO GATE.
+    Then apply STEP B results across ALL current missing_args — not just the target arg.
+
+    MANDATORY CROSS-STEP RE-EVALUATION: after any successful repair step (especially
+    prerequisite steps like list_charity_grants, discover_charities, etc.), re-run
+    STEP B for EVERY arg currently in missing_args using the new step's output as
+    SOURCE 4. Remove any arg that is now resolvable. This must happen before you
+    decide whether to emit the next repair step or set done=true.
+
+    CLASSIFY EACH missing_arg BEFORE deciding to remove it:
+
+    NEGATIVE RESULT RULE (apply ONLY to truly empty results):
+      A tool output is a NEGATIVE RESULT (does NOT resolve an arg) ONLY when:
+      • The entity list is literally empty: [] or grants/campaigns/items array has 0 items.
+      • Python_REPL output is a sentinel string ("GRANT_NOT_FOUND", "NOT_FOUND", etc.)
+        instead of a real id value.
+      This rule does NOT apply when the list is non-empty. A list with items IS resolvable
+      via ARRAY MATCH even if no item exactly matches the user's requested title.
+      When a true NEGATIVE RESULT occurs (empty list):
+      • Do NOT treat it as resolving the arg.
+      • Add the human-readable arg descriptor to missing_args so the responder can
+        inform the user that no records were found.
+
+    TYPE A — ID/ENTITY ARG (auto-resolvable):
+      Args like campaignId, grantId, charityId, productId, grant_id, etc.
+      These reference a specific backend entity. Auto-resolve them via NESTED/ALIAS MATCH
+      ONLY when a concrete non-null, non-sentinel entity _id was actually found in a source.
+      REMOVE from missing_args once their entity _id is found in any source.
+      KEEP in missing_args (apply NEGATIVE RESULT RULE) if the lookup returned no match.
+
+    TYPE B — USER-CHOICE ARG (NOT auto-resolvable unless user specified):
+      Args like donation_type, category, donation_method, payment_method, or any field
+      where a tool output lists multiple valid options and the user must choose one.
+      The planner puts these in missing_args precisely because the user hasn't chosen.
+      RULE: KEEP a TYPE B arg in missing_args UNLESS one of these is true:
+        (a) The user's own message (CURRENT ROUND HISTORY USER line) explicitly names
+            a value for it (e.g., user said "Sadqah" or "type: Sadqah"), OR
+        (b) Only a single option exists in the tool output (no choice needed).
+      Do NOT auto-select from a list of options just because the data is available.
+      Selecting 'Sadqah' when the user hasn't specified is wrong — keep it in missing_args.
+
+    TYPE C — AUTH ARG (requires user input ONLY when not already known):
+      Args like password, token, pin. Cannot be recovered from tool outputs.
+      HOWEVER — if the planner's original plan (SOURCE 1) or a user message in
+      CURRENT ROUND HISTORY already contains the password as a concrete non-placeholder
+      literal (e.g., "password": "Google@123"), it IS known and MUST be treated as
+      resolved via B4 (PLANNER-VALUE). TYPE C means "cannot be extracted from API
+      responses" — not "always treat as missing regardless of what the plan contains".
+      KEEP in missing_args ONLY when the error is an auth failure (HTTP 401/403,
+      "Invalid password") AND the password is not present in SOURCE 1 or user messages.
+
+    REMOVE an arg when:
+    • TYPE A: STEP B found its entity _id in any source.
+    • TYPE B: user explicitly named the value in their message, OR only one option exists,
+              OR the planner's original plan step args already contain a concrete
+              non-placeholder value for this arg (B4 PLANNER-VALUE).
+    • TYPE C: the concrete value is already in the planner's plan or a user message (B4).
+    • The planner's original plan args contain a concrete non-placeholder literal value
+      (not a placeholder like "<...>", "<VALUE>", "<PASSWORD>") — use it directly (B4).
+      This applies to ALL arg types.
+
+    ADD an arg when:
+    • A failed repair step's error message explicitly names a field that must come from
+      the user and is not available in any source.
+    • The tool schema for the repair step requires a field that is not in any source
+      and cannot be inferred.
+    • NEVER add an arg that is already present in the planner's step args with a
+      concrete non-placeholder value — a planner-supplied value is already resolved.
+
+    KEEP an arg when:
+    • TYPE B: multiple options exist, user hasn't expressed a preference, AND the
+              planner's step args do NOT already contain a concrete value for it.
+    • TYPE C: error is auth-related AND no concrete value exists in planner/user messages.
+    • After exhausting all sources, the value is genuinely absent and requires user input.
+
+    NEVER include in missing_args:
+    • Any arg whose value is already present (non-placeholder) in the planner's step args.
+    • TYPE A id-args whose entity data is already present in any source.
+    • Authentication values UNLESS the current error is specifically an auth failure.
+
+  STEP E — DECIDE THE REPAIR ACTION (follow this priority order)
+    0. EMIT THE REPAIR STEP IF ALL ARGS ARE GROUNDED (check this before everything else):
+       After completing STEP B and STEP D, if every required arg for the failing tool
+       now has a resolved concrete value (from any source), you MUST emit the repair step.
+       Do NOT return step=null or done=true in this case — that would be a contradiction.
+       If your own reasoning in STEP B says "resolved grantId" and "password is in plan",
+       then all args are grounded and you must emit the step with those values.
+
+    1. FOLLOW THE PLANNER'S STEP SEQUENCE:
+       Look at PLANNER'S ORIGINAL PLAN steps in order. Find the earliest step that
+       (a) has not yet succeeded and (b) whose required inputs are now grounded.
+       Repair that step first before any other. This ensures the dependency chain is
+       resolved in the right order (e.g., list_charity_grants must run before grant_donation).
+
+    2. RETRY A FAILED PLANNER STEP WITH CORRECTED ARGS:
+       If a planner step failed because its args were placeholders, and the real values
+       are now available from prior repair outputs or cached data — retry that step
+       with corrected args. This is the most common repair pattern.
+
+    3. RUN A PREREQUISITE OUTSIDE THE PLANNER'S LIST ONLY IF NEEDED:
+       If a planner step's required input cannot be sourced from any existing output,
+       run the tool from AVAILABLE TOOLS that is most likely to produce it (using B5).
+       Set mark_target_fixed_if_success=false for this prerequisite step.
+       IMPORTANT: do not run a tool that is not relevant to resolving the current
+       unresolved error — every repair step must advance toward fixing a specific error.
+
+    4. HTTP 500 WITH PLACEHOLDER ARGS:
+       If the error is HTTP 500 AND the original call used placeholder args — the 500
+       was likely caused by the bad args. Attempt the repair with grounded args.
+       Do NOT treat HTTP 500 as automatically unrecoverable.
+
+    5. MARK DONE ONLY AS A LAST RESORT:
+       Set done=true only when: all planner steps have been retried with correct args,
+       no further prerequisite can be run, and a required arg is genuinely not available
+       from any source and must come from the user.
+       Never mark done=true while a planner step that can be retried with grounded args
+       still exists as an unresolved error.
+       BLOCKING CHECK before setting done=true with missing grantId or campaignId:
+         → Search SOURCE 4 (all repair step outputs) for any key containing "grant" or
+           "campaign" with a non-empty array value.
+         → Search SOURCE 3 (cached tool outputs) for the same.
+         → If a non-empty array is found in EITHER source, you are NOT allowed to mark
+           grantId/campaignId as missing. Apply ARRAY MATCH immediately and emit the step.
+
+    6. NEVER REPEAT: if the exact same tool+args already appear in SOURCE 4, skip it.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+CONSTRAINTS:
+- Tool descriptions contain dependency and ordering rules — obey them strictly.
+- Do NOT invent ids, names, urls, passwords, or numeric values absent from all sources.
+- Return exactly ONE repair action per step (or done=true).
+- Authentication values (passwords, tokens) can never be auto-recovered — always require user.
+- missing_args must contain ONLY args that genuinely require user input, never auto-resolvable ids.
+- Do NOT use Python_REPL to scan or filter arrays/lists. You can read JSON data directly from
+  SOURCE 3 and SOURCE 4. Python_REPL is for computation only (math, aggregation, formatting).
+  If a planner step used Python_REPL for ID extraction and it failed, skip repairing that step —
+  the gate extracts IDs directly from tool output using NESTED/ALIAS/ARRAY MATCH rules.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+COMPLEX ARGUMENT ASSEMBLY:
+- For tools requiring structured args (arrays, nested objects): walk CACHED TOOL OUTPUTS
+  field by field, match the user's original request to the correct record, and extract
+  every required inner field. Do NOT pass empty containers — they will fail at the API level.
+
+SELF-CONTAINMENT:
+- Each repair step must be fully executable on its own with no implicit references.
+- Pass all required values as explicit tool arguments.
+
+SCHEMA:
+- Only output args that belong to the target tool's schema. Omit debug fields like tool_name.
+
+INTENT-PRESERVATION:
+- Preserve the original user request. Do not substitute a different dataset or action.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+PLANNER'S ORIGINAL PLAN FOR THIS ROUND:
+{_compact_json(dict(steps=base_plan_steps, missing_args=list(missing_args)), max_chars=2000)}
 
 CURRENT ROUND HISTORY:
 {gate_history}
 
-CACHED TOOL OUTPUTS:
+CACHED TOOL OUTPUTS (latest successful per tool, current round):
 {cache}
 
 SO FAR PLANNER/STATE MISSING INPUTS CARRIED INTO GATE:
 {_compact_json(missing_args, max_chars=1000)}
 
-So far errors fixed:
+ERRORS FIXED SO FAR:
 {_serialize_errors_for_prompt(fixed_errors)}
 
-Errors still unresolved:
+ERRORS STILL UNRESOLVED:
 {_serialize_errors_for_prompt(unresolved_errors)}
 
-ALREADY ATTEMPTED REPAIR STEPS THIS GATE RUN:
+ALREADY ATTEMPTED REPAIR STEPS THIS GATE RUN (includes ALL steps — SUCCESS, FAILED, done=true):
 {_format_attempt_log(attempt_log)}
 
 AVAILABLE TOOLS:
@@ -1132,70 +1415,70 @@ VALID TOOL NAMES:
 VALID UNRESOLVED ERROR IDS:
 {sorted(list(valid_error_ids))}
 
-OUTPUT JSON ONLY:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+OUTPUT JSON ONLY — no prose, no markdown:
 {{
-  "target_error_id": "E1" | "E2" | null,   // The error_id of the unresolved error you are working on this step. null only if you cannot identify a valid target.
-  "step": {{"tool": "tool_name", "args": {{"arg_name": "value"}}}} | null,  // The single repair action to execute. null if done or no safe repair exists.
-  "mark_target_fixed_if_success": true | false,  // true if this step directly resolves target_error_id; false if it is only a prerequisite step.
-  "done": true | false,   // true when no further automatic repair is possible or needed this gate run. Must be true on the final step.
-  "reason": "one short evidence-based reason for why this unresolved error should be worked on next and why this repair step is appropriate",
-  "missing_args": []  // The UPDATED list of user-input args still missing AFTER this step. Remove any arg this step just resolved. Keep all still-unresolved ones. Must be complete and authoritative when done is true.
+  "target_error_id": "E1" | "E2" | null,
+  "step": {{"tool": "tool_name", "args": {{"arg_name": "value"}}}} | null,
+  "mark_target_fixed_if_success": true | false,
+  "done": true | false,
+  "reason": "one evidence-based sentence: which error, why this repair, which source provided the key values",
+  "missing_args": []
 }}
 
 RULES:
-1. You choose which unresolved error to address next.
-2. Return at most ONE repair step.
-3. If the chosen target error is downstream and prerequisites are missing, you may choose a prerequisite repair step first.
-4. If your chosen repair step directly fixes the chosen error, set `mark_target_fixed_if_success` to true.
-5. If your chosen repair step is only a prerequisite and does not yet directly fix the chosen error, set `mark_target_fixed_if_success` to false.
-6. Do not repeat an identical or semantically equivalent repair step already attempted in this gate run.
-7. If no safe automatic repair is possible, set `done`: true.
-8. NEVER pass empty lists or empty objects for arguments that require real data. If the original error was caused by placeholder strings, the repair MUST replace them with actual values from cached outputs, not with empty containers.
-9. When a prior missing arg becomes recoverable from a successful repair step or cached tool output, remove it from `missing_args`.
-10. When `done` is true, do not return a partial list. Return the full remaining unresolved set the user must provide next.
+1. Return at most ONE repair step per response.
+2. target_error_id MUST always be set to the error you are working on, from VALID UNRESOLVED ERROR IDS.
+   target_error_id must be null ONLY when you cannot identify ANY valid target error at all —
+   this should be extremely rare. When setting done=true, still set target_error_id to the error
+   you were addressing.
+3. If the target error is downstream and a prerequisite is missing, repair the prerequisite first.
+4. Set mark_target_fixed_if_success=true only if this step directly resolves target_error_id.
+5. Set mark_target_fixed_if_success=false if this step is only a prerequisite.
+6. Never repeat a step that is semantically equivalent to one already in ALREADY ATTEMPTED REPAIR STEPS.
+7. If no safe automatic repair exists, set done=true with step=null AND target_error_id set.
+8. missing_args is your full authoritative list after applying STEP D above.
+   When done=true, it must be complete — every arg still requiring user input, nothing more.
+9. Never pass empty lists or empty objects for args that require real data.
+10. The "reason" field must cite which source (SOURCE 1/2/3/4) provided the key grounded values used.
+11. When the grants/campaigns list is non-empty and no exact title matches the user's request,
+    apply ARRAY MATCH: pick the best semantic match, or the first item if no semantics match.
+    Do NOT mark grantId/campaignId as missing_args when the entity list has items in it.
 """.strip()
             
-            if DEBUG_MESSAGES == 1 and (SHOW_GATE_HISTORY == 1 or 
-                                        SHOW_GATE_CACHED_TOOL_OUTPUTS == 1 or 
-                                        SHOW_GATE_FIXED_ERRORS == 1 or 
-                                        SHOW_GATE_UNRESOLVED_ERRORS == 1 or 
-                                        SHOW_GATE_ATTEMPTED_REPAIRS == 1 or 
-                                        SHOW_GATE_UNRESOLVED_ERROR_IDS == 1):
-                rich_print("\n" + "=" * 80)
-                rich_print(f"AGENTIC GATE PROMPT STEP {react_idx + 1}")
-                rich_print("=" * 80)
 
-            if DEBUG_MESSAGES == 1 and SHOW_GATE_HISTORY == 1:
-                rich_print("CURRENT ROUND HISTORY:")
-                trunc_lim_hist = TRUNCATION_LIMIT_GATE_HISTORY
-                truncated_history = gate_history[:trunc_lim_hist] + ("..." if len(gate_history) > trunc_lim_hist else "")
-                rich_print(truncated_history)
-                rich_print("=" * 80)
 
-            if DEBUG_MESSAGES == 1 and SHOW_GATE_CACHED_TOOL_OUTPUTS == 1:
-                rich_print("CACHED TOOL OUTPUTS:")
-                rich_print(cache)
-                rich_print("=" * 80)
+            # if DEBUG_MESSAGES == 1:
+            #     rich_print("\n" + "=" * 80)
+            #     rich_print(f"AGENTIC GATE REACT STEP {react_idx + 1} — REPAIR PROMPT")
+            #     rich_print("=" * 80)
+            #     rich_print(react_prompt)
+            #     rich_print("=" * 80)
 
-            if DEBUG_MESSAGES == 1 and SHOW_GATE_FIXED_ERRORS == 1:
-                rich_print("So far errors fixed:")
-                rich_print(_serialize_errors_for_prompt(fixed_errors))
-                rich_print("=" * 80)
+            # if DEBUG_MESSAGES == 1 and SHOW_GATE_CACHED_TOOL_OUTPUTS == 1:
+            #     rich_print("CACHED TOOL OUTPUTS:")
+            #     rich_print(cache)
+            #     rich_print("=" * 80)
 
-            if DEBUG_MESSAGES == 1 and SHOW_GATE_UNRESOLVED_ERRORS == 1:
-                rich_print("Errors still unresolved:")
-                rich_print(_serialize_errors_for_prompt(unresolved_errors))
-                rich_print("=" * 80)
+            # if DEBUG_MESSAGES == 1 and SHOW_GATE_FIXED_ERRORS == 1:
+            #     rich_print("So far errors fixed:")
+            #     rich_print(_serialize_errors_for_prompt(fixed_errors))
+            #     rich_print("=" * 80)
 
-            if DEBUG_MESSAGES == 1 and SHOW_GATE_ATTEMPTED_REPAIRS == 1:
-                rich_print("ALREADY ATTEMPTED REPAIR STEPS THIS GATE RUN:")
-                rich_print(_format_attempt_log(attempt_log))
-                rich_print("=" * 80)
+            # if DEBUG_MESSAGES == 1 and SHOW_GATE_UNRESOLVED_ERRORS == 1:
+            #     rich_print("Errors still unresolved:")
+            #     rich_print(_serialize_errors_for_prompt(unresolved_errors))
+            #     rich_print("=" * 80)
 
-            if DEBUG_MESSAGES == 1 and SHOW_GATE_UNRESOLVED_ERROR_IDS == 1:
-                rich_print("VALID UNRESOLVED ERROR IDS:")
-                rich_print(sorted(list(valid_error_ids)))
-                rich_print("=" * 80)
+            # if DEBUG_MESSAGES == 1 and SHOW_GATE_ATTEMPTED_REPAIRS == 1:
+            #     rich_print("ALREADY ATTEMPTED REPAIR STEPS THIS GATE RUN:")
+            #     rich_print(_format_attempt_log(attempt_log))
+            #     rich_print("=" * 80)
+
+            # if DEBUG_MESSAGES == 1 and SHOW_GATE_UNRESOLVED_ERROR_IDS == 1:
+            #     rich_print("VALID UNRESOLVED ERROR IDS:")
+            #     rich_print(sorted(list(valid_error_ids)))
+            #     rich_print("=" * 80)
 
             resp = model.invoke([HumanMessage(content=react_prompt)])
             raw_text = (resp.content or "").strip()
