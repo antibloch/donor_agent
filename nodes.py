@@ -1073,7 +1073,7 @@ CACHED TOOL OUTPUTS:
 {cache}
 
 PLANNER/STATE MISSING INPUTS CARRIED INTO GATE:
-{_compact_json(missing_args, max_chars=500)}
+{_compact_json(missing_args, max_chars=1000)}
 
 So far errors fixed:
 {_serialize_errors_for_prompt(fixed_errors)}
@@ -1095,12 +1095,12 @@ VALID UNRESOLVED ERROR IDS:
 
 OUTPUT JSON ONLY:
 {{
-  "target_error_id": "E1" | "E2" | null,
-  "step": {{"tool": "tool_name", "args": {{"arg_name": "value"}}}} | null,
-  "mark_target_fixed_if_success": true | false,
-  "done": true | false,
+  "target_error_id": "E1" | "E2" | null,   // The error_id of the unresolved error you are working on this step. null only if you cannot identify a valid target.
+  "step": {{"tool": "tool_name", "args": {{"arg_name": "value"}}}} | null,  // The single repair action to execute. null if done or no safe repair exists.
+  "mark_target_fixed_if_success": true | false,  // true if this step directly resolves target_error_id; false if it is only a prerequisite step.
+  "done": true | false,   // true when no further automatic repair is possible or needed this gate run. Must be true on the final step.
   "reason": "one short evidence-based reason for why this unresolved error should be worked on next and why this repair step is appropriate",
-  "missing_args": []
+  "missing_args": []  // The UPDATED list of user-input args still missing AFTER this step. Remove any arg this step just resolved. Keep all still-unresolved ones. Must be complete and authoritative when done is true.
 }}
 
 RULES:
@@ -1185,14 +1185,9 @@ RULES:
             reason = decision["reason"]
             mark_target_fixed_if_success = decision["mark_target_fixed_if_success"]
 
-            if decision["missing_args"]:
-                if done or step is None:
-                    missing_args = _normalize_missing_args(decision["missing_args"])
-                else:
-                    missing_args = _normalize_missing_args(missing_args + decision["missing_args"])
-
 
             if done and step is None:
+                missing_args = _normalize_missing_args(decision["missing_args"])
                 gate_notes.append(reason or "Repair model stopped.")
                 break
 
@@ -1288,6 +1283,9 @@ RULES:
                 tool_call_id=tool_call_id,
             )
             emitted_messages.append(tool_msg)
+
+            if semantic_ok:
+                missing_args = _normalize_missing_args(missing_args + decision["missing_args"])
 
 
             attempt_log.append({
