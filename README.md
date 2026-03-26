@@ -18,6 +18,8 @@ NVIDIA_API_KEY=sk-ant-...
 
 ```bash
 pip install -r requirements.txt
+pip install bcrypt
+playwright install chromium
 ```
 
 ---
@@ -54,12 +56,14 @@ Agent: [Guides through donation workflow]
 ---
 
 ## Run Docker Container
----------------------------------------------------------
-IMPORT & RUN ON WINDOWS (Destination Machine)
----------------------------------------------------------
+
+---
+
+## IMPORT & RUN ON WINDOWS (Destination Machine)
+
 Install docker desktop from: https://docs.docker.com/desktop/setup/install/windows-install/
 
-Prerequisite: Ensure Docker Desktop is installed and running. Open 
+Prerequisite: Ensure Docker Desktop is installed and running. Open
 PowerShell or Command Prompt in the folder containing the .tar file.
 
 1. Load the image into Docker:
@@ -70,10 +74,12 @@ PowerShell or Command Prompt in the folder containing the .tar file.
 
    (Press Ctrl+C to stop)
 
----------------------------------------------------------
-Docker Setup on Ubuntu (22.04 / Jammy)
----------------------------------------------------------
+---
+
+## Docker Setup on Ubuntu (22.04 / Jammy)
+
 # This document describes how to install **Docker Engine** on Ubuntu using the official Docker repository.
+
 ---
 
 # 1. Remove Old Docker Versions (Optional)
@@ -214,22 +220,45 @@ Remove container:
 ```bash
 docker rm <container_id>
 ```
+
+<<<<<<< HEAD
+
 ---
 
----------------------------------------------------------
-IMPORT & RUN ON LINUX (Destination Server)
----------------------------------------------------------
-Prerequisite: Ensure the Docker daemon is running. Open your terminal 
-in the directory where you uploaded the .tar file. You may need 
-to use 'sudo' depending on your user permissions.
+---
+
+## IMPORT & RUN ON LINUX (Destination Server)
+
+Prerequisite: Ensure the Docker daemon is running. Open your terminal
+in the directory where you uploaded the .tar file. You may need
+=======
+
+---
+
+---
+
+## IMPORT & RUN ON LINUX (Destination Server)
+
+Prerequisite: Ensure the Docker daemon is running. Open your terminal
+in the directory where you uploaded the .tar file. You may need
+
+> > > > > > > 78233c66c0c52b5e7bbc9d9827c35a2f9c39cfd0
+> > > > > > > to use 'sudo' depending on your user permissions.
 
 1. Load the image into Docker:
    sudo docker load -i donor_agent_image.tar
 
 2. Run the Agent:
-sudo docker run -it -e NVIDIA_API_KEY="paste_your_key_here" --name my_donor_agent updated_agent_image
+   <<<<<<< HEAD
+   sudo docker run -it -e NVIDIA_API_KEY="paste_your_key_here" --name my_donor_agent updated_agent_image
    (Press Ctrl+C to stop)
-   
+
+=======
+sudo docker run -it -e NVIDIA_API_KEY="paste_your_key_here" --name my_donor_agent updated_agent_image
+(Press Ctrl+C to stop)
+
+> > > > > > > 78233c66c0c52b5e7bbc9d9827c35a2f9c39cfd0
+
 ---
 
 ## Run API Server
