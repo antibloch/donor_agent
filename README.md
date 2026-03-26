@@ -18,7 +18,6 @@ NVIDIA_API_KEY=sk-ant-...
 
 ```bash
 pip install -r requirements.txt
-pip install bcrypt
 playwright install chromium
 ```
 
