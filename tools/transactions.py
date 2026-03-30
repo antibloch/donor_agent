@@ -4,10 +4,19 @@ from tools.tool_helpers import _ok, _fail, _get
 import difflib 
 
 BASE_URL = "https://giverr-api.verior.co"
-DONATION_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhOTVkMTIwZGI2MWFmYWYwM2UiLCJyb2xlIjoiRG9ub3IiLCJwcm9maWxlVHlwZSI6IkRvbm9yIiwiaWF0IjoxNzcxNDg1NzYyLCJleHAiOjQ5MjcyNDU3NjJ9.9bTr--7-iHIemenKrFRYL3uTDx9auCY98GvYa0NnaOg"
-headers = {
-    "Authorization": f"Bearer {DONATION_TOKEN}"
-}
+
+from context import auth_token_ctx
+
+def get_auth_headers():
+    token = auth_token_ctx.get()
+
+    if not token:
+        raise Exception("Authorization token missing in context")
+
+    return {
+        "Authorization": f"Bearer {token}",
+    }
+
 xApiKey = "giverr_ai_live_9f3b7c6e2d4a8f1c5e7b9a2c6d1f4e8b3c7a9d2e6f1b4c8a3d7e2f6c9b1a4e8"
 
 @tool
@@ -55,9 +64,9 @@ def check_wallet_balance():
     try:
         response = requests.get(
             f"{BASE_URL}/api/v1/wallet/balance",
-            headers=headers
+            headers=get_auth_headers()
         )
-
+        print(response.json())
         response.raise_for_status()
         data = response.json()
 
@@ -157,7 +166,7 @@ def list_saved_payment_methods():
     try:
         response = requests.get(
             f"{BASE_URL}/api/v1/payment-apis/get-payment-methods",
-            headers=headers
+            headers=get_auth_headers()
         )
 
         response.raise_for_status()
@@ -254,7 +263,7 @@ def create_payment_method_url():
     try:
         response = requests.get(
             f"{BASE_URL}/api/v1/payment-apis/add-method",
-            headers=headers
+            headers=get_auth_headers()
         )
 
         response.raise_for_status()
@@ -350,7 +359,7 @@ def list_charities_in_country(country_code: str):
     try:
         response = requests.get(
             f"{BASE_URL}/api/v1/donations/charities/{country_code}",
-            headers=headers,
+            headers=get_auth_headers(),
             params=params
         )
 
@@ -943,7 +952,7 @@ def get_transaction_history():
     try:
         response = requests.get(
             f"{BASE_URL}/api/v3/donors/transactions",
-            headers=headers,
+            headers=get_auth_headers(),
             params=params
         )
         response.raise_for_status()
@@ -1034,7 +1043,7 @@ def fund_wallet(amount: float, paymentMethodId: str):
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/payment-apis/fund-wallet",
-            headers=headers,
+            headers=get_auth_headers(),
             json={
                 "amount": amount,
                 "paymentMethodId": paymentMethodId
@@ -1140,7 +1149,7 @@ def product_donation(
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/donations/donate",
-            headers=headers,
+            headers=get_auth_headers(),
             json={
                 "charityId": charityId,
                 "partners": partners,
@@ -1281,7 +1290,7 @@ def campaign_donation(
         # Call backend API
         donation_response = requests.post(
             f"{BASE_URL}/api/v1/donors/campaign/donate",
-            headers=headers,
+            headers=get_auth_headers(),
             json={
                 "compaignId": campaignId,
                 "amount": amount,
@@ -1357,7 +1366,7 @@ def grant_donation(charityId: str, amount: float, grantId: str):
     try:
         response = requests.post(
             f"{BASE_URL}/api/v3/donors/donate-grant",
-            headers=headers,
+            headers=get_auth_headers(),
             json={
                 "data": [
                     {

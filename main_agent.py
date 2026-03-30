@@ -26,12 +26,15 @@ from nodes import (
     make_responder_node,
 )
 from routing import route_after_validator, route_after_gate
-from rich.console import Console
-from rich import print as rich_print
 from rich.markdown import Markdown  
 from rich.panel import Panel        
+
 import dotenv
 dotenv.load_dotenv()
+
+# Import from context (NO circular import)
+from context import auth_token_ctx
+
 GATE_MAX_REACT_STEPS = int(os.getenv("GATE_MAX_REACT_STEPS", "1"))
 
 
@@ -40,25 +43,15 @@ class AgentState(TypedDict, total=False):
     plan: Dict[str, Any]
     repair_attempts: int
     last_tool_error: Dict[str, Any]
-    last_agentic_step: Dict[str, Any]   # <- add this
+    last_agentic_step: Dict[str, Any]
 
 
-def _should_wrap_as_password(messages: Sequence[BaseMessage]) -> bool:
-    for msg in reversed(messages or []):
-        if isinstance(msg, AIMessage):
-            content = (msg.content or "").strip().lower()
-            if content == "please enter password":
-                return True
-            if "your password" in content and ("enter" in content or "add" in content):
-                return True
-            return False
-    return False
+# 🔥 Hardcoded token (for CLI testing only)
+HARDCODED_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhOTVkMTIwZGI2MWFmYWYwM2UiLCJyb2xlIjoiRG9ub3IiLCJwcm9maWxlVHlwZSI6IkRvbm9yIiwiaWF0IjoxNzcxNDg1NzYyLCJleHAiOjQ5MjcyNDU3NjJ9.9bTr--7-iHIemenKrFRYL3uTDx9auCY98GvYa0NnaOg"
+
 
 async def build_graph():
     tools = await setup_tools()
-
-    # Patch tool descriptions with usage hints for better performance
-    # tools = patch_tool_descriptions(tools)
 
     tools_by_name = {t.name: t for t in tools}
 
@@ -89,6 +82,7 @@ async def build_graph():
     workflow.add_edge("responder", END)
     return workflow.compile()
 
+
 async def main():
     graph = await build_graph()
 
@@ -96,70 +90,73 @@ async def main():
     console = Console()
 
     rich_print("\n" + "="*60)
-    rich_print("CHARITY AGENT – Advanced Modular Version (Gate + Smart History)")
+    rich_print("CHARITY AGENT – Advanced Modular Version (Auth Enabled)")
     rich_print("Type 'exit', 'quit', or 'q' to stop.")
     rich_print("="*60 + "\n")
 
-    while True:
-        try:
-            user_input = input("User: ")
-        except (KeyboardInterrupt, EOFError):
-            rich_print("\nGoodbye!")
-            break
+    # Set token in context ONCE
+    token_ctx = auth_token_ctx.set(HARDCODED_TOKEN)
 
-        if user_input.lower() in ["exit", "quit", "q"]:
-            rich_print("\nGoodbye!")
-            break
+    try:
+        while True:
+            try:
+                user_input = input("User: ")
+            except (KeyboardInterrupt, EOFError):
+                rich_print("\nGoodbye!")
+                break
 
-        outgoing_user_input = user_input
-        if _should_wrap_as_password(chat_memory):
-            outgoing_user_input = f"Password: {user_input}"
+            if user_input.lower() in ["exit", "quit", "q"]:
+                rich_print("\nGoodbye!")
+                break
 
-        user_msg = HumanMessage(content=outgoing_user_input)
-        chat_memory.append(user_msg)
+            chat_memory.append(HumanMessage(content=user_input))
 
-        rich_print("\n(Agent is thinking...)\n")
+            rich_print("\n(Agent is thinking...)\n")
 
-        try:
-            async for step in graph.astream(
-                {"messages": chat_memory, "repair_attempts": 0},
-                stream_mode="updates"
-            ):
-                for node_name, node_output in step.items():
-                    if not node_output:
-                        continue
-                    if "messages" in node_output:
-                        new_messages = node_output["messages"]
-                        for msg in new_messages:
-                            chat_memory.append(msg)
+            try:
+                async for step in graph.astream(
+                    {"messages": chat_memory, "repair_attempts": 0},
+                    stream_mode="updates"
+                ):
+                    for node_name, node_output in step.items():
+                        if not node_output:
+                            continue
 
-                            if isinstance(msg, ToolMessage):
-                                rich_print(f" ➤ [Tool Executed] {msg.name}")
-                            elif isinstance(msg, AIMessage):
-                                content = (msg.content or "").strip()
+                        if "messages" in node_output:
+                            for msg in node_output["messages"]:
+                                chat_memory.append(msg)
 
-                                if getattr(msg, "tool_calls", None) and not content:
-                                    continue
-                                if content.startswith("System Note:"):
-                                    continue
-                                if content.startswith("FINAL_AGENT_STEP[gate] -> "):
-                                    continue
+                                if isinstance(msg, ToolMessage):
+                                    rich_print(f" ➤ [Tool Executed] {msg.name}")
 
-                                md = Markdown(content)
-                                console.print(
-                                    Panel(
-                                        md,
-                                        title="[bold cyan]Agent[/bold cyan]",
-                                        title_align="left",
-                                        border_style="cyan",
-                                        expand=False,
+                                elif isinstance(msg, AIMessage):
+                                    content = (msg.content or "").strip()
+
+                                    if getattr(msg, "tool_calls", None) and not content:
+                                        continue
+                                    if content.startswith("System Note:"):
+                                        continue
+                                    if content.startswith("FINAL_AGENT_STEP[gate] -> "):
+                                        continue
+
+                                    console.print(
+                                        Panel(
+                                            Markdown(content),
+                                            title="[bold cyan]Agent[/bold cyan]",
+                                            border_style="cyan",
+                                        )
                                     )
-                                )
-                                rich_print()
-        except Exception as e:
-            rich_print(f"\n[ERROR] {e}")
-            import traceback
-            traceback.print_exc()
+                                    rich_print()
+
+            except Exception as e:
+                rich_print(f"\n[ERROR] {e}")
+                import traceback
+                traceback.print_exc()
+
+    finally:
+        # Cleanup context
+        auth_token_ctx.reset(token_ctx)
+
 
 if __name__ == "__main__":
     asyncio.run(main())

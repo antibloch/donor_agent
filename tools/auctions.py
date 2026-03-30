@@ -2,40 +2,60 @@
 import requests
 from langchain_core.tools import tool
 from tools.tool_helpers import _ok, _fail
-
+from context import auth_token_ctx
 # ── CONSTANTS ─────────────────────────────────────────────
 
 BASE_URL = "https://giverr-api.verior.co"
 AGENT_BASE_PATH = "/api/v3/agent"
-
 X_API_KEY = "giverr_ai_live_9f3b7c6e2d4a8f1c5e7b9a2c6d1f4e8b3c7a9d2e6f1b4c8a3d7e2f6c9b1a4e8"
-BEARER_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiI2OTU4MDNhOTVkMTIwZGI2MWFmYWYwM2UiLCJyb2xlIjoiRG9ub3IiLCJwcm9maWxlVHlwZSI6IkRvbm9yIiwiaWF0IjoxNzcxNDg1NzYyLCJleHAiOjQ5MjcyNDU3NjJ9.9bTr--7-iHIemenKrFRYL3uTDx9auCY98GvYa0NnaOg"
+DONOR_PROFILE_ID = "695803a95d120db61afaf042"
+def get_auth_headers():
+    token = auth_token_ctx.get()
+    
+    # This is the "App Identity" required by the server gateway
+   
+    
+    headers = {
+        "Content-Type": "application/json",
+        "X-API-KEY": X_API_KEY
+    }
+    
+    # This is the "User Identity" from Postman
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+        print(f"DEBUG: Headers prepared with both API-KEY and Bearer Token")
+    else:
+        print("DEBUG: WARNING - No Bearer token found in context!")
+        
+    return headers
+
+
+# X_API_KEY = "giverr_ai_live_9f3b7c6e2d4a8f1c5e7b9a2c6d1f4e8b3c7a9d2e6f1b4c8a3d7e2f6c9b1a4e8"
 
 # Donor profile ObjectId — needed for get_my_bid_history endpoint
-DONOR_PROFILE_ID = "695803a95d120db61afaf042"
-
+# DONOR_PROFILE_ID = "695803a95d120db61afaf042"
 
 
 # ── HEADERS ───────────────────────────────────────────────
 
-def _api_headers() -> dict:
-    """Read-only endpoints — only X-API-KEY required."""
-    if not X_API_KEY:
-        raise ValueError("X-API-KEY is required.")
-    return {
-        "Content-Type": "application/json",
-        "X-API-KEY": X_API_KEY,
-    }
+# def _api_headers() -> dict:
+#     """Read-only endpoints — only X-API-KEY required."""
+#     if not X_API_KEY:
+#         raise ValueError("X-API-KEY is required.")
+#     return {
+#         "Content-Type": "application/json",
+#         "X-API-KEY": X_API_KEY,
+#     }
 
 
-def _user_headers() -> dict:
-    """User-scoped endpoints — Bearer token required."""
-    if not BEARER_TOKEN:
-        raise ValueError("BEARER_TOKEN is required.")
-    return {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {BEARER_TOKEN}",
-    }
+# def _user_headers() -> dict:
+#     """User-scoped endpoints — Bearer token required."""
+#     if not BEARER_TOKEN:
+#         raise ValueError("BEARER_TOKEN is required.")
+#     return {
+#         "Content-Type": "application/json",
+#         "Authorization": f"Bearer {BEARER_TOKEN}",
+#     }
 
 
 # ── AUCTION TOOLS ─────────────────────────────────────────
@@ -99,7 +119,7 @@ def get_active_auctions():
     try:
         response = requests.get(
             f"{BASE_URL}{endpoint}",
-            headers=_api_headers(),
+            headers=get_auth_headers(),
             params=params
         )
         if response.status_code >= 400:
@@ -197,7 +217,7 @@ def get_auction_details(auction_id: str):
     try:
         response = requests.get(
             f"{BASE_URL}{endpoint}",
-            headers=_api_headers()
+            headers=get_auth_headers()
         )
         if response.status_code >= 400:
             return _fail(
@@ -279,7 +299,7 @@ def get_my_bid_history():
     try:
         response = requests.get(
             f"{BASE_URL}{endpoint}",
-            headers=_api_headers()
+            headers=get_auth_headers()
         )
         if response.status_code >= 400:
             return _fail(
@@ -387,7 +407,7 @@ def place_bid(auction_id: str, amount: float):
     try:
         response = requests.post(
             f"{BASE_URL}{endpoint}",
-            headers=_user_headers(),
+            headers=get_auth_headers(),
             json={"bidAmount": amount}
         )
         if response.status_code >= 400:
@@ -467,7 +487,7 @@ def get_donation_categories():
     try:
         response = requests.get(
             f"{BASE_URL}{endpoint}",
-            headers=_api_headers()
+            headers=get_auth_headers()
         )
         if response.status_code >= 400:
             return _fail(
@@ -563,7 +583,7 @@ def get_charities_by_donation_type(donation_type_id: str, country_code: str = "P
     try:
         response = requests.get(
             f"{BASE_URL}{endpoint}",
-            headers=_api_headers(),
+            headers=get_auth_headers(),
             params={
                 "donationTypeId": donation_type_id,
                 "countryCode": country_code
