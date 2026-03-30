@@ -6,7 +6,7 @@ Version 2.0 | March 2026
 
 # 1. Overview
 
-> *This agent reads a donor’s request, chooses the right tools (that interacts with backend server), runs them, repairs some failures automatically, and then answers using real system data rather than guessing.*
+> _This agent reads a donor’s request, chooses the right tools (that interacts with backend server), runs them, repairs some failures automatically, and then answers using real system data rather than guessing._
 
 The Donor Agent is a unified conversational AI system that brings together charity discovery, donor transactions, and auction workflows inside one shared LangGraph pipeline.
 
@@ -180,6 +180,7 @@ The gate maintains internal state for the current repair pass across the `max_re
 The gate follows these operational rules:
 
 **Safety & Grounding:**
+
 - must not invent IDs, passwords, URLs, numeric values, or other arguments not grounded in history or cache
 - filters repair arguments against the real tool schema before invoking the tool via `_filter_args_for_tool()`
 - avoids duplicate or semantically equivalent repair steps in the same gate run using step signature tracking
@@ -187,18 +188,21 @@ The gate follows these operational rules:
 - can stop with `step: null` when no safe repair exists
 
 **Repair Strategy:**
+
 - reactive error selection: chooses which error to work on based on current state, not a pre-determined order
 - reactive step selection: chooses one repair step at a time, informed by cached outputs and prior attempts
 - respects tool dependency rules from tool descriptions when prioritizing prerequisite repairs
 - uses cached successful outputs to ground arguments for new repair steps
 
 **State Management:**
+
 - can return `missing_args` when repair requires new user input (routed back to validator → responder)
 - marks errors fixed when the repair succeeds and `mark_target_fixed_if_success` is true, or when the tool that ran matches the tool from the target error
 - continues to the next ReAct iteration if unresolved errors remain and `done` is false
 - breaks the loop early if no safe repair is possible, if invalid JSON is returned, or if max iterations reached
 
 **Output Tracking:**
+
 - emits an `AIMessage` with tool call metadata and a matching `ToolMessage` for each repair attempt
 - records each attempt in `attempt_log` with: react_step, target_error_id, tool, args, ok, output
 - captures the final repair step as `last_agentic_step` to be persisted to conversation history
@@ -263,6 +267,7 @@ The transaction layer (`tools/transactions.py`) currently exposes these tools:
 <html><body><table><tr><td>Tool</td><td>Method</td><td>Auth</td><td>Description</td></tr><tr><td>`check_wallet_balance`</td><td>GET</td><td>Bearer token</td><td>Fetch wallet balance, currency, and account status for the authenticated donor</td></tr><tr><td>`list_saved_payment_methods`</td><td>GET</td><td>Bearer token</td><td>List all saved payment methods on the donor account</td></tr><tr><td>`create_payment_method_url`</td><td>GET</td><td>Bearer token</td><td>Return a hosted payment method registration URL for adding a new card/bank account</td></tr><tr><td>`list_charities_in_country`</td><td>GET</td><td>API key</td><td>List charities available for a specified country code</td></tr><tr><td>`list_charity_products`</td><td>GET</td><td>API key</td><td>List donation products for a specific charity (requires charity ID)</td></tr><tr><td>`list_charity_active_campaigns`</td><td>GET</td><td>API key</td><td>List active fundraising campaigns for a charity</td></tr><tr><td>`list_charity_grants`</td><td>GET</td><td>API key</td><td>List available grants/matching donation programs for a charity</td></tr><tr><td>`get_transaction_history`</td><td>GET</td><td>Bearer token</td><td>Fetch the donor's transaction history with timestamps and statuses</td></tr><tr><td>`fund_wallet`</td><td>POST</td><td>Bearer token + password</td><td>Add funds to the donor wallet using a saved payment method</td></tr><tr><td>`product_donation`</td><td>POST</td><td>Bearer token + password</td><td>Make a product-based donation to a charity</td></tr><tr><td>`campaign_donation`</td><td>POST</td><td>Bearer token + password</td><td>Make a campaign donation contribution</td></tr><tr><td>`grant_donation`</td><td>POST</td><td>Bearer token + password</td><td>Make a grant/matching donation</td></tr></table></body></html>
 
 **Key Implementation Details:**
+
 - All transaction tools use hardcoded bearer tokens in source (demo-only, not production-ready)
 - Password-gated write operations (`fund_wallet`, `*_donation` tools) require explicit password verification via `verify_user_password()` before API submission
 - Read operations use API-key-only headers; write operations require Bearer token authentication
@@ -280,6 +285,7 @@ Auction endpoints and implementation details:
 <html><body><table><tr><td>Tool</td><td>Method</td><td>Endpoint</td><td>Implementation Notes</td></tr><tr><td>`get_active_auctions`</td><td>GET</td><td>`/api/v3/agent/auctions/list`</td><td>Pagination support via `page` and `limit` query params; returns `data.auctions` and `data.pagination`</td></tr><tr><td>`get_auction_details`</td><td>GET</td><td>`/api/v3/agent/auctions/{auction_id}`</td><td>Requires exact ObjectId string; sanitizes input and returns error if _id is missing or malformed</td></tr><tr><td>`get_my_bid_history`</td><td>GET</td><td>`/api/v3/agent/user/{DONOR_PROFILE_ID}/bids`</td><td>Uses hardcoded `DONOR_PROFILE_ID` constant (currently a placeholder); returns list of bid records with auction references</td></tr><tr><td>`place_bid`</td><td>POST</td><td>`/api/v3/agent/auctions/{auction_id}/bid`</td><td>Requires password verification first via `verify_user_password()`; validates amount > 0; sends `{"bidAmount": amount}` in body</td></tr><tr><td>`get_donation_categories`</td><td>GET</td><td>`/api/v3/agent/donation-categories`</td><td>No args required; returns list of category objects with `_id` and `name`</td></tr><tr><td>`get_charities_by_donation_type`</td><td>GET</td><td>`/api/v3/agent/charities/by-donation-type`</td><td>Query params: `donationTypeId` (required), `countryCode` (defaults to "PK"); returns charities filtered by category and location</td></tr></table></body></html>
 
 **Key Constraints & Behavioral Rules:**
+
 - `get_active_auctions` must be called first before `get_auction_details` or `place_bid` to obtain valid auction `_id` values (NOT display numbers)
 - `get_donation_categories` must be called before `get_charities_by_donation_type` to resolve the category `_id`
 - `place_bid` requires THREE inputs: exact auction `_id`, explicit bid `amount`, AND password (explicitly provided by user, not invented)
@@ -389,23 +395,24 @@ It can help the user:
 
 # 5.2 Authentication Model
 
-Transaction tools currently use a hardcoded bearer token in `tools/transactions.py`.
+The assistant has been upgraded from a static testing configuration to a **Dynamic Context-Aware Identity** system. This ensures that every request is processed within the specific security context of the calling user.
 
-This means:
+### Key Architectural Components:
 
-- the assistant is currently tied to a demo donor context
-- it is not yet using a real logged-in session
-- the behavior is suitable for controlled testing, not production-grade identity isolation
+- **Request-Scoped Identity**: The system no longer uses a global hardcoded token. Instead, it utilizes `ContextVar` (via `context.py`) to store the JWT Bearer token extracted from each incoming FastAPI request.
+- **Automatic Injection**: The `api.py` layer intercepts the `Authorization` header and injects it into the asynchronous execution context. Tools automatically retrieve this token at runtime using `auth_token_ctx.get()`.
+- **Production-Ready Isolation**: This model provides strict identity isolation, ensuring that one user's session can never leak into another's.
 
-# 5.3 Password Verification
+# 5.3 Session-Based Authorization
 
-Sensitive actions in the current implementation can require password verification.
+Sensitive actions have moved away from local password mocks to **Delegated Token Authorization**. The agent now relies on the backend to validate permissions based on the provided session.
 
-For example, `place_bid` in the auction layer imports `verify_user_password` from the transaction layer before submitting the actual API call.
-
-The current password flow is local and demo-oriented:
-
-<html><body><table><tr><td>Current Behavior</td><td>Meaning</td></tr><tr><td>Bcrypt hash stored in code</td><td>Password verification is mocked locally instead of delegated to a production identity system</td></tr><tr><td>Responder special-case</td><td>If password validation fails, the conversation can prompt the user to enter the password again</td></tr></table></body></html>
+| Feature                         | Current Production Behavior                                                                                                                                                                                    |
+| :------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Token-Only Auth**             | Identity and transaction authority are handled exclusively via the Bearer Token. The system no longer requires or stores local transaction passwords.                                                          |
+| **Delegated Trust**             | Authorization is fully delegated to the Giverr Identity Provider. If a token is invalid or insufficient for a specific action (like `place_bid`), the backend returns a `401 Unauthorized` or `403 Forbidden`. |
+| **Dynamic Header Construction** | Tools utilize a helper that merges the application's `X-API-KEY` (for routing) with the user's `Authorization` token (for identity) for every outgoing request.                                                |
+| **Session Persistence**         | Because the agent is stateless, it only remains "logged in" as long as the calling client (e.g., Postman or a Frontend) continues to provide a valid JWT in the request headers.                               |
 
 # 6. Auction Flow
 
