@@ -302,19 +302,19 @@ def get_my_bid_history():
 
 
 @tool
-def place_bid(auction_id: str, amount: float, password: str):
+def place_bid(auction_id: str, amount: float):
     """
     PURPOSE:
     Place a bid on an active auction on behalf of the authenticated donor.
 
     MUST_CALL_FIRST:
     - get_active_auctions must have been called to obtain a valid auction _id.
-    - User must have explicitly stated both the bid amount AND their password.
+    - User must have explicitly stated both the bid amount AND auction_id.
 
     DEPENDS_ON:
     - get_active_auctions — required to resolve auction_id before calling this tool.
-    - verify_user_password (transactions.py) — password is verified locally before API call.
     - Bearer token (BEARER_TOKEN constant) — used in Authorization header for this request.
+
     AUTH:
     - Uses Bearer token header (user-scoped endpoint).
 
@@ -325,32 +325,24 @@ def place_bid(auction_id: str, amount: float, password: str):
     - User explicitly says they want to place a bid AND has provided:
         1. A specific auction reference (resolvable to an exact _id)
         2. A specific bid amount (explicitly stated, never assumed)
-        3. Their account password (explicitly typed by user in this message)
-    - ALL THREE must be present before scheduling this tool.
+    - BOTH must be present before scheduling this tool.
 
     DO NOT USE WHEN:
     - auction_id is missing or unresolved — add 'auction_id' to missing_args.
     - amount is missing or ambiguous — add 'amount' to missing_args.
-    - password has NOT been explicitly provided by the user in their message —
-      add 'password' to missing_args and ask the user for it first.
-    - NEVER use placeholder values like <PASSWORD>, 'userpass', or any invented value for password.
     - NEVER pass a display number like 1 or 2 as auction_id.
     - NEVER guess or invent an auction_id.
     - User is only browsing or asking about auctions.
     - A successful bid already exists in this turn's history.
 
     REQUIRES (Intuitive Schema):
-    - Exact auction _id, explicit bid amount, and user's account password.
+    - Exact auction _id and explicit bid amount.
 
     REQUIRES (Detailed Schema):
     - auction_id (str): Exact MongoDB ObjectId from get_active_auctions output.
                         NEVER a display number. NEVER guessed or invented.
     - amount (float): Bid amount explicitly stated by the user. Must be > 0.
                       NEVER assumed or inferred.
-    - password (str): User's account password for transaction authorization.
-                      MANDATORY — if NOT explicitly provided in user's message,
-                      add 'password' to missing_args and do NOT schedule this tool.
-                      NEVER use <PASSWORD>, 'userpass', or any invented placeholder.
 
     RETURNS (Intuitive Schema):
     - Confirmation of bid placement with bid ID and status.
@@ -369,6 +361,7 @@ def place_bid(auction_id: str, amount: float, password: str):
     DO NOT STOP HERE WHEN:
     - User wants to check if their bid is winning — call get_my_bid_history next.
     """
+
     auction_id = (auction_id or "").strip()
     if not auction_id:
         return _fail("auction_id is required.")
@@ -379,16 +372,16 @@ def place_bid(auction_id: str, amount: float, password: str):
         )
     if not amount or amount <= 0:
         return _fail("amount must be a positive number.")
-    if not password:
-        return _fail("password is required.")
+    # if not password:
+    #     return _fail("password is required.")
 
-    from tools.transactions import verify_user_password
-    auth = verify_user_password(password)
-    if not auth["success"]:
-        return _fail(
-            f"TERMINAL_ERROR: Transaction Denied — password is incorrect. Do NOT retry with a different password. User must re-enter their password.",
-            endpoint=f"{AGENT_BASE_PATH}/auctions/{auction_id}/bid"
-        )
+    # from tools.transactions import verify_user_password
+    # auth = verify_user_password(password)
+    # if not auth["success"]:
+    #     return _fail(
+    #         f"TERMINAL_ERROR: Transaction Denied — password is incorrect. Do NOT retry with a different password. User must re-enter their password.",
+    #         endpoint=f"{AGENT_BASE_PATH}/auctions/{auction_id}/bid"
+    #     )
 
     endpoint = f"{AGENT_BASE_PATH}/auctions/{auction_id}/bid"
     try:
@@ -674,7 +667,7 @@ metadata_auctions = {
         "when_to_use": (
             "When user explicitly states they want to place a bid AND provides both "
             "a specific auction reference AND a bid amount. "
-            "Both auction_id AND amount AND password must be known before calling this tool."
+            "a specific auction reference AND a bid amount."
         ),
         "do_not_use": (
             "Never call if auction_id is missing or unresolved. "
@@ -689,7 +682,7 @@ metadata_auctions = {
         "hint": (
             "- auction_id must be an exact _id from get_active_auctions — never a display number.\n"
             "- amount must be explicitly stated by the user — never assume or infer it.\n"
-            "- password is mandatory for transaction authorization — add to missing_args if not provided.\n"
+            "- amount must be explicitly stated by the user.\\n"
             "- If auction_id is not known, call get_active_auctions first then resolve the _id.\n"
             "- On success the server returns bid _id, amount, and status Pending."
         )
