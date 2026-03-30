@@ -10,19 +10,6 @@ headers = {
 }
 xApiKey = "giverr_ai_live_9f3b7c6e2d4a8f1c5e7b9a2c6d1f4e8b3c7a9d2e6f1b4c8a3d7e2f6c9b1a4e8"
 
-def verify_user_password(password: str = None):
-    import bcrypt
-    # Dummy stored bcrypt hash for "Google@123"
-    STORED_HASH = b"$2b$12$IRTl/UIdKOTPYUeBPiolH.d01DxSKXcokA/k70yed926lYovhkFq6"
-    try:
-        if bcrypt.checkpw(password.encode("utf-8"), STORED_HASH):
-            return {"success": True}
-        return {"success": False, "message": "Invalid password."}
-    except Exception as e:
-        return {"success": False, "message": str(e)}
-
-PASSWORD = "Google@123"
-
 @tool
 def check_wallet_balance():
     """
@@ -998,14 +985,13 @@ def get_transaction_history():
 # POST APIs
 # ----------------------------
 @tool
-def fund_wallet(amount: float, paymentMethodId: str, password: str):
+def fund_wallet(amount: float, paymentMethodId: str):
     """
         PURPOSE:
         Fund the authenticated user's wallet using a selected payment method and confirm the updated balance.
 
         MUST_CALL_FIRST:
         - after obtaining a valid paymentMethodId from list_saved_payment_methods
-        - after verifying the user's password for transaction authorization
 
         DEFAULT_CHAIN:
         - list_saved_payment_methods -> fund_wallet -> check_wallet_balance
@@ -1018,12 +1004,10 @@ def fund_wallet(amount: float, paymentMethodId: str, password: str):
         REQUIRES (Intuitive Schema):
         - amount (float): amount to add to wallet
         - paymentMethodId (str): selected payment method identifier
-        - password (str): user password for authorization
 
         REQUIRES (Detailed Schema):
             - amount (float): must be greater than 0, obtained from user input
             - paymentMethodId (str): ID of the selected payment method (from list_saved_payment_methods)
-            - password (str): authenticated user's account password for transaction authorization
 
         RETURNS (Intuitive Schema):
         - success status and updated wallet balance
@@ -1047,15 +1031,6 @@ def fund_wallet(amount: float, paymentMethodId: str, password: str):
         - user wants to perform a donation or other transaction immediately after funding
         - wallet balance verification is required before the next financial action
     """
-    # Verify password before initiating transaction
-    auth = verify_user_password(password)
-    if not auth["success"]:
-        return {
-            "success": False,
-            "message": f"Transaction Denied: {auth['message']}",
-            "data": {}
-        }
-
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/payment-apis/fund-wallet",
@@ -1106,7 +1081,6 @@ def product_donation(
     country: str, 
     countryCode: str, 
     products: list, 
-    password: str
 ):
     """
         PURPOSE:
@@ -1114,7 +1088,7 @@ def product_donation(
 
         MUST_CALL_FIRST:
         - after obtaining charityId from list_charities_in_country or discover_charities
-        - after selecting products and verifying user password for transaction authorization
+        - after selecting products.
 
         DEFAULT_CHAIN:
         - discover_charities -> list_charity_donation_products -> product_donation -> get_transaction_history
@@ -1131,7 +1105,6 @@ def product_donation(
         - country (str): delivery country name
         - countryCode (str): 2-letter ISO country code
         - products (list): products to donate including quantity and price
-        - password (str): user password for authorization
 
         REQUIRES (Detailed Schema):
             - charityId (str): unique identifier of the charity
@@ -1146,7 +1119,6 @@ def product_donation(
                 category (str): category ID
                 charityProdPrice (float): price per product
                 quantity (int): number of units to donate
-            - password (str): authenticated user's password for transaction authorization
 
         RETURNS (Intuitive Schema):
         - success status and confirmation of the product donation
@@ -1165,15 +1137,6 @@ def product_donation(
         - user wants to donate additional products or verify donation history
         - follow-up actions such as receipts or notifications are required
     """
-    # Verify password before donation
-    auth = verify_user_password(password)
-    if not auth['success']:
-        return {
-            "success": False,
-            "message": f'Transaction Denied: {auth["message"]}',
-            "data": {}
-        }
-
     try:
         response = requests.post(
             f"{BASE_URL}/api/v1/donations/donate",
@@ -1223,7 +1186,6 @@ def campaign_donation(
     campaignId: str,
     amount: float,
     donation_type: str,
-    password: str,
     campaignType: str = 'CharityOrganization'
 ):
     """
@@ -1235,7 +1197,6 @@ def campaign_donation(
     MUST_CALL_FIRST:
     - after obtaining campaignId from list_charity_active_campaigns
     - after obtaining donation_type from the user (human-readable name)
-    - after verifying the user's password for transaction authorization
 
     CRITICAL RULE:
     - The agent MUST NEVER guess or auto-select donationTypeId.
@@ -1266,14 +1227,12 @@ def campaign_donation(
     - campaignId (str): campaign identifier
     - amount (float): donation amount
     - donation_type (str): human-readable donation type name (e.g., 'chanda', 'fitra', 'saqdah' and 'hadya')
-    - password (str): user password for authorization
     - campaignType (str, optional): type of campaign (default 'CharityOrganization')
 
     REQUIRES (Detailed Schema):
     - campaignId (str): unique identifier of the campaign
     - amount (float): monetary amount to donate
     - donation_type (str): name of the selected donation type
-    - password (str): authenticated user's password for transaction authorization
     - campaignType (str, optional): campaign type; default is 'CharityOrganization'
 
     RETURNS (Intuitive Schema):
@@ -1301,11 +1260,6 @@ def campaign_donation(
       but if no match is found, prompt the user to select a valid donation type.
     - Always show the allowed donation types (e.g., 'chanda', 'fitra', 'saqdah' and 'hadya')
     """
-    # Verify user password
-    auth = verify_user_password(password)
-    if not auth["success"]:
-        return {"success": False, "message": f"Transaction Denied: {auth['message']}", "data": {}}
-
     try:
         # Fetch donation types using helper
         donation_data = get_campaign_donation_types()
@@ -1355,14 +1309,13 @@ def campaign_donation(
         return {"success": False, "message": f"Unexpected error: {str(e)}", "data": {}}
     
 @tool
-def grant_donation(charityId: str, amount: float, grantId: str, password: str):
+def grant_donation(charityId: str, amount: float, grantId: str):
     """
         PURPOSE:
         Make a monetary donation to a specific grant for a charity and return donation details.
 
         MUST_CALL_FIRST:
         - after obtaining charityId and grantId from list_charity_grants
-        - after verifying the user's password for transaction authorization
 
         DEFAULT_CHAIN:
         - list_charity_grants -> grant_donation -> get_transaction_history
@@ -1377,13 +1330,11 @@ def grant_donation(charityId: str, amount: float, grantId: str, password: str):
         - charityId (str): selected charity identifier
         - grantId (str): selected grant identifier
         - amount (float): donation amount
-        - password (str): user password for authorization
 
         REQUIRES (Detailed Schema):
             - charityId (str): unique identifier of the charity (from charity_details)
             - grantId (str): unique identifier of the grant (_id from list_charity_grants)
             - amount (float): monetary amount to donate toward the grant
-            - password (str): authenticated user's password for transaction authorization
 
         RETURNS (Intuitive Schema):
         - success status and confirmation of the grant donation
@@ -1403,15 +1354,6 @@ def grant_donation(charityId: str, amount: float, grantId: str, password: str):
         - follow-up actions such as receipt generation or reporting are required
 
     """
-    # Verify user password
-    auth = verify_user_password(password)
-    if not auth["success"]:
-        return {
-            "success": False,
-            "message": f"Transaction Denied: {auth['message']}",
-            "data": {}
-        }
-
     try:
         response = requests.post(
             f"{BASE_URL}/api/v3/donors/donate-grant",
