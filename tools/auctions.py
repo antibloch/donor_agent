@@ -302,12 +302,15 @@ def get_my_bid_history():
             headers=get_auth_headers()
         )
         if response.status_code >= 400:
-            return _fail(
-                f"HTTP {response.status_code}",
-                endpoint=endpoint,
-                http_status=response.status_code,
-                response_text=response.text[:2000]
-            )
+            debug_msg = f"Error {response.status_code}: {response.text[:100]}"
+            print(f"🚨 PRODUCTION DEBUG - Bid History Failed: {debug_msg}")
+            return debug_msg
+            # return _fail(
+            #     f"HTTP {response.status_code}",
+            #     endpoint=endpoint,
+            #     http_status=response.status_code,
+            #     response_text=response.text[:2000]
+            # )
         data = response.json()
         bids = data.get("data", []) if isinstance(data, dict) else []
         return _ok(
