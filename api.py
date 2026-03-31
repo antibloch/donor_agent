@@ -40,7 +40,7 @@ AUTH_CACHE_TTL = 600  # 10 minutes (600 seconds)
 # ── Global state ──────────────────────────────────────────
 graph = None
 
-# 🔥 Per-user memory
+# Per-user memory
 chat_sessions: Dict[str, List[BaseMessage]] = {}
 
 

@@ -1,0 +1,38 @@
+workflow:
+  name: "Giverr AI CI/CD"
+
+stages:
+  # - build
+  - deploy
+
+# build:
+#   stage: build
+#   image: docker:latest
+#   services:
+#     - docker:dind
+#   variables:
+#     DOCKER_TLS_CERTDIR: ""
+#   rules:
+#     - if: '$CI_PIPELINE_SOURCE == "merge_request_event" && ($CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "staging" || $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main")'
+#   script:
+#     - echo "Building Docker image..."
+#     - docker build -t giverrai:$CI_COMMIT_SHORT_SHA .
+#     - echo "Docker image built successfully."
+
+deploy-job:
+  stage: deploy
+  image: alpine:latest
+  environment: production
+  before_script:
+    - apk add openssh
+    - mkdir -p .ssh
+    - cat ${SSH_KEY} | base64 -d > .ssh/id_rsa
+    - chmod 600 .ssh/id_rsa
+    - eval $(ssh-agent -s)
+    - ssh-add .ssh/id_rsa
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "push" && ($CI_COMMIT_REF_NAME == "staging" || $CI_COMMIT_REF_NAME == "main")'
+  script:
+    - echo "Deploying application..."
+    - ssh -o StrictHostKeyChecking=no ${SERVER_USER}@${SERVER_HOST} bash deploy.sh $CI_COMMIT_REF_NAME
+    - echo "Application successfully deployed."
