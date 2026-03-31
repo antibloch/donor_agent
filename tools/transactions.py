@@ -2,6 +2,7 @@ import requests
 from langchain_core.tools import tool
 from tools.tool_helpers import _ok, _fail, _get
 import difflib 
+from typing import Optional
 
 BASE_URL = "https://giverr-api.verior.co"
 
@@ -504,7 +505,7 @@ def list_charity_products(charity_id: str):
         }
     
 @tool
-def list_charity_grants(charity_id: str):
+def list_charity_grants(charity_id: str, search: Optional[str] = None):
     """
         PURPOSE:
         Retrieve all grants for a specific charity and return detailed grant information.
@@ -522,10 +523,14 @@ def list_charity_grants(charity_id: str):
 
         REQUIRES (Intuitive Schema):
         - charity_id (str): Unique identifier of the charity whose grants need to be retrieved.
+        OPTIONAL:
+        - search (str): filter campaigns by keyword (title, etc.)
 
         REQUIRES (Detailed Schema):
         - charity_id (str): Unique ID of the charity. This value should be obtained from the output of 
         `list_charities_in_country` or `discover_charities`.
+        OPTIONAL:
+        - search (str): filter campaigns by keyword (title, etc.)
 
         RETURNS (Intuitive Schema):
         - A list of grants associated with the specified charity. Each grant includes basic information 
@@ -564,19 +569,30 @@ def list_charity_grants(charity_id: str):
     """
     if charity_id is None:
         return {
-        "success": False,
-        "campaigns": [],
-        "pagination": {},
-        "message": f"No charity specified."
+            "success": False,
+            "campaigns": [],
+            "pagination": {},
+            "message": "No charity specified."
         }
+
     headers = {
-        'X-API-KEY':xApiKey
+        'X-API-KEY': xApiKey
     }
+
     try:
+        # Base params
+        params = {
+            "charityId": charity_id
+        }
+
+        # Add search ONLY if provided
+        if search:
+            params["search"] = search   # or "q" depending on backend
+
         response = requests.get(
             f"{BASE_URL}/api/v3/agent/grants",
             headers=headers,
-            params={"charityId": charity_id}
+            params=params
         )
         response.raise_for_status()
         data = response.json()
@@ -586,6 +602,7 @@ def list_charity_grants(charity_id: str):
 
         for g in grants_list:
             location = g.get("location", {})
+
             cleaned_grants.append({
                 "_id": g.get("_id"),
                 "title": g.get("title"),
@@ -612,7 +629,7 @@ def list_charity_grants(charity_id: str):
             "totalGrants": len(cleaned_grants),
             "message": f"{len(cleaned_grants)} grants found for charity {charity_id}."
         }
-    
+
     except requests.exceptions.HTTPError as e:
         try:
             error_data = response.json()
@@ -641,7 +658,7 @@ def list_charity_grants(charity_id: str):
         }
 
 @tool
-def list_charity_active_campaigns(charity_id: str):
+def list_charity_active_campaigns(charity_id: str, search: Optional[str] = None):
     """
     PURPOSE:
     Retrieve all active campaigns for a specific charity and return campaign details
@@ -662,9 +679,13 @@ def list_charity_active_campaigns(charity_id: str):
 
     REQUIRES (Intuitive Schema):
     - charity_id (str): unique identifier of the charity
+    OPTIONAL:
+    - search (str): filter campaigns by keyword (title, etc.)
 
     REQUIRES (Detailed Schema):
     - charity_id (str): ID of the charity obtained from list_charities_in_country
+    OPTIONAL:
+    - search (str): filter campaigns by keyword (title, etc.)
 
     RETURNS (Intuitive Schema):
     - list of active campaigns with their allowed donation types (names)
@@ -739,7 +760,16 @@ def list_charity_active_campaigns(charity_id: str):
                 "message": "No charity specified."
             }
 
-        params = {"charityId": charity_id, "page": 1, "limit": 25}
+        # Base params
+        params = {
+            "charityId": charity_id,
+            "page": 1,
+            "limit": 25
+        }
+
+        # Add search ONLY if provided
+        if search:
+            params["search"] = search   # or "q" depending on your backend API
 
         response = requests.get(
             f"{BASE_URL}/api/v3/agent/campaigns/active",
@@ -753,7 +783,6 @@ def list_charity_active_campaigns(charity_id: str):
         cleaned_campaigns = []
 
         for c in campaigns_list:
-            # Map milestones
             milestones = [
                 {
                     "_id": m.get("_id"),
@@ -764,7 +793,6 @@ def list_charity_active_campaigns(charity_id: str):
                 for m in c.get("milestones", [])
             ]
 
-            # Map donationTypes correctly
             donation_types = [
                 {
                     "donationTypeId": dt.get("_id"),
@@ -824,6 +852,7 @@ def list_charity_active_campaigns(charity_id: str):
             "pagination": {},
             "message": f"Request failed: {str(e)}"
         }
+
     except Exception as e:
         return {
             "success": False,
