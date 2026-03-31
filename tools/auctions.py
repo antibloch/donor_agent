@@ -302,9 +302,16 @@ def get_my_bid_history():
             headers=get_auth_headers()
         )
         if response.status_code >= 400:
-            debug_msg = f"Error {response.status_code}: {response.text[:100]}"
-            print(f"🚨 PRODUCTION DEBUG - Bid History Failed: {debug_msg}")
-            return debug_msg
+            error_detail = f"Status {response.status_code}: {response.text[:200]}"
+            print(f"🚨 PRODUCTION DEBUG - Bid History Failed: {error_detail}", flush=True)
+            
+            # Use the proper helper so the Agent doesn't "panic" and fallback
+            return _fail(
+                error_detail,
+                endpoint=endpoint,
+                http_status=response.status_code,
+                response_text=response.text[:500]
+            )
             # return _fail(
             #     f"HTTP {response.status_code}",
             #     endpoint=endpoint,
