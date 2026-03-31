@@ -7,7 +7,9 @@
 
 import os
 import asyncio
-from typing import List, Dict
+import time
+import requests
+from typing import List, Dict, Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException, status
@@ -29,10 +31,16 @@ from context import auth_token_ctx
 # ── OAuth2 Scheme ─────────────────────────────────────────
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 
+# ── NEW: Auth Configuration ──
+VERIFY_URL = "https://giverr-api.verior.co/api/v3/agent/verify-token"
+verified_sessions: Dict[str, float] = {}  # Stores {token: timestamp}
+AUTH_CACHE_TTL = 600  # 10 minutes (600 seconds)
+
+
 # ── Global state ──────────────────────────────────────────
 graph = None
 
-# 🔥 Per-user memory
+# Per-user memory
 chat_sessions: Dict[str, List[BaseMessage]] = {}
 
 
@@ -84,6 +92,43 @@ def get_user_memory(token: str) -> List[BaseMessage]:
         chat_sessions[token] = []
     return chat_sessions[token]
 
+async def verify_token(token: str = Depends(oauth2_scheme)):
+    """
+    Validates token with a 5-minute local cache for minimal latency.
+    """
+    now = time.time()
+    
+    # 1. LATENCY CHECK: Is it in our local "Fast Lane"?
+    if token in verified_sessions:
+        if (now - verified_sessions[token]) < AUTH_CACHE_TTL:
+            return token
+
+    # 2. SECURITY CHECK: Cache expired or missing, call Verior API
+    try:
+        response = requests.get(
+            VERIFY_URL,
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=3.0 # Don't let a slow API hang your agent
+        )
+        data = response.json()
+
+        if response.status_code == 200 and data.get("success"):
+            verified_sessions[token] = now # Update local cache
+            return token
+        
+        # If Verior rejects the token
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=data.get("message", "Invalid or expired token"),
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except requests.exceptions.RequestException:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Authentication service is temporarily unreachable."
+        )
+
+
 
 # ── Routes ────────────────────────────────────────────────
 @app.get("/health")
@@ -92,7 +137,7 @@ def health():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest, token: str = Depends(oauth2_scheme)):
+async def chat(request: ChatRequest, token: str = Depends(verify_token)):
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -147,7 +192,7 @@ async def chat(request: ChatRequest, token: str = Depends(oauth2_scheme)):
 
 
 @app.post("/reset")
-def reset(token: str = Depends(oauth2_scheme)):
+def reset(token: str = Depends(verify_token)):
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,

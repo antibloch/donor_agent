@@ -84,6 +84,23 @@ async def build_graph():
 
 
 async def main():
+    # ── NEW: CLI Token Verification ──
+    rich_print("[yellow]Verifying CLI token...[/yellow]")
+    try:
+        import requests
+        res = requests.get(
+            "https://giverr-api.verior.co/api/v3/agent/verify-token",
+            headers={"Authorization": f"Bearer {HARDCODED_TOKEN}"},
+            timeout=5
+        )
+        if not res.json().get("success"):
+            rich_print("[bold red]ERROR: CLI Token is invalid or expired![/bold red]")
+            return
+        rich_print("[green]Token Verified. Starting Agent...[/green]")
+    except Exception as e:
+        rich_print(f"[red]Could not verify token: {e}[/red]")
+        # Decide if you want to 'return' or continue anyway for local-only testing
+        
     graph = await build_graph()
 
     chat_memory: List[BaseMessage] = []
