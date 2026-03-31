@@ -8,7 +8,7 @@ from context import auth_token_ctx
 BASE_URL = "https://giverr-api.verior.co"
 AGENT_BASE_PATH = "/api/v3/agent"
 X_API_KEY = "giverr_ai_live_9f3b7c6e2d4a8f1c5e7b9a2c6d1f4e8b3c7a9d2e6f1b4c8a3d7e2f6c9b1a4e8"
-# DONOR_PROFILE_ID = "695803a95d120db61afaf042"
+
 def get_auth_headers():
     token = auth_token_ctx.get()
     
