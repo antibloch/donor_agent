@@ -250,7 +250,6 @@ def get_my_bid_history():
 
     DEPENDS_ON:
     - No dependencies. Standalone tool.
-    - Uses DONOR_PROFILE_ID constant from auctions.py — must be a valid donorProfile ObjectId.
     AUTH:
     - Uses X-API-KEY header only (read-only endpoint).
 
