@@ -295,40 +295,61 @@ def get_my_bid_history():
     - User wants to place a new bid after reviewing history — call place_bid next.
     """
     
-    endpoint = f"{AGENT_BASE_PATH}/user/bids"
+    target_url = "https://giverr-api.verior.co/api/v3/user/bids"
     try:
+        print(f"DEBUG: Calling verified path: {target_url}", flush=True)
         response = requests.get(
-            f"{BASE_URL}{endpoint}",
-            headers=get_auth_headers()
+            target_url,
+            headers=get_auth_headers(), # Still using your hardcoded token/headers
+            timeout=15
         )
+        
+        print(f"DEBUG: Bid History Status: {response.status_code}", flush=True)
+        
         if response.status_code >= 400:
-            error_detail = f"Status {response.status_code}: {response.text[:200]}"
-            print(f"🚨 PRODUCTION DEBUG - Bid History Failed: {error_detail}", flush=True)
-            
-            # Use the proper helper so the Agent doesn't "panic" and fallback
-            return _fail(
-                error_detail,
-                endpoint=endpoint,
-                http_status=response.status_code,
-                response_text=response.text[:500]
-            )
-            # return _fail(
-            #     f"HTTP {response.status_code}",
-            #     endpoint=endpoint,
-            #     http_status=response.status_code,
-            #     response_text=response.text[:2000]
-            # )
+            return _fail(f"Status {response.status_code}", response_text=response.text[:200])
+
         data = response.json()
-        bids = data.get("data", []) if isinstance(data, dict) else []
-        return _ok(
-            {"bids": bids, "totalBids": len(bids)},
-            endpoint=endpoint,
-            http_status=response.status_code
-        )
-    except requests.RequestException as e:
-        return _fail(str(e), endpoint=endpoint)
+        # This handles the {"data": []} structure you saw in Postman
+        bids = data.get("data", []) if isinstance(data, dict) else data
+        
+        return _ok({"bids": bids, "totalBids": len(bids)})
+
     except Exception as e:
-        return _fail(f"Unexpected error: {str(e)}", endpoint=endpoint)
+        return f"TOOL_ERROR: {str(e)}"
+    # try:
+    #     response = requests.get(
+    #         f"{BASE_URL}{endpoint}",
+    #         headers=get_auth_headers()
+    #     )
+    #     if response.status_code >= 400:
+    #         error_detail = f"Status {response.status_code}: {response.text[:200]}"
+    #         print(f"🚨 PRODUCTION DEBUG - Bid History Failed: {error_detail}", flush=True)
+            
+    #         # Use the proper helper so the Agent doesn't "panic" and fallback
+    #         return _fail(
+    #             error_detail,
+    #             endpoint=endpoint,
+    #             http_status=response.status_code,
+    #             response_text=response.text[:500]
+    #         )
+    #         # return _fail(
+    #         #     f"HTTP {response.status_code}",
+    #         #     endpoint=endpoint,
+    #         #     http_status=response.status_code,
+    #         #     response_text=response.text[:2000]
+    #         # )
+    #     data = response.json()
+    #     bids = data.get("data", []) if isinstance(data, dict) else []
+    #     return _ok(
+    #         {"bids": bids, "totalBids": len(bids)},
+    #         endpoint=endpoint,
+    #         http_status=response.status_code
+    #     )
+    # except requests.RequestException as e:
+    #     return _fail(str(e), endpoint=endpoint)
+    # except Exception as e:
+    #     return _fail(f"Unexpected error: {str(e)}", endpoint=endpoint)
 
 
 @tool
