@@ -294,7 +294,7 @@ def get_my_bid_history():
     - User wants to place a new bid after reviewing history — call place_bid next.
     """
     
-    target_url = "https://giverr-api.verior.co/api/v3/user/bids"
+    target_url = "https://giverr-api.verior.co/api/v3/agent/user/bids"
     try:
         print(f"DEBUG: Calling verified path: {target_url}", flush=True)
         response = requests.get(
