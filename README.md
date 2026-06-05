@@ -1,5 +1,12 @@
 ## Setup
 
+<img width="1920" height="967" alt="l1" src="https://github.com/user-attachments/assets/7a97848d-0a6c-4a76-b409-b3cda14fd05c" />
+
+
+<img width="1920" height="967" alt="l2" src="https://github.com/user-attachments/assets/c5488cc3-5ee1-4a67-a6b9-62920158a931" />
+
+
+
 ### 1. Clone Repository
 
 ```bash
